@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 contextBridge.exposeInMainWorld('api', {
   // Create a new PTY session
@@ -29,5 +29,7 @@ contextBridge.exposeInMainWorld('api', {
     const listener = (_: Electron.IpcRendererEvent, delta: number) => callback(delta)
     ipcRenderer.on('font:zoom', listener)
     return () => ipcRenderer.removeListener('font:zoom', listener)
-  }
+  },
+  // Get the filesystem path for a dropped File object (Electron 32+ API)
+  getFilePath: (file: File) => webUtils.getPathForFile(file)
 })

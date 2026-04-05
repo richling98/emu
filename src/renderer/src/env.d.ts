@@ -9,5 +9,6 @@ interface Window {
     onPtyData: (sessionId: string, callback: (data: string) => void) => () => void
     onPtyExit: (sessionId: string, callback: () => void) => () => void
     onFontZoom: (callback: (delta: number) => void) => () => void
+    getFilePath: (file: File) => string
   }
 }

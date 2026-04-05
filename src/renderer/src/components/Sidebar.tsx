@@ -1,15 +1,19 @@
 import { useState, useRef, useEffect } from 'react'
 import type { Session } from '../App'
+import HotkeyModal from './HotkeyModal'
+import AboutModal from './AboutModal'
 import './Sidebar.css'
 
 interface Props {
   sessions: Session[]
   selectedId: string
+  rightPaneSessionId?: string | null
   onSelect: (id: string) => void
   onNew: () => void
   onRename: (id: string, name: string) => void
   collapsed: boolean
   onToggleCollapse: () => void
+  onOpenHistory: (id: string) => void
 }
 
 function relativeTime(date: Date, now: Date): string {
@@ -23,11 +27,55 @@ function relativeTime(date: Date, now: Date): string {
   return `${days}d ago`
 }
 
-export default function Sidebar({ sessions, selectedId, onSelect, onNew, onRename, collapsed, onToggleCollapse }: Props) {
+const COLLAPSE_THRESHOLD = 120
+const MIN_WIDTH = 160
+const MAX_WIDTH = 420
+
+export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSelect, onNew, onRename, collapsed, onToggleCollapse, onOpenHistory }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
   const [now, setNow] = useState(() => new Date())
+  const [showHotkeys, setShowHotkeys] = useState(false)
+  const [showAbout, setShowAbout] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState(220)
   const inputRef = useRef<HTMLInputElement>(null)
+  const collapsedRef = useRef(collapsed)
+  useEffect(() => { collapsedRef.current = collapsed }, [collapsed])
+
+  const handleResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startWidth = collapsedRef.current ? 80 : sidebarWidth
+    let toggled = false
+
+    const onMouseMove = (ev: MouseEvent) => {
+      const newWidth = startWidth + (ev.clientX - startX)
+      if (newWidth < COLLAPSE_THRESHOLD && !collapsedRef.current) {
+        collapsedRef.current = true
+        toggled = true
+        onToggleCollapse()
+      } else if (newWidth >= MIN_WIDTH && collapsedRef.current && toggled) {
+        collapsedRef.current = false
+        toggled = false
+        onToggleCollapse()
+        setSidebarWidth(Math.min(MAX_WIDTH, newWidth))
+      } else if (!collapsedRef.current) {
+        setSidebarWidth(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, newWidth)))
+      }
+    }
+
+    const onMouseUp = () => {
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }
 
   // Refresh relative timestamps every 30 seconds
   useEffect(() => {
@@ -54,24 +102,36 @@ export default function Sidebar({ sessions, selectedId, onSelect, onNew, onRenam
 
   if (collapsed) {
     return (
-      <div className="sidebar sidebar--collapsed">
-        <div className="sidebar-collapsed-actions">
-          <button className="new-session-btn" onClick={onNew} title="New session">+</button>
-          <button className="collapse-btn" onClick={onToggleCollapse} title="Expand sidebar">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="9 18 15 12 9 6" />
-            </svg>
-          </button>
+      <>
+        {showHotkeys && <HotkeyModal onClose={() => setShowHotkeys(false)} />}
+        {showAbout && <AboutModal onClose={() => setShowAbout(false)} />}
+        <div className="sidebar sidebar--collapsed">
+          <div className="sidebar-resize-handle" onMouseDown={handleResizeStart} />
+          <div className="sidebar-collapsed-actions">
+            <button className="new-session-btn" onClick={onNew} title="New session">+</button>
+            <button className="fire-btn" onClick={() => setShowHotkeys(true)} title="Keyboard shortcuts">🔥</button>
+            <button className="collapse-btn" onClick={onToggleCollapse} title="Expand sidebar">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+            </button>
+          </div>
         </div>
-      </div>
+      </>
     )
   }
 
   return (
-    <div className="sidebar">
+    <>
+      {showHotkeys && <HotkeyModal onClose={() => setShowHotkeys(false)} />}
+      {showAbout && <AboutModal onClose={() => setShowAbout(false)} />}
+      <div className="sidebar" style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
+      <div className="sidebar-resize-handle" onMouseDown={handleResizeStart} />
       <div className="sidebar-header">
         <span className="sidebar-title">Emmy</span>
         <div className="sidebar-header-actions">
+          <button className="fire-btn" onClick={() => setShowHotkeys(true)} title="Keyboard shortcuts">🔥</button>
+          <button className="gear-btn" onClick={() => setShowAbout(true)} title="About Emmy">⚙️</button>
           <button className="new-session-btn" onClick={onNew} title="New session">+</button>
           <button className="collapse-btn" onClick={onToggleCollapse} title="Collapse sidebar">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -84,8 +144,13 @@ export default function Sidebar({ sessions, selectedId, onSelect, onNew, onRenam
         {sessions.map((session) => (
           <div
             key={session.id}
-            className={`session-item ${session.id === selectedId ? 'selected' : ''}`}
+            className={`session-item ${session.id === selectedId || session.id === rightPaneSessionId ? 'selected' : ''}`}
             onClick={() => onSelect(session.id)}
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.effectAllowed = 'copy'
+              e.dataTransfer.setData('application/session-id', session.id)
+            }}
           >
             <div className="session-item-inner">
               {session.isActive && <span className="active-dot" />}
@@ -105,12 +170,21 @@ export default function Sidebar({ sessions, selectedId, onSelect, onNew, onRenam
               ) : (
                 <>
                   <span className="session-name">{session.name}</span>
-                  <button className="rename-btn" onClick={(e) => startEdit(e, session)} title="Rename">
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                    </svg>
-                  </button>
+                  <div className="session-actions">
+                    <button className="history-btn" onClick={(e) => { e.stopPropagation(); onOpenHistory(session.id) }} title="Command history">
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                        <line x1="3" y1="6"  x2="21" y2="6"  />
+                        <line x1="3" y1="12" x2="21" y2="12" />
+                        <line x1="3" y1="18" x2="21" y2="18" />
+                      </svg>
+                    </button>
+                    <button className="rename-btn" onClick={(e) => startEdit(e, session)} title="Rename">
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                      </svg>
+                    </button>
+                  </div>
                 </>
               )}
             </div>
@@ -119,5 +193,6 @@ export default function Sidebar({ sessions, selectedId, onSelect, onNew, onRenam
         ))}
       </div>
     </div>
+    </>
   )
 }

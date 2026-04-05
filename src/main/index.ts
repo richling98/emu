@@ -58,23 +58,27 @@ app.whenReady().then(() => {
   ipcMain.handle('pty:create', (event, sessionId: string) => {
     const shell = os.platform() === 'win32' ? 'powershell.exe' : (process.env.SHELL || '/bin/zsh')
     const ptyProcess = pty.spawn(shell, [], {
-      name: 'xterm-color',
+      name: 'xterm-256color',
       cols: 80,
       rows: 24,
       cwd: os.homedir(),
-      env: process.env as Record<string, string>
+      env: { ...process.env as Record<string, string>, TERM: 'xterm-256color', COLORTERM: 'truecolor' }
     })
 
     ptyProcesses.set(sessionId, ptyProcess)
 
     // Forward PTY output to renderer
     ptyProcess.onData((data) => {
-      event.sender.send(`pty:data:${sessionId}`, data)
+      if (!event.sender.isDestroyed()) {
+        event.sender.send(`pty:data:${sessionId}`, data)
+      }
     })
 
     ptyProcess.onExit(() => {
       ptyProcesses.delete(sessionId)
-      event.sender.send(`pty:exit:${sessionId}`)
+      if (!event.sender.isDestroyed()) {
+        event.sender.send(`pty:exit:${sessionId}`)
+      }
     })
 
     return { pid: ptyProcess.pid }

@@ -1,8 +1,10 @@
 .sidebar {
-  width: 220px;
-  min-width: 220px;
-  background: rgba(24, 24, 37, 0.6);
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  width: 220px; /* overridden by inline style when resizing */
+  min-width: 160px;
+  background: rgba(22, 22, 40, 0.42);
+  backdrop-filter: blur(80px) saturate(220%) brightness(1.15);
+  -webkit-backdrop-filter: blur(80px) saturate(220%) brightness(1.15);
+  border-right: 1px solid rgba(255, 255, 255, 0.14);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -24,11 +26,29 @@
   background-size: 128px 128px;
 }
 
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 200;
+  -webkit-app-region: no-drag;
+}
+
+.sidebar-resize-handle:hover {
+  background: rgba(180, 190, 254, 0.3);
+  transition: background 0.15s;
+}
+
 .sidebar--collapsed {
   width: 80px;
   min-width: 80px;
-  background: rgba(24, 24, 37, 0.6);
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(22, 22, 40, 0.42);
+  backdrop-filter: blur(80px) saturate(220%) brightness(1.15);
+  -webkit-backdrop-filter: blur(80px) saturate(220%) brightness(1.15);
+  border-right: 1px solid rgba(255, 255, 255, 0.14);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -41,7 +61,7 @@
   flex-direction: column;
   align-items: center;
   gap: 10px;
-  padding-top: 52px; /* room for macOS traffic lights */
+  padding-top: 12px;
   padding-bottom: 8px;
   -webkit-app-region: no-drag;
 }
@@ -77,7 +97,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 52px 12px 12px; /* top padding makes room for macOS traffic lights */
+  padding: 12px 12px 12px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.07);
 }
 
@@ -86,6 +106,46 @@
   font-weight: 600;
   color: rgba(255, 255, 255, 0.85);
   letter-spacing: 0.5px;
+}
+
+.fire-btn {
+  background: rgba(255, 255, 255, 0.07);
+  border: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, transform 0.15s;
+}
+
+.fire-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  transform: scale(1.15);
+}
+
+.gear-btn {
+  background: rgba(255, 255, 255, 0.07);
+  border: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, transform 0.15s;
+}
+
+.gear-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  transform: scale(1.15);
 }
 
 .new-session-btn {
@@ -155,15 +215,26 @@
 }
 
 .session-item.selected {
-  background: rgba(137, 180, 250, 0.15);
   border-left: 2px solid #b4befe;
-  padding-left: 10px; /* compensate for the border so text doesn't shift */
+  border-radius: 0;
+  padding-left: 10px;
+  margin-left: 0;
+  margin-right: 6px;
 }
 
 .session-item-inner {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+}
+
+.session-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .active-dot {
@@ -192,26 +263,32 @@
   padding-left: 12px;
 }
 
+.history-btn,
 .rename-btn {
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 11px;
-  padding: 1px 3px;
+  padding: 2px 3px;
   border-radius: 3px;
   opacity: 0;
   flex-shrink: 0;
-  transition: opacity 0.15s;
-  line-height: 1;
+  transition: opacity 0.15s, background 0.15s;
+  line-height: 0;
   color: rgba(255, 255, 255, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
+.session-item:hover .history-btn,
 .session-item:hover .rename-btn {
-  opacity: 0.6;
+  opacity: 0.55;
 }
 
+.session-item:hover .history-btn:hover,
 .session-item:hover .rename-btn:hover {
   opacity: 1;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .session-rename-input {

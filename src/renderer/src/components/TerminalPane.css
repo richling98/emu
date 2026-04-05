@@ -7,6 +7,7 @@
   opacity: 0;
   pointer-events: none;
   transition: opacity 150ms ease;
+  padding: 16px;
 }
 
 .terminal-pane--visible {
@@ -14,11 +15,21 @@
   pointer-events: auto;
 }
 
+/* Inactive split pane dims subtly */
+.terminal-pane--visible:not(.terminal-pane--active) {
+  opacity: 0.55;
+  transition: opacity 200ms ease;
+}
+
+.terminal-pane--visible.terminal-pane--active {
+  opacity: 1;
+  transition: opacity 200ms ease;
+}
+
 .terminal-container {
   flex: 1;
   min-height: 0;
   width: 100%;
-  padding: 18px;
   overflow: hidden;
 }
 
@@ -28,6 +39,42 @@
 
 .terminal-container .xterm-viewport {
   overflow-y: auto !important;
+}
+
+/* File drag-and-drop overlay */
+.file-drop-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(30, 30, 46, 0.72);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  border: 2px dashed rgba(180, 190, 254, 0.5);
+  border-radius: 6px;
+  animation: file-drop-in 120ms ease;
+  pointer-events: none;
+}
+
+.file-drop-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(180, 190, 254, 0.15);
+  border: 1px solid rgba(180, 190, 254, 0.35);
+  border-radius: 10px;
+  padding: 12px 20px;
+  color: #b4befe;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+@keyframes file-drop-in {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: scale(1); }
 }
 
 /* Floating copy button — top-right corner, appears after first command */

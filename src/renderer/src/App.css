@@ -1,9 +1,76 @@
 .app {
   display: flex;
+  flex-direction: column;
   height: 100vh;
   width: 100vw;
   overflow: hidden;
   background: transparent;
+}
+
+/* Full-width drag bar — acts as the macOS title bar */
+.titlebar {
+  height: 36px;
+  flex-shrink: 0;
+  width: 100%;
+  background: rgba(28, 28, 45, 0.45);
+  backdrop-filter: blur(80px) saturate(220%) brightness(1.15);
+  -webkit-backdrop-filter: blur(80px) saturate(220%) brightness(1.15);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  gap: 12px;
+}
+
+.titlebar-drag-area {
+  -webkit-app-region: drag;
+  flex: 1;
+  height: 100%;
+}
+
+.titlebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  -webkit-app-region: no-drag;
+}
+
+.layout-btn {
+  background: rgba(255, 255, 255, 0.07);
+  border: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+  color: rgba(255, 255, 255, 0.6);
+  padding: 0;
+}
+
+.layout-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+.layout-btn.active {
+  background: rgba(180, 190, 254, 0.25);
+  color: #b4befe;
+}
+
+/* The main content area below the titlebar */
+.app-body {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+  min-height: 0;
 }
 
 .terminal-area {
@@ -11,4 +78,95 @@
   position: relative;
   background: #1e1e2e;
   overflow: hidden;
+}
+
+/* Split mode: all positions driven by --split-ratio CSS custom property */
+
+.terminal-area--split .terminal-pane--left {
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  width: calc(var(--split-ratio, 0.5) * 100% - 2px);
+}
+
+.terminal-area--split .terminal-pane--right {
+  position: absolute;
+  top: 0; bottom: 0; right: 0;
+  left: calc(var(--split-ratio, 0.5) * 100% + 2px);
+}
+
+.terminal-area--split .terminal-pane--hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Draggable divider */
+.pane-divider--vertical {
+  position: absolute;
+  top: 0; bottom: 0;
+  left: calc(var(--split-ratio, 0.5) * 100%);
+  width: 4px;
+  transform: translateX(-50%);
+  background: rgba(255, 255, 255, 0.08);
+  cursor: col-resize;
+  z-index: 20;
+  transition: background 0.15s;
+}
+
+.pane-divider--vertical:hover,
+.pane-divider--vertical:active {
+  background: rgba(180, 190, 254, 0.4);
+}
+
+/* Empty right pane drop zone */
+.empty-pane {
+  position: absolute;
+  top: 0; bottom: 0; right: 0;
+  left: calc(var(--split-ratio, 0.5) * 100% + 2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(30, 30, 46, 0.5);
+  border: 2px dashed rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 14px;
+  cursor: grab;
+  user-select: none;
+  font-weight: 500;
+  z-index: 5;
+}
+
+.empty-pane:hover {
+  background: rgba(30, 30, 46, 0.7);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.empty-pane.drag-over {
+  background: rgba(180, 190, 254, 0.12);
+  border-color: rgba(180, 190, 254, 0.4);
+  color: rgba(180, 190, 254, 0.7);
+}
+
+/* Drag-over overlays — appear over occupied panes during any drag */
+.pane-drop-overlay {
+  position: absolute;
+  top: 0; bottom: 0;
+  z-index: 50;
+  transition: background 0.1s, border-color 0.1s;
+  border: 2px dashed transparent;
+}
+
+.pane-drop-overlay--left {
+  left: 0;
+  width: calc(var(--split-ratio, 0.5) * 100% - 2px);
+}
+
+.pane-drop-overlay--right {
+  left: calc(var(--split-ratio, 0.5) * 100% + 2px);
+  right: 0;
+}
+
+.pane-drop-overlay.drag-over {
+  background: rgba(180, 190, 254, 0.12);
+  border-color: rgba(180, 190, 254, 0.4);
 }
