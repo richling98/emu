@@ -1,0 +1,74 @@
+/* Input line — shows the command the user typed */
+.cmd-input {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 16px 2px;
+}
+
+.cmd-prompt {
+  color: #4a9eff;
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.cmd-text {
+  color: #e0e0e0;
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  font-size: 13px;
+  word-break: break-all;
+}
+
+/* Output block — raw terminal output with floating copy button */
+.cmd-output-wrap {
+  position: relative;
+  padding: 4px 16px 8px;
+}
+
+.cmd-output-wrap:hover .cmd-copy {
+  opacity: 1;
+}
+
+.cmd-copy {
+  position: absolute;
+  top: 6px;
+  right: 12px;
+  background: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 5px;
+  color: #888;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+  z-index: 1;
+}
+
+.cmd-copy:hover {
+  background: #2a2a2a;
+  color: #fff;
+}
+
+.cmd-output {
+  margin: 0;
+  font-family: Menlo, Monaco, 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #f0f0f0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Divider between command blocks */
+.cmd-divider {
+  border: none;
+  border-top: 1px solid #1e1e1e;
+  margin: 6px 16px;
+}

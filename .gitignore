@@ -1,5 +1,6 @@
 # build output
 dist
+out
 app/renderer
 target
 bin/cli.*
@@ -21,3 +22,4 @@ plugins
 .vscode/*
 !.vscode/launch.json
 .idea
+.gstack/
