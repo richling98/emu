@@ -84,6 +84,12 @@ app.whenReady().then(() => {
     return { pid: ptyProcess.pid }
   })
 
+  // Open URLs in default browser
+  ipcMain.handle('shell:openExternal', (_, url: string) => shell.openExternal(url))
+
+  // Open file paths in Finder / default app
+  ipcMain.handle('shell:openPath', (_, path: string) => shell.openPath(path))
+
   // Write input to PTY
   ipcMain.on('pty:write', (_, sessionId: string, data: string) => {
     ptyProcesses.get(sessionId)?.write(data)

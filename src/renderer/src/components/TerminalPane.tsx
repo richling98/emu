@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
+import { WebLinksAddon } from '@xterm/addon-web-links'
 import type { Session } from '../App'
 import CommandHistoryDrawer, { type HistoryEntry } from './CommandHistoryDrawer'
 import '@xterm/xterm/css/xterm.css'
@@ -118,6 +119,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     if (!containerRef.current) return
 
     const terminal = new Terminal({
+      allowProposedApi: true,
       theme: {
         background: '#1e1e2e',
         foreground: '#cdd6f4',
@@ -168,6 +170,137 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     terminal.focus()
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
+
+    // ── Semantic output coloring ────────────────────────────────────────────
+
+    // 1. Clickable URLs — WebLinksAddon handles detection + edge cases
+    const webLinks = new WebLinksAddon((_, url) => window.api.openExternal(url))
+    terminal.loadAddon(webLinks)
+
+    // 2a. Clickable bare-domain URLs — nvidia.com, perplexity.com/path, etc.
+    //     WebLinksAddon already handles http(s):// URLs; this catches everything else.
+    //     TLD filter blocks common file extensions to avoid false positives (main.go, index.ts…)
+    //     startX uses m.index + prefix-length instead of the 'd' flag to avoid silent failures.
+    const BARE_DOMAIN_RE = /(?:^|[\s"'`(<\[])([a-zA-Z0-9][a-zA-Z0-9-]*(?:\.[a-zA-Z0-9][a-zA-Z0-9-]*)*\.[a-zA-Z]{2,10}(?::[0-9]{1,5})?(?:\/[^\s"'`)\]>]*)?)/g
+    const CODE_EXTS = new Set([
+      'js','ts','jsx','tsx','mjs','cjs','py','go','rb','rs','java','kt','swift',
+      'c','cpp','cc','h','hpp','cs','php','pl','r','sh','bash','zsh','fish',
+      'md','txt','json','yaml','yml','toml','xml','html','htm','css','scss',
+      'less','svg','png','jpg','jpeg','gif','ico','webp','pdf','zip','tar','gz',
+      'bz2','xz','lock','sum','mod','env','cfg','conf','ini','log','sql','db',
+      'sqlite','vue','svelte','dart','ex','exs','elm','hs','ml','clj','scala',
+      'tf','hcl','proto','wasm','map','d','o','a','so','dylib','dll','exe',
+    ])
+    terminal.registerLinkProvider({
+      provideLinks(lineY, callback) {
+        // lineY is 1-based per xterm.js ILinkProvider contract (see OscLinkProvider.ts)
+        const line = terminal.buffer.active.getLine(lineY - 1)
+        if (!line) return callback([])
+        const text = line.translateToString(true)
+        const links: Parameters<typeof callback>[0] = []
+        for (const m of text.matchAll(BARE_DOMAIN_RE)) {
+          const raw = m[1]
+          const domain = raw.split('/')[0].split(':')[0]
+          const parts = domain.split('.')
+          if (parts.length < 2) continue
+          const tld = parts.at(-1)!.toLowerCase()
+          if (CODE_EXTS.has(tld)) continue
+          const startX = m.index! + (m[0].length - raw.length)
+          links.push({
+            text: raw,
+            // Ranges are 1-based x; y is used as-is (already 1-based)
+            range: { start: { x: startX + 1, y: lineY }, end: { x: startX + raw.length, y: lineY } },
+            activate: () => window.api.openExternal(`https://${raw}`),
+          })
+        }
+        callback(links)
+      }
+    })
+
+    // 2b. Clickable file paths — /absolute and ./relative, stops at shell terminators
+    const FILE_PATH_RE = /(?:^|[\s"'`(])((?:\/|\.{1,2}\/)[^\s"'`)\]>]+)/g
+    terminal.registerLinkProvider({
+      provideLinks(lineY, callback) {
+        // lineY is 1-based per xterm.js ILinkProvider contract (see OscLinkProvider.ts)
+        const line = terminal.buffer.active.getLine(lineY - 1)
+        if (!line) return callback([])
+        const text = line.translateToString(true)
+        const links: Parameters<typeof callback>[0] = []
+        for (const m of text.matchAll(FILE_PATH_RE)) {
+          const path = m[1]
+          const startX = m.index! + (m[0].length - path.length)
+          links.push({
+            text: path,
+            range: {
+              // Ranges are 1-based x; y is used as-is (already 1-based)
+              start: { x: startX + 1, y: lineY },
+              end: { x: startX + path.length, y: lineY }
+            },
+            activate: () => window.api.openPath(path),
+          })
+        }
+        callback(links)
+      }
+    })
+
+    // 3. Error / warning / success keyword decorations
+    //    Only the matching keyword cells are colored — not the whole line.
+    //    backgroundColor renders via the WebGL/canvas pipeline directly (no DOM needed).
+    //    'g' flag required for String.matchAll().
+    const LINE_PATTERNS = [
+      { re: /\b(error|Error|ERROR|fatal|Fatal|FATAL|failed|Failed|FAILED|exception|Exception)\b/g,
+        backgroundColor: '#4a1c1c' },
+      { re: /\b(warning|Warning|WARNING|warn|WARN|deprecated|Deprecated)\b/g,
+        backgroundColor: '#4a3c10' },
+      { re: /\b(success|Success|SUCCESS|done|Done|DONE|installed|completed|Completed|passed|Passed|✓|✔)\b/g,
+        backgroundColor: '#1c4a24' },
+    ]
+
+    let prevAbsLine = 0
+    // Track the range of buffer lines the user typed on so we can exclude them
+    // from decoration. Handles single keys and multi-line paste correctly.
+    let inputRangeStart = -1
+    let inputRangeEnd = -1
+
+    terminal.onWriteParsed(() => {
+      const newAbsLine = terminal.buffer.active.baseY + terminal.buffer.active.cursorY
+      const start = prevAbsLine
+      prevAbsLine = newAbsLine
+
+      for (let absLine = start; absLine <= newAbsLine; absLine++) {
+        // Skip lines the user was typing on — we decorate output only
+        if (inputRangeStart >= 0 && absLine >= inputRangeStart && absLine <= inputRangeEnd) continue
+
+        const bufLine = terminal.buffer.active.getLine(absLine)
+        if (!bufLine) continue
+        const text = bufLine.translateToString(true).trimEnd()
+        if (!text) continue
+
+        // One marker per line (created lazily on first keyword match)
+        let marker: ReturnType<typeof terminal.registerMarker> | undefined
+        for (const pattern of LINE_PATTERNS) {
+          const matches = [...text.matchAll(pattern.re)]
+          if (matches.length === 0) continue
+
+          if (!marker) {
+            marker = terminal.registerMarker(absLine - newAbsLine)
+            if (!marker) break
+          }
+          for (const m of matches) {
+            terminal.registerDecoration({
+              marker,
+              x: m.index!,
+              width: m[0].length,
+              height: 1,
+              backgroundColor: pattern.backgroundColor,
+              layer: 'bottom',
+            })
+          }
+        }
+      }
+    })
+
+    // ── End semantic output coloring ────────────────────────────────────────
 
     window.api.ptyCreate(session.id).then(() => {
       // Rotating greeting banners — picks a fresh one each time
@@ -261,6 +394,14 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     })
 
     terminal.onData((data) => {
+      // Track the range of lines the user is typing on so onWriteParsed can
+      // exclude them. Multi-line paste occupies several lines, so we extend
+      // inputRangeEnd by the number of newlines in the pasted data.
+      const curAbsLine = terminal.buffer.active.baseY + terminal.buffer.active.cursorY
+      if (inputRangeStart < 0 || curAbsLine > inputRangeEnd) inputRangeStart = curAbsLine
+      const extraLines = (data.replace(/\x1b\[200~|\x1b\[201~/g, '').match(/[\r\n]/g) ?? []).length
+      inputRangeEnd = curAbsLine + extraLines
+
       const BACKSPACE = '\x7f'
 
       // Highlight-to-delete
@@ -282,11 +423,12 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       savedSelection = ''
       savedSelStartCol = -1
 
-      // Strip bracketed paste markers so pasted text is echoed inline
-      const out = data.replace(/\x1b\[200~([\s\S]*?)\x1b\[201~/g, '$1')
+      // Pass data to PTY as-is — bracketed paste markers (\x1b[200~...\x1b[201~)
+      // are left intact so zsh buffers all pasted lines and waits for a single
+      // Enter, matching standard macOS Terminal behaviour.
 
       // Track command history — record command on Enter
-      if (out === '\r') {
+      if (data === '\r') {
         const cmd = currentInputRef.current.trim()
         currentInputRef.current = ''
         if (cmd) {
@@ -302,10 +444,10 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
           setCommandHistory(prev => [...prev, entry])
         }
       } else {
-        currentInputRef.current = applyInput(currentInputRef.current, out)
+        currentInputRef.current = applyInput(currentInputRef.current, data)
       }
 
-      window.api.ptyWrite(session.id, out)
+      window.api.ptyWrite(session.id, data)
     })
 
     const resizeObserver = new ResizeObserver(() => {

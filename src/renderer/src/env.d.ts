@@ -10,5 +10,7 @@ interface Window {
     onPtyExit: (sessionId: string, callback: () => void) => () => void
     onFontZoom: (callback: (delta: number) => void) => () => void
     getFilePath: (file: File) => string
+    openExternal: (url: string) => Promise<void>
+    openPath: (path: string) => Promise<string>
   }
 }

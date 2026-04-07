@@ -31,5 +31,9 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('font:zoom', listener)
   },
   // Get the filesystem path for a dropped File object (Electron 32+ API)
-  getFilePath: (file: File) => webUtils.getPathForFile(file)
+  getFilePath: (file: File) => webUtils.getPathForFile(file),
+  // Open a URL in the system default browser
+  openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+  // Open a file path in Finder / default app
+  openPath: (path: string) => ipcRenderer.invoke('shell:openPath', path)
 })
