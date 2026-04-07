@@ -33,9 +33,10 @@ interface Props {
   onSessionEnd: () => void
   openDrawer?: boolean
   onDrawerClose?: () => void
+  onClosePane?: () => void
 }
 
-export default function TerminalPane({ session, isVisible, slot = 'full', isActive = true, onActivate, onSessionEnd, openDrawer, onDrawerClose }: Props) {
+export default function TerminalPane({ session, isVisible, slot = 'full', isActive = true, onActivate, onSessionEnd, openDrawer, onDrawerClose, onClosePane }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -542,6 +543,16 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       className={`terminal-pane terminal-pane--${slot}${isVisible ? ' terminal-pane--visible' : ''}${isActive ? ' terminal-pane--active' : ''}`}
       onMouseDown={onActivate}
     >
+      {(slot === 'left' || slot === 'right') && (
+        <div className="pane-header">
+          <span className="pane-header-name">{session.name}</span>
+          <button
+            className="pane-header-close"
+            onClick={(e) => { e.stopPropagation(); onClosePane?.() }}
+            title="Close pane"
+          >✕</button>
+        </div>
+      )}
       <div ref={containerRef} className="terminal-container" />
       {fileDropActive && (
         <div className="file-drop-overlay">

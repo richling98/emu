@@ -83,6 +83,22 @@ export default function App() {
     }
   }, [layoutMode])
 
+  // Close a specific split pane:
+  // • Right pane → clear it (shows "Drag a tab here" placeholder)
+  // • Left pane  → if right has a session, promote it to left; otherwise exit split
+  const handleCloseLeftPane = useCallback(() => {
+    if (rightPaneSessionId) {
+      setSelectedId(rightPaneSessionId)
+      setRightPaneSessionId(null)
+    } else {
+      setLayoutMode('single')
+    }
+  }, [rightPaneSessionId])
+
+  const handleCloseRightPane = useCallback(() => {
+    setRightPaneSessionId(null)
+  }, [])
+
   const handleDividerMouseDown = (e: React.MouseEvent) => {
     e.preventDefault()
     const area = (e.currentTarget as HTMLElement).parentElement!
@@ -168,6 +184,7 @@ export default function App() {
                 onSessionEnd={() => handleSessionEnd(session.id)}
                 openDrawer={openHistoryFor === session.id}
                 onDrawerClose={() => setOpenHistoryFor(null)}
+                onClosePane={isLeftSlot ? handleCloseLeftPane : isRightSlot ? handleCloseRightPane : undefined}
               />
             )
           })}

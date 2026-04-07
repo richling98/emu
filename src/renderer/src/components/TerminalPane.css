@@ -26,6 +26,49 @@
   transition: opacity 200ms ease;
 }
 
+/* Split-pane header — session name + close button */
+.pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 26px;
+  margin-bottom: 6px;
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+
+.pane-header-name {
+  font-size: 11px;
+  font-family: inherit;
+  color: rgba(203, 166, 247, 0.65);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+.pane-header-close {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: rgba(205, 214, 244, 0.35);
+  cursor: pointer;
+  font-size: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 150ms ease, color 150ms ease;
+  flex-shrink: 0;
+}
+
+.pane-header-close:hover {
+  background: rgba(243, 139, 168, 0.15);
+  color: #f38ba8;
+}
+
 .terminal-container {
   flex: 1;
   min-height: 0;
