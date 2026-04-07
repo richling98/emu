@@ -6,10 +6,14 @@ interface Props {
 
 const FEATURES = [
   { title: 'Split-Screen Mode', desc: 'Two terminals, side-by-side. Drag the divider to resize, drop any tab into either pane, and work on two things at once without ever leaving Emmy.' },
+  { title: 'Semantic Output Coloring', desc: 'Emmy reads your output and highlights what matters — errors and failures glow red, warnings amber, and successes green. Just the keyword, not the whole line. Scan a wall of text in a glance.' },
+  { title: 'Clickable URLs & Domains', desc: 'Every URL in your terminal — https:// links and bare domains like nvidia.com or perplexity.ai — is Cmd+clickable and opens in your default browser. No copying, no switching apps.' },
+  { title: 'Clickable File Paths', desc: 'Any /absolute or ./relative path that appears in output is Cmd+clickable. Emmy opens it directly in Finder so you can jump from a stack trace or build log to the right file instantly.' },
   { title: 'Screenshot & File Drop', desc: 'Drag any file — screenshot, image, document — straight from Finder into the terminal. Emmy instantly pastes the shell-escaped path, ready to use with Claude or any CLI tool.' },
   { title: 'Jump to Prompt', desc: '⌘↑ / ⌘↓ lets you fly through your scrollback history one command at a time, jumping straight to each prompt so you can review output without losing your place.' },
   { title: 'Command Log', desc: '⌘⇧L opens a searchable, time-stamped log of every command you\'ve run — with output previews and one-click jump-to. Your full terminal history, always at hand.' },
   { title: 'Unfocused Split Dimming', desc: 'When two panes are open, the inactive one dims back — giving an instant, clear focus signal. Click any pane to bring it to life. Hotkeys always go to whichever pane you\'re on.' },
+  { title: 'Multi-Line Paste', desc: 'Paste a block of commands and Emmy hands them to your shell as a unit — all lines land intact, waiting for a single Enter. Exactly how a real terminal should handle it.' },
   { title: 'Tab Drag & Drop', desc: 'In split mode, drag any session tab from the sidebar and drop it onto either pane to instantly reassign it. Rearrange your workspace in one motion.' },
   { title: 'GPU Rendering', desc: 'WebGL-accelerated text rendering with Retina support. Every character is razor-sharp at any font size, and scrolling is silky smooth even in dense output.' },
   { title: 'Frosted Glass UI', desc: 'Vibrancy on the sidebar and titlebar — layered blur, saturation, and brightness that respond to your desktop in real time for a truly native macOS feel.' },

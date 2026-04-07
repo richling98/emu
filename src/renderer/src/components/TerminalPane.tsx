@@ -210,6 +210,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
             text: raw,
             // Ranges are 1-based x; y is used as-is (already 1-based)
             range: { start: { x: startX + 1, y: lineY }, end: { x: startX + raw.length, y: lineY } },
+            decorations: { underline: true, pointerCursor: true },
             activate: () => window.api.openExternal(`https://${raw}`),
           })
         }
@@ -236,6 +237,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
               start: { x: startX + 1, y: lineY },
               end: { x: startX + path.length, y: lineY }
             },
+            decorations: { underline: true, pointerCursor: true },
             activate: () => window.api.openPath(path),
           })
         }
@@ -297,6 +299,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
             })
           }
         }
+
       }
     })
 
