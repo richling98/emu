@@ -96,6 +96,17 @@
   margin: 0;
 }
 
+.about-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(203, 166, 247, 0.5);
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(203, 166, 247, 0.15);
+  margin-top: 4px;
+}
+
 .about-features {
   display: flex;
   flex-direction: column;
