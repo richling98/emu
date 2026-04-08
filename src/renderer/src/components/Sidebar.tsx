@@ -27,8 +27,8 @@ function relativeTime(date: Date, now: Date): string {
   return `${days}d ago`
 }
 
-const COLLAPSE_THRESHOLD = 120
-const MIN_WIDTH = 160
+const COLLAPSE_THRESHOLD = 190
+const MIN_WIDTH = 190
 const MAX_WIDTH = 420
 
 export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSelect, onNew, onRename, collapsed, onToggleCollapse, onOpenHistory }: Props) {
