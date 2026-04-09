@@ -120,7 +120,6 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     if (!containerRef.current) return
 
     const terminal = new Terminal({
-      allowProposedApi: true,
       theme: {
         background: '#1e1e2e',
         foreground: '#cdd6f4',
@@ -172,7 +171,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
 
-    // ── Semantic output coloring ────────────────────────────────────────────
+    // ── Clickable links ──────────────────────────────────────────────────────
 
     // 1. Clickable URLs — WebLinksAddon handles detection + edge cases
     const webLinks = new WebLinksAddon((_, url) => window.api.openExternal(url))
@@ -246,65 +245,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       }
     })
 
-    // 3. Error / warning / success keyword decorations
-    //    Only the matching keyword cells are colored — not the whole line.
-    //    backgroundColor renders via the WebGL/canvas pipeline directly (no DOM needed).
-    //    'g' flag required for String.matchAll().
-    const LINE_PATTERNS = [
-      { re: /\b(error|Error|ERROR|fatal|Fatal|FATAL|failed|Failed|FAILED|exception|Exception)\b/g,
-        backgroundColor: '#4a1c1c' },
-      { re: /\b(warning|Warning|WARNING|warn|WARN|deprecated|Deprecated)\b/g,
-        backgroundColor: '#4a3c10' },
-      { re: /\b(success|Success|SUCCESS|done|Done|DONE|installed|completed|Completed|passed|Passed|✓|✔)\b/g,
-        backgroundColor: '#1c4a24' },
-    ]
-
-    let prevAbsLine = 0
-    // Track the range of buffer lines the user typed on so we can exclude them
-    // from decoration. Handles single keys and multi-line paste correctly.
-    let inputRangeStart = -1
-    let inputRangeEnd = -1
-
-    terminal.onWriteParsed(() => {
-      const newAbsLine = terminal.buffer.active.baseY + terminal.buffer.active.cursorY
-      const start = prevAbsLine
-      prevAbsLine = newAbsLine
-
-      for (let absLine = start; absLine <= newAbsLine; absLine++) {
-        // Skip lines the user was typing on — we decorate output only
-        if (inputRangeStart >= 0 && absLine >= inputRangeStart && absLine <= inputRangeEnd) continue
-
-        const bufLine = terminal.buffer.active.getLine(absLine)
-        if (!bufLine) continue
-        const text = bufLine.translateToString(true).trimEnd()
-        if (!text) continue
-
-        // One marker per line (created lazily on first keyword match)
-        let marker: ReturnType<typeof terminal.registerMarker> | undefined
-        for (const pattern of LINE_PATTERNS) {
-          const matches = [...text.matchAll(pattern.re)]
-          if (matches.length === 0) continue
-
-          if (!marker) {
-            marker = terminal.registerMarker(absLine - newAbsLine)
-            if (!marker) break
-          }
-          for (const m of matches) {
-            terminal.registerDecoration({
-              marker,
-              x: m.index!,
-              width: m[0].length,
-              height: 1,
-              backgroundColor: pattern.backgroundColor,
-              layer: 'bottom',
-            })
-          }
-        }
-
-      }
-    })
-
-    // ── End semantic output coloring ────────────────────────────────────────
+    // ── End clickable links ──────────────────────────────────────────────────
 
     window.api.ptyCreate(session.id).then(() => {
       // Rotating greeting banners — picks a fresh one each time
@@ -398,14 +339,6 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     })
 
     terminal.onData((data) => {
-      // Track the range of lines the user is typing on so onWriteParsed can
-      // exclude them. Multi-line paste occupies several lines, so we extend
-      // inputRangeEnd by the number of newlines in the pasted data.
-      const curAbsLine = terminal.buffer.active.baseY + terminal.buffer.active.cursorY
-      if (inputRangeStart < 0 || curAbsLine > inputRangeEnd) inputRangeStart = curAbsLine
-      const extraLines = (data.replace(/\x1b\[200~|\x1b\[201~/g, '').match(/[\r\n]/g) ?? []).length
-      inputRangeEnd = curAbsLine + extraLines
-
       const BACKSPACE = '\x7f'
 
       // Highlight-to-delete
