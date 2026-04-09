@@ -274,6 +274,56 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
 
+    // ── Alternate-screen detection via xterm.js buffer events ────────────────
+    // We listen to the authoritative buffer-switch event rather than scanning
+    // raw PTY bytes for \x1b[?1049h / \x1b[?1049l.  The byte-scan approach
+    // falsely triggers when ANY process echoes those characters as text (e.g.
+    // `echo "\x1b[?1049h"` on a zsh that interprets \x escapes), breaking the
+    // entire terminal session.  onBufferChange only fires when xterm.js actually
+    // switches buffers — immune to text that merely looks like the sequence.
+    // Shell process names — login shells on macOS appear with a leading dash
+    const SHELL_NAMES = ['zsh', 'bash', 'fish', 'sh', 'dash', 'ksh', 'tcsh',
+                         '-zsh', '-bash', '-fish', '-sh']
+
+    terminal.buffer.onBufferChange(async (newBuffer) => {
+      if (newBuffer.type === 'alternate') {
+        isAltScreenRef.current = true
+        // Snapshot normal-buffer position — used as the navigation anchor for
+        // commands typed inside TUI apps (alt buffer coords are not scrollable).
+        altScreenEntryLineRef.current =
+          terminal.buffer.normal.baseY + terminal.buffer.normal.cursorY
+        currentInputRef.current = ''
+        if (outputFlushTimerRef.current) {
+          clearTimeout(outputFlushTimerRef.current)
+          outputFlushTimerRef.current = null
+        }
+
+        // Detect accidental alt-screen entry (e.g. echo outputting \x1b[?1049h]).
+        // If the foreground PTY process is still the shell, no real TUI launched —
+        // force the terminal back to the normal buffer so scrollback stays intact.
+        // The check is async (IPC round-trip) but fast; we guard with isAltScreenRef
+        // so we don't force-exit if a TUI already exited naturally during the await.
+        const proc: string | null = await window.api.ptyGetProcess(session.id)
+        const isShellForeground = proc !== null &&
+          SHELL_NAMES.some(s => proc.toLowerCase() === s)
+        if (isShellForeground && isAltScreenRef.current) {
+          // Write the exit sequence directly to the terminal display (not the PTY)
+          // to restore the normal buffer without disrupting the running shell.
+          terminal.write('\x1b[?1049l')
+        }
+      } else {
+        isAltScreenRef.current = false
+        currentInputRef.current = ''
+        currentEntryIdRef.current = null
+        currentEntryStartLineRef.current = -1
+        if (outputFlushTimerRef.current) {
+          clearTimeout(outputFlushTimerRef.current)
+          outputFlushTimerRef.current = null
+        }
+      }
+    })
+    // ── End alternate-screen detection ───────────────────────────────────────
+
     // Track whether the viewport is scrolled to the bottom.
     // Use a native DOM scroll listener on .xterm-viewport rather than terminal.onScroll,
     // because terminal.onScroll only fires on xterm-internal scroll events (new output).
@@ -287,6 +337,33 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       setIsAtBottom(distFromBottom < 10)
     }
     viewportEl?.addEventListener('scroll', updateScrollState, { passive: true })
+
+    // ── Scroll wheel override ─────────────────────────────────────────────────
+    // xterm.js in alternate-screen mode converts wheel events into cursor-key
+    // sequences (↑/↓) instead of scrolling the viewport.  This makes scroll
+    // navigate shell history rather than the terminal buffer — the opposite of
+    // what every macOS terminal app does.  We intercept all wheel events in the
+    // capture phase and drive scrolling through xterm.js's own API so the
+    // viewport always scrolls, regardless of screen mode.
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      // deltaMode 0 = pixels, 1 = lines, 2 = pages
+      const fontSize = terminal.options.fontSize ?? 14
+      const lineHeight = terminal.options.lineHeight ?? 1.0
+      const pxPerLine = fontSize * lineHeight
+      let lines: number
+      if (e.deltaMode === 1) {
+        lines = Math.round(e.deltaY)
+      } else if (e.deltaMode === 2) {
+        lines = e.deltaY > 0 ? terminal.rows : -terminal.rows
+      } else {
+        lines = Math.round(e.deltaY / pxPerLine)
+      }
+      if (lines !== 0) terminal.scrollLines(lines)
+    }
+    containerRef.current.addEventListener('wheel', handleWheel, { capture: true, passive: false })
+    // ── End scroll wheel override ─────────────────────────────────────────────
 
     // ── Clickable links ──────────────────────────────────────────────────────
 
@@ -436,37 +513,6 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
     const removeDataListener = window.api.onPtyData(session.id, (data) => {
       terminal.write(data)
-
-      // ── Alternate-screen detection ────────────────────────────────────────
-      // \x1b[?1049h = DECSET 1049 → enter alternate screen (vim, claude code, etc.)
-      // \x1b[?1049l = DECRST 1049 → exit  alternate screen
-      // These arrive as complete sequences in a single PTY chunk in practice.
-      if (data.includes('\x1b[?1049h')) {
-        isAltScreenRef.current = true
-        // Snapshot the MAIN buffer position NOW — before xterm switches to alt buffer.
-        // Commands typed inside the TUI will use this as their navigation anchor so
-        // clicking them in the log jumps to where the TUI was launched, not garbage coords.
-        altScreenEntryLineRef.current = terminal.buffer.active.baseY + terminal.buffer.active.cursorY
-        currentInputRef.current = ''  // fresh slate for TUI prompts
-        // Flush is a no-op while in alt-screen (see flushOutputBuffer guard below)
-        if (outputFlushTimerRef.current) {
-          clearTimeout(outputFlushTimerRef.current)
-          outputFlushTimerRef.current = null
-        }
-      }
-      if (data.includes('\x1b[?1049l')) {
-        isAltScreenRef.current = false
-        currentInputRef.current = ''
-        // Discard any output-capture state opened while in alt-screen — reading the
-        // alt buffer after the switch would return stale/wrong content.
-        currentEntryIdRef.current = null
-        currentEntryStartLineRef.current = -1
-        if (outputFlushTimerRef.current) {
-          clearTimeout(outputFlushTimerRef.current)
-          outputFlushTimerRef.current = null
-        }
-      }
-      // ── End alternate-screen detection ───────────────────────────────────
 
       // Capture first line of output as a quick preview for the Command Log entry
       if (waitingForPreviewRef.current) {
@@ -670,6 +716,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       containerRef.current?.removeEventListener('dragover', handleDragOver, { capture: true })
       containerRef.current?.removeEventListener('dragleave', handleDragLeave, { capture: true })
       containerRef.current?.removeEventListener('drop', handleDrop, { capture: true })
+      containerRef.current?.removeEventListener('wheel', handleWheel, { capture: true })
       terminal.dispose()
       window.api.ptyClose(session.id)
     }

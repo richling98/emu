@@ -84,6 +84,13 @@ app.whenReady().then(() => {
     return { pid: ptyProcess.pid }
   })
 
+  // Return the name of the current foreground process in a PTY session.
+  // Used by the renderer to distinguish real TUI apps (vim, claude) entering
+  // alt-screen from accidental entries (e.g. echo outputting \x1b[?1049h]).
+  ipcMain.handle('pty:process', (_, sessionId: string) => {
+    return ptyProcesses.get(sessionId)?.process ?? null
+  })
+
   // Open URLs in default browser
   ipcMain.handle('shell:openExternal', (_, url: string) => shell.openExternal(url))
 

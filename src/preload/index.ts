@@ -32,6 +32,8 @@ contextBridge.exposeInMainWorld('api', {
   },
   // Get the filesystem path for a dropped File object (Electron 32+ API)
   getFilePath: (file: File) => webUtils.getPathForFile(file),
+  // Get the foreground process name for a PTY session
+  ptyGetProcess: (sessionId: string) => ipcRenderer.invoke('pty:process', sessionId),
   // Open a URL in the system default browser
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   // Open a file path in Finder / default app
