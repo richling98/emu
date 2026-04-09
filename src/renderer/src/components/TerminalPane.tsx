@@ -83,6 +83,20 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   const currentInputRef = useRef('')
   const waitingForPreviewRef = useRef<string | null>(null)
 
+  // Track alternate-screen state (vim, claude code, etc. use \x1b[?1049h / \x1b[?1049l).
+  // While in alt-screen, buffer.active refers to the ALTERNATE buffer — its baseY/cursorY
+  // are completely different coordinates from the main scrollback.  We still track commands
+  // typed inside TUI apps, but we anchor them to the main buffer line where the TUI launched
+  // so navigation always ends up at a valid, scrollable position.
+  const isAltScreenRef = useRef(false)
+  const altScreenEntryLineRef = useRef(-1) // main-buffer line when alt-screen was entered
+
+  // Record the buffer line where the user began typing the CURRENT command — i.e. the moment
+  // currentInputRef transitions from empty to non-empty.  This is the start of the prompt line,
+  // not the end.  Without this, multi-line commands navigate to the LAST line (where Enter was
+  // pressed) instead of the first line, cutting off the beginning of the prompt.
+  const promptStartLineRef = useRef(-1)
+
   // Full output capture — tracks the terminal buffer line range for each command.
   // We read from xterm.js's rendered buffer (not raw PTY bytes) so sync-output
   // animations, cursor movements, and shell prompts are already resolved correctly.
@@ -152,9 +166,14 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     if (openDrawer) setShowDrawer(true)
   }, [openDrawer])
 
-  // Scroll so the prompt line appears near the top with a small buffer above it
+  // Scroll so the prompt line appears at the top of the viewport.
+  // We subtract a small offset because interactive apps like Claude Code re-render
+  // the conversation after each exchange, placing the user's message 1-3 lines above
+  // where the cursor was sitting when they started typing.  The offset ensures the
+  // beginning of the command is always the first thing you see.  For plain zsh commands
+  // this just shows a couple lines of prior context above the prompt, which is natural.
   const scrollToPromptLine = (line: number) => {
-    terminalRef.current?.scrollToLine(line)
+    terminalRef.current?.scrollToLine(Math.max(0, line - 3))
   }
 
   const handleCloseDrawer = () => {
@@ -385,6 +404,9 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         clearTimeout(outputFlushTimerRef.current)
         outputFlushTimerRef.current = null
       }
+      // Never read output while alt-screen is active — buffer.active is the alt buffer
+      // and its content would be TUI rendering garbage, not real command output.
+      if (isAltScreenRef.current) return
       const id = currentEntryIdRef.current
       const startLine = currentEntryStartLineRef.current
       currentEntryIdRef.current = null
@@ -413,6 +435,37 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
     const removeDataListener = window.api.onPtyData(session.id, (data) => {
       terminal.write(data)
+
+      // ── Alternate-screen detection ────────────────────────────────────────
+      // \x1b[?1049h = DECSET 1049 → enter alternate screen (vim, claude code, etc.)
+      // \x1b[?1049l = DECRST 1049 → exit  alternate screen
+      // These arrive as complete sequences in a single PTY chunk in practice.
+      if (data.includes('\x1b[?1049h')) {
+        isAltScreenRef.current = true
+        // Snapshot the MAIN buffer position NOW — before xterm switches to alt buffer.
+        // Commands typed inside the TUI will use this as their navigation anchor so
+        // clicking them in the log jumps to where the TUI was launched, not garbage coords.
+        altScreenEntryLineRef.current = terminal.buffer.active.baseY + terminal.buffer.active.cursorY
+        currentInputRef.current = ''  // fresh slate for TUI prompts
+        // Flush is a no-op while in alt-screen (see flushOutputBuffer guard below)
+        if (outputFlushTimerRef.current) {
+          clearTimeout(outputFlushTimerRef.current)
+          outputFlushTimerRef.current = null
+        }
+      }
+      if (data.includes('\x1b[?1049l')) {
+        isAltScreenRef.current = false
+        currentInputRef.current = ''
+        // Discard any output-capture state opened while in alt-screen — reading the
+        // alt buffer after the switch would return stale/wrong content.
+        currentEntryIdRef.current = null
+        currentEntryStartLineRef.current = -1
+        if (outputFlushTimerRef.current) {
+          clearTimeout(outputFlushTimerRef.current)
+          outputFlushTimerRef.current = null
+        }
+      }
+      // ── End alternate-screen detection ───────────────────────────────────
 
       // Capture first line of output as a quick preview for the Command Log entry
       if (waitingForPreviewRef.current) {
@@ -502,13 +555,28 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       // are left intact so zsh buffers all pasted lines and waits for a single
       // Enter, matching standard macOS Terminal behaviour.
 
-      // Track command history — record command on Enter
+      // Track command history — record command on Enter.
+      // Commands typed in TUI apps (Claude Code, vim, etc.) are still recorded, but their
+      // navigation line is anchored to the main-buffer position where the TUI was launched
+      // (altScreenEntryLineRef) rather than the alt-screen cursor, which lives in a separate
+      // coordinate space and would produce garbage scroll targets on the main screen.
       if (data === '\r') {
-        flushOutputBuffer()  // flush previous command's output immediately
+        if (!isAltScreenRef.current) {
+          flushOutputBuffer()  // flush previous command's output immediately
+        }
         const cmd = currentInputRef.current.trim()
         currentInputRef.current = ''
         if (cmd) {
-          const line = terminal.buffer.active.baseY + terminal.buffer.active.cursorY
+          // Alt-screen commands anchor to where the TUI launched in the main buffer.
+          // Regular commands use promptStartLineRef — the line where the user began typing,
+          // which is always the prompt line (first line of the command).  Falling back to
+          // the Enter-time cursor position handles the rare case where we missed the first
+          // keystroke (e.g. pasted text with no prior keystrokes tracked).
+          const line = isAltScreenRef.current
+            ? altScreenEntryLineRef.current
+            : promptStartLineRef.current >= 0
+              ? promptStartLineRef.current
+              : terminal.buffer.active.baseY + terminal.buffer.active.cursorY
           const id = crypto.randomUUID()
           const entry: HistoryEntry = {
             id,
@@ -518,13 +586,27 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
             line,
             timestamp: new Date()
           }
-          waitingForPreviewRef.current = id
-          currentEntryIdRef.current = id
-          currentEntryStartLineRef.current = line  // note where Enter was pressed
+          if (!isAltScreenRef.current) {
+            // Output capture only makes sense for main-screen commands
+            waitingForPreviewRef.current = id
+            currentEntryIdRef.current = id
+            currentEntryStartLineRef.current = line
+          }
+          promptStartLineRef.current = -1  // reset for next command
           setCommandHistory(prev => [...prev, entry])
         }
       } else {
+        // Accumulate input on both main screen and alt screen.
+        // applyInput already ignores escape sequences (arrow keys etc.) so TUI navigation
+        // keystrokes won't corrupt the captured text.
+        const wasEmpty = currentInputRef.current === ''
         currentInputRef.current = applyInput(currentInputRef.current, data)
+        // Snapshot the buffer line the instant the user types their FIRST character.
+        // This is the prompt line — the beginning of the command, not the end.
+        // We only do this on the main screen; alt-screen uses altScreenEntryLineRef instead.
+        if (!isAltScreenRef.current && wasEmpty && currentInputRef.current !== '') {
+          promptStartLineRef.current = terminal.buffer.active.baseY + terminal.buffer.active.cursorY
+        }
       }
 
       window.api.ptyWrite(session.id, data)
