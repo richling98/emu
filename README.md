@@ -1,6 +1,6 @@
-# Emmy 🔥
+# Emmy
 
-**Emmy** is a terminal emulator designed to be 10x more beautiful and functional than your default terminal. Built on Electron + xterm.js with a hand-tuned Catppuccin Mocha theme.
+**Emmy** is a feature-rich terminal emulator designed to be 10x more beautiful and functional than the default macOS terminal. Built on Electron + xterm.js with a hand-tuned Catppuccin Mocha theme. Emmy is everything you wished your terminal was.
 
 ---
 
