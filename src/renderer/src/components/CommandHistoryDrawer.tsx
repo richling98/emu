@@ -5,6 +5,7 @@ export interface HistoryEntry {
   id: string
   command: string
   outputPreview: string
+  outputFull: string
   line: number
   timestamp: Date
 }
@@ -13,6 +14,8 @@ interface Props {
   entries: HistoryEntry[]
   onJump: (line: number) => void
   onClose: () => void
+  onCopy: (entryId: string) => void
+  copiedId: string | null
 }
 
 function relativeTime(date: Date): string {
@@ -25,7 +28,7 @@ function relativeTime(date: Date): string {
   return `${Math.floor(hrs / 24)}d ago`
 }
 
-export default function CommandHistoryDrawer({ entries, onJump, onClose }: Props) {
+export default function CommandHistoryDrawer({ entries, onJump, onClose, onCopy, copiedId }: Props) {
   // Close on Escape
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -58,7 +61,27 @@ export default function CommandHistoryDrawer({ entries, onJump, onClose }: Props
             >
               <div className="chd-entry-top">
                 <span className="chd-command">$ {entry.command}</span>
-                <span className="chd-time">{relativeTime(entry.timestamp)}</span>
+                <div className="chd-entry-actions">
+                  {entry.outputFull && (
+                    <button
+                      className={`chd-copy-btn${copiedId === entry.id ? ' chd-copy-btn--copied' : ''}`}
+                      onClick={(e) => { e.stopPropagation(); onCopy(entry.id) }}
+                      title="Copy output"
+                    >
+                      {copiedId === entry.id ? (
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      ) : (
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                        </svg>
+                      )}
+                    </button>
+                  )}
+                  <span className="chd-time">{relativeTime(entry.timestamp)}</span>
+                </div>
               </div>
               {entry.outputPreview && (
                 <div className="chd-preview">{entry.outputPreview}</div>

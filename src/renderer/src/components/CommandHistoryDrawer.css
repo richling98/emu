@@ -114,9 +114,48 @@
 
 .chd-entry-top {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.chd-entry-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.chd-copy-btn {
+  opacity: 0;
+  pointer-events: none;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+  color: rgba(255, 255, 255, 0.35);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s, opacity 0.12s;
+}
+
+.chd-entry:hover .chd-copy-btn,
+.chd-copy-btn--copied {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.chd-copy-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #cdd6f4;
+}
+
+.chd-copy-btn--copied {
+  color: #a6e3a1;
 }
 
 .chd-command {

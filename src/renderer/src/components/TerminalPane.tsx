@@ -10,9 +10,14 @@ import './TerminalPane.css'
 
 const DEFAULT_FONT_SIZE = 14
 
-// Strip ANSI escape sequences from a string
+// Strip ANSI escape sequences from a string, including cursor movement and bare CRs
 function stripAnsi(str: string): string {
-  return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '').replace(/[\x00-\x09\x0b-\x1f\x7f]/g, '')
+  return str
+    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')      // CSI sequences (colors, cursor movement, erase)
+    .replace(/\x1b\][^\x07]*\x07/g, '')           // OSC sequences (window title, etc.)
+    .replace(/\x1b[()][AB012]/g, '')              // character set designations
+    .replace(/[\x00-\x09\x0b-\x1f\x7f]/g, '')    // control chars (keep \n = 0x0a)
+    .replace(/\r(?!\n)/g, '\n')                   // bare CR → newline (progress bars)
 }
 
 // Build the next currentInput given incoming data
@@ -46,11 +51,18 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   const currentInputRef = useRef('')
   const waitingForPreviewRef = useRef<string | null>(null)
 
+  // Output buffering — accumulates PTY output between commands for "Copy Output"
+  const outputBufferRef = useRef('')
+  const currentEntryIdRef = useRef<string | null>(null)
+  const outputFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isAltScreenRef = useRef(false)
+
   const [commandHistory, setCommandHistory] = useState<HistoryEntry[]>([])
   const commandHistoryRef = useRef<HistoryEntry[]>([])
   const promptNavIndexRef = useRef(-1)
   const [showDrawer, setShowDrawer] = useState(false)
   const [fileDropActive, setFileDropActive] = useState(false)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
 
   // Keep isVisibleRef in sync so the key handler can check it
   useEffect(() => { isVisibleRef.current = isVisible }, [isVisible])
@@ -114,6 +126,14 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   const handleCloseDrawer = () => {
     setShowDrawer(false)
     onDrawerClose?.()
+  }
+
+  const handleCopyOutput = (entryId: string) => {
+    const entry = commandHistoryRef.current.find(e => e.id === entryId)
+    if (!entry?.outputFull) return
+    navigator.clipboard.writeText(entry.outputFull)
+    setCopiedId(entryId)
+    setTimeout(() => setCopiedId(null), 1800)
   }
 
   useEffect(() => {
@@ -279,8 +299,41 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       terminal.focus()
     })
 
+    // Flush the accumulated output buffer for the current command entry
+    const flushOutputBuffer = () => {
+      if (outputFlushTimerRef.current) {
+        clearTimeout(outputFlushTimerRef.current)
+        outputFlushTimerRef.current = null
+      }
+      const id = currentEntryIdRef.current
+      let raw = outputBufferRef.current
+      outputBufferRef.current = ''
+      currentEntryIdRef.current = null
+      if (!id || !raw.trim()) return
+      const MAX_OUTPUT_BYTES = 500_000
+      const truncated = raw.length > MAX_OUTPUT_BYTES
+      if (truncated) raw = raw.slice(0, MAX_OUTPUT_BYTES)
+      const clean = stripAnsi(raw).trim()
+      if (!clean) return
+      const outputFull = truncated ? clean + '\n[Output truncated — showing first 500 KB]' : clean
+      setCommandHistory(prev =>
+        prev.map(e => e.id === id ? { ...e, outputFull } : e)
+      )
+    }
+
     const removeDataListener = window.api.onPtyData(session.id, (data) => {
       terminal.write(data)
+
+      // Detect alternate screen (vim, htop, man) — pause output capture to avoid garbage
+      if (data.includes('\x1b[?1049h')) {
+        isAltScreenRef.current = true
+        outputBufferRef.current = ''
+        currentEntryIdRef.current = null
+        if (outputFlushTimerRef.current) { clearTimeout(outputFlushTimerRef.current); outputFlushTimerRef.current = null }
+      }
+      if (data.includes('\x1b[?1049l')) {
+        isAltScreenRef.current = false
+      }
 
       // Capture first line of output as preview for the most-recent command
       if (waitingForPreviewRef.current) {
@@ -292,6 +345,13 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
             prev.map(e => e.id === entryId ? { ...e, outputPreview: stripped.slice(0, 80) } : e)
           )
         }
+      }
+
+      // Accumulate full output for "Copy Output" button in Command Log
+      if (currentEntryIdRef.current && !isAltScreenRef.current) {
+        outputBufferRef.current += data
+        if (outputFlushTimerRef.current) clearTimeout(outputFlushTimerRef.current)
+        outputFlushTimerRef.current = setTimeout(flushOutputBuffer, 600)
       }
     })
 
@@ -366,18 +426,23 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
       // Track command history — record command on Enter
       if (data === '\r') {
+        flushOutputBuffer()  // flush previous command's output immediately
         const cmd = currentInputRef.current.trim()
         currentInputRef.current = ''
         if (cmd) {
           const line = terminal.buffer.active.baseY + terminal.buffer.active.cursorY
+          const id = crypto.randomUUID()
           const entry: HistoryEntry = {
-            id: crypto.randomUUID(),
+            id,
             command: cmd,
             outputPreview: '',
+            outputFull: '',
             line,
             timestamp: new Date()
           }
-          waitingForPreviewRef.current = entry.id
+          waitingForPreviewRef.current = id
+          currentEntryIdRef.current = id    // start capturing full output
+          outputBufferRef.current = ''
           setCommandHistory(prev => [...prev, entry])
         }
       } else {
@@ -436,6 +501,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     containerRef.current.addEventListener('drop', handleDrop, { capture: true })
 
     return () => {
+      if (outputFlushTimerRef.current) clearTimeout(outputFlushTimerRef.current)
       removeDataListener()
       removeExitListener()
       resizeObserver.disconnect()
@@ -503,6 +569,8 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
           entries={commandHistory}
           onJump={(line) => scrollToPromptLine(line)}
           onClose={handleCloseDrawer}
+          onCopy={handleCopyOutput}
+          copiedId={copiedId}
         />
       )}
     </div>
