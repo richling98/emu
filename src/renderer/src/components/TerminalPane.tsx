@@ -173,10 +173,30 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   const handleScrollToBottom = () => {
     const viewport = containerRef.current?.querySelector('.xterm-viewport') as HTMLElement | null
     if (!viewport) return
-    viewport.style.scrollBehavior = 'smooth'
-    viewport.scrollTop = viewport.scrollHeight
-    // Reset scroll-behavior so normal scrolling is unaffected
-    setTimeout(() => { viewport.style.scrollBehavior = '' }, 500)
+
+    const DURATION = 300  // ms
+    const startTime = performance.now()
+    const startPos = viewport.scrollTop
+
+    const step = (now: number) => {
+      const elapsed = now - startTime
+      const progress = Math.min(elapsed / DURATION, 1)
+      // Ease-out cubic — fast start, gentle landing
+      const eased = 1 - Math.pow(1 - progress, 3)
+      // Recalculate target every frame so new content added mid-scroll is captured
+      const target = viewport.scrollHeight - viewport.clientHeight
+      viewport.scrollTop = startPos + (target - startPos) * eased
+
+      if (progress < 1) {
+        requestAnimationFrame(step)
+      } else {
+        // Hard snap at the end — guarantees we land exactly at the true bottom
+        viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight
+        terminalRef.current?.scrollToBottom()
+      }
+    }
+
+    requestAnimationFrame(step)
   }
 
   useEffect(() => {
