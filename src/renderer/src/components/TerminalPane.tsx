@@ -10,12 +10,29 @@ import './TerminalPane.css'
 
 const DEFAULT_FONT_SIZE = 14
 
+// Collapse synchronized-output blocks (ESC[?2026h...ESC[?2026l) used by TUI apps
+// (e.g. Claude Code spinner animation). Each block is one rendered frame; we keep
+// only the last one (the final state) and discard all intermediate animation frames.
+function collapseSyncBlocks(str: string): string {
+  const SYNC_RE = /\x1b\[\?2026h([\s\S]*?)\x1b\[\?2026l/g
+  const matches = [...str.matchAll(SYNC_RE)]
+  if (matches.length <= 1) return str  // 0 or 1 block — nothing to collapse
+  // Replace every block except the last with an empty string
+  const lastIndex = matches[matches.length - 1].index!
+  return str.replace(SYNC_RE, (match, _content, offset) =>
+    offset === lastIndex ? match : ''
+  )
+}
+
 // Strip ANSI escape sequences from a string, including cursor movement and bare CRs
 function stripAnsi(str: string): string {
   return str
-    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')      // CSI sequences (colors, cursor movement, erase)
-    .replace(/\x1b\][^\x07]*\x07/g, '')           // OSC sequences (window title, etc.)
+    .replace(/\x1b\[[\x20-\x3f]*[\x40-\x7e]/g, '') // CSI sequences — full spec range,
+                                                      // handles DEC private (?2026h, ?2004h…)
+                                                      // and standard SGR/cursor/erase codes
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '') // OSC sequences (window title, etc.)
     .replace(/\x1b[()][AB012]/g, '')              // character set designations
+    .replace(/\x1b[@-Z\\-_]/g, '')                // other two-byte escape sequences
     .replace(/[\x00-\x09\x0b-\x1f\x7f]/g, '')    // control chars (keep \n = 0x0a)
     .replace(/\r(?!\n)/g, '\n')                   // bare CR → newline (progress bars)
 }
@@ -313,7 +330,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       const MAX_OUTPUT_BYTES = 500_000
       const truncated = raw.length > MAX_OUTPUT_BYTES
       if (truncated) raw = raw.slice(0, MAX_OUTPUT_BYTES)
-      const clean = stripAnsi(raw).trim()
+      const clean = stripAnsi(collapseSyncBlocks(raw)).trim()
       if (!clean) return
       const outputFull = truncated ? clean + '\n[Output truncated — showing first 500 KB]' : clean
       setCommandHistory(prev =>
