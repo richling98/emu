@@ -16,6 +16,7 @@ const FEATURE_FEATURES = [
   { title: 'Tab Drag & Drop', desc: 'In split mode, drag any session tab from the sidebar and drop it onto either pane to instantly reassign it. Rearrange your workspace in one motion.' },
   { title: 'GPU Rendering', desc: 'WebGL-accelerated text rendering with Retina support. Every character is razor-sharp at any font size, and scrolling is silky smooth even in dense output.' },
   { title: 'Font Zoom', desc: '⌘+ / ⌘− scales the terminal font instantly. ⌘0 snaps back to default. The layout auto-fits so your PTY always matches the visible terminal size.' },
+  { title: 'Auto Scroll', desc: 'When you\'re not at the bottom of the terminal, a handy button will appear at the bottom right corner. Click it to auto-scroll to the bottom.' },
 ]
 
 const BEAUTY_FEATURES = [
