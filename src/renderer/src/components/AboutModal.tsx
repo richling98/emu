@@ -21,7 +21,7 @@ const FEATURE_FEATURES = [
 
 const BEAUTY_FEATURES = [
   { title: 'Frosted Glass UI', desc: 'Vibrancy on the sidebar and titlebar — layered blur, saturation, and brightness that respond to your desktop in real time for a truly native macOS feel.' },
-  { title: 'Catppuccin Mocha', desc: 'A hand-tuned Catppuccin Mocha theme with lavender highlights, warm magentas, and sky blues. Every color has a purpose and nothing fights for attention.' },
+  { title: 'Pick Your Theme', desc: 'Six hand-curated color themes — from Catppuccin Mocha to Matrix green to Cobalt2 ocean blue. Click the color wheel in the top-right corner to switch instantly. Your choice is saved and restored every time you open Emmy.' },
   { title: 'Premium Typography', desc: 'JetBrains Mono at pixel-perfect sizing — integer font size, 1.0 line height, zero letter-spacing — so characters never droop, blur, or crowd each other.' },
   { title: 'Unfocused Split Dimming', desc: 'When two panes are open, the inactive one dims back — giving an instant, clear focus signal. Click any pane to bring it to life. Hotkeys always go to whichever pane you\'re on.' },
   { title: 'Rotating Greetings', desc: '20+ welcome banners that pick a fresh message every session. A small touch that makes opening a new tab feel like a moment, not a chore.' },
