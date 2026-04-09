@@ -22,6 +22,36 @@ function stripAnsi(str: string): string {
     .replace(/\r/g, '')                            // bare CR
 }
 
+// Remove TUI chrome from copied output:
+//   • Trailing separator lines (lines made entirely of box-drawing chars like ────)
+//   • Leading TUI bullet indicator (⏺ ● • ◆ ❯ etc.) on the first content line
+// These appear in Claude Code and similar terminal UIs but are not content.
+function cleanCopiedOutput(text: string): string {
+  const lines = text.split('\n')
+
+  // Strip trailing lines that are blank or purely box-drawing/block-element chars
+  // U+2500–U+257F = Box Drawing, U+2580–U+259F = Block Elements
+  while (lines.length > 0) {
+    const trimmed = lines[lines.length - 1].trim()
+    if (trimmed === '' || /^[\u2500-\u259F]+$/.test(trimmed)) {
+      lines.pop()
+    } else {
+      break
+    }
+  }
+
+  // Strip leading TUI bullet from the first non-empty line
+  // Targets: ⏺ (U+23FA) ● (U+25CF) • (U+2022) ◆ (U+25C6) ❯ (U+276F) ▶ ►
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim() !== '') {
+      lines[i] = lines[i].replace(/^[\u23FA\u25CF\u2022\u25C6\u276F\u25B6\u25BA]\s+/, '')
+      break
+    }
+  }
+
+  return lines.join('\n').trim()
+}
+
 // Build the next currentInput given incoming data
 function applyInput(current: string, data: string): string {
   if (data === '\x7f') return current.slice(0, -1)       // Backspace
@@ -329,8 +359,8 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       // Drop trailing blank lines
       while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop()
 
-      const outputFull = lines.join('\n')
-      if (!outputFull.trim()) return
+      const outputFull = cleanCopiedOutput(lines.join('\n'))
+      if (!outputFull) return
 
       setCommandHistory(prev =>
         prev.map(e => e.id === id ? { ...e, outputFull } : e)
