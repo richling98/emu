@@ -154,7 +154,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
   // Scroll so the prompt line appears near the top with a small buffer above it
   const scrollToPromptLine = (line: number) => {
-    terminalRef.current?.scrollToLine(Math.max(0, line - 2))
+    terminalRef.current?.scrollToLine(line)
   }
 
   const handleCloseDrawer = () => {
