@@ -254,11 +254,19 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
 
-    // Track whether the viewport is scrolled to the bottom
-    terminal.onScroll(() => {
-      const buf = terminal.buffer.active
-      setIsAtBottom(buf.viewportY >= buf.length - terminal.rows)
-    })
+    // Track whether the viewport is scrolled to the bottom.
+    // Use a native DOM scroll listener on .xterm-viewport rather than terminal.onScroll,
+    // because terminal.onScroll only fires on xterm-internal scroll events (new output).
+    // Manual user scrolls (trackpad, mouse wheel) after output stops are DOM-only events
+    // and would be silently missed by terminal.onScroll.
+    const viewportEl = containerRef.current.querySelector('.xterm-viewport') as HTMLElement | null
+    const updateScrollState = () => {
+      if (!viewportEl) return
+      // < 10px from bottom counts as "at bottom" to handle sub-pixel rounding
+      const distFromBottom = viewportEl.scrollHeight - viewportEl.scrollTop - viewportEl.clientHeight
+      setIsAtBottom(distFromBottom < 10)
+    }
+    viewportEl?.addEventListener('scroll', updateScrollState, { passive: true })
 
     // ── Clickable links ──────────────────────────────────────────────────────
 
@@ -572,6 +580,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
     return () => {
       if (outputFlushTimerRef.current) clearTimeout(outputFlushTimerRef.current)
+      viewportEl?.removeEventListener('scroll', updateScrollState)
       removeDataListener()
       removeExitListener()
       resizeObserver.disconnect()
