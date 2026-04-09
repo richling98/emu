@@ -11,7 +11,7 @@ const FEATURE_FEATURES = [
   { title: 'Command Log', desc: '⌘⇧L opens a searchable, time-stamped log of every command you\'ve run — with output previews and one-click jump-to. Your full terminal history, always at hand.' },
   { title: 'Output Copy Button', desc: 'Every entry in the Command Log has a clipboard icon that copies the full output of that command to your clipboard in one click — clean text, no ANSI codes, no shell artifacts.' },
   { title: 'Jump to Prompt', desc: '⌘↑ / ⌘↓ lets you fly through your scrollback history one command at a time, jumping straight to each prompt so you can review output without losing your place.' },
-  { title: 'Clickable Links & Paths', desc: 'Every URL and bare domain (nvidia.com, perplexity.ai) is Cmd+clickable and opens in your browser. Any /absolute or ./relative file path opens directly in Finder. No copying, no switching apps.' },
+  { title: 'Clickable Links & Paths', desc: 'Every URL and bare domain is Cmd+clickable and opens in your browser. Any /absolute or ./relative file path opens directly in Finder. No copying, no switching apps.' },
   { title: 'Multi-Line Paste', desc: 'Paste a block of commands and Emmy hands them to your shell as a unit — all lines land intact, waiting for a single Enter. Exactly how a real terminal should handle it.' },
   { title: 'Tab Drag & Drop', desc: 'In split mode, drag any session tab from the sidebar and drop it onto either pane to instantly reassign it. Rearrange your workspace in one motion.' },
   { title: 'GPU Rendering', desc: 'WebGL-accelerated text rendering with Retina support. Every character is razor-sharp at any font size, and scrolling is silky smooth even in dense output.' },
