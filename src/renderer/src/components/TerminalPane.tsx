@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Terminal } from '@xterm/xterm'
+import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -71,9 +71,10 @@ interface Props {
   openDrawer?: boolean
   onDrawerClose?: () => void
   onClosePane?: () => void
+  xtermTheme?: ITheme
 }
 
-export default function TerminalPane({ session, isVisible, slot = 'full', isActive = true, onActivate, onSessionEnd, openDrawer, onDrawerClose, onClosePane }: Props) {
+export default function TerminalPane({ session, isVisible, slot = 'full', isActive = true, onActivate, onSessionEnd, openDrawer, onDrawerClose, onClosePane, xtermTheme }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -697,6 +698,13 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       }, 10)
     }
   }, [isVisible])
+
+  // Apply xterm theme whenever the app theme changes
+  useEffect(() => {
+    if (terminalRef.current && xtermTheme) {
+      terminalRef.current.options.theme = xtermTheme
+    }
+  }, [xtermTheme])
 
   return (
     <div

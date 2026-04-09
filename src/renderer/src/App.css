@@ -1,3 +1,15 @@
+/* ── Theme CSS custom properties ─────────────────────────────────────────────
+   Defaults match Catppuccin Mocha. themes.ts overwrites these on :root at
+   startup (and on theme change) via style.setProperty.
+   ─────────────────────────────────────────────────────────────────────────── */
+:root {
+  --bg-base:     #1e1e2e;
+  --bg-panel:    rgba(22, 22, 40, 0.42);
+  --bg-titlebar: rgba(28, 28, 45, 0.45);
+  --accent:      #b4befe;
+  --accent-alt:  #cba6f7;
+}
+
 .app {
   display: flex;
   flex-direction: column;
@@ -12,7 +24,7 @@
   height: 36px;
   flex-shrink: 0;
   width: 100%;
-  background: rgba(28, 28, 45, 0.45);
+  background: var(--bg-titlebar);
   backdrop-filter: blur(80px) saturate(220%) brightness(1.15);
   -webkit-backdrop-filter: blur(80px) saturate(220%) brightness(1.15);
   border-bottom: 1px solid rgba(255, 255, 255, 0.18);
@@ -60,8 +72,8 @@
 }
 
 .layout-btn.active {
-  background: rgba(180, 190, 254, 0.25);
-  color: #b4befe;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent);
 }
 
 /* The main content area below the titlebar */
@@ -76,8 +88,9 @@
 .terminal-area {
   flex: 1;
   position: relative;
-  background: #1e1e2e;
+  background: var(--bg-base);
   overflow: hidden;
+  transition: background 0.3s ease;
 }
 
 /* Split mode: all positions driven by --split-ratio CSS custom property */
@@ -114,7 +127,7 @@
 
 .pane-divider--vertical:hover,
 .pane-divider--vertical:active {
-  background: rgba(180, 190, 254, 0.4);
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 /* Empty right pane drop zone */
@@ -142,9 +155,10 @@
 }
 
 .empty-pane.drag-over {
-  background: rgba(180, 190, 254, 0.12);
-  border-color: rgba(180, 190, 254, 0.4);
-  color: rgba(180, 190, 254, 0.7);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--accent);
+  opacity: 0.9;
 }
 
 /* Drag-over overlays — appear over occupied panes during any drag */
@@ -167,6 +181,6 @@
 }
 
 .pane-drop-overlay.drag-over {
-  background: rgba(180, 190, 254, 0.12);
-  border-color: rgba(180, 190, 254, 0.4);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
 }

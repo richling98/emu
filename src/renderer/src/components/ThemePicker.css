@@ -1,0 +1,168 @@
+.tp-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  /* Appear just below the titlebar, aligned to the right */
+  padding-top: 42px;
+  padding-right: 12px;
+}
+
+.tp-modal {
+  background: rgba(24, 24, 37, 0.96);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.3);
+  padding: 16px;
+  min-width: 320px;
+  animation: tp-pop-in 0.15s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes tp-pop-in {
+  from { opacity: 0; transform: scale(0.94) translateY(-6px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0);    }
+}
+
+.tp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.tp-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.tp-close {
+  background: rgba(255, 255, 255, 0.07);
+  border: none;
+  color: rgba(255, 255, 255, 0.4);
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tp-close:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+}
+
+/* 3 × 2 grid of swatches */
+.tp-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.tp-swatch {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 12px;
+  background: var(--sw-bg);
+  border: 2px solid transparent;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: border-color 120ms ease, transform 100ms ease, box-shadow 120ms ease;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 10px;
+  gap: 5px;
+}
+
+.tp-swatch:hover {
+  transform: scale(1.04);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+.tp-swatch--active {
+  border-color: var(--sw-accent);
+  box-shadow: 0 0 0 1px var(--sw-accent), 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+/* Fake terminal lines — suggest text content */
+.tp-swatch-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  flex: 1;
+}
+
+.tp-line {
+  display: block;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--sw-accent-alt);
+  opacity: 0.45;
+}
+
+.tp-line--long  { width: 65%; }
+.tp-line--med   { width: 45%; }
+.tp-line--short { width: 30%; }
+
+/* Accent color strip at the bottom */
+.tp-swatch-strip {
+  height: 8px;
+  width: calc(100% + 20px);
+  margin-left: -10px;
+  margin-bottom: -10px;
+  background: var(--sw-accent);
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+/* Checkmark badge for the active theme */
+.tp-swatch-check {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--sw-accent);
+  color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Labels aligned to the grid columns */
+.tp-labels {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 7px;
+}
+
+.tp-label {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.3);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 120ms;
+}
+
+.tp-label--active {
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 600;
+}

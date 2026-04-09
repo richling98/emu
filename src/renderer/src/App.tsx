@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect } from 'react'
 import Sidebar from './components/Sidebar'
 import TerminalPane from './components/TerminalPane'
+import ThemePicker from './components/ThemePicker'
+import { getTheme, applyTheme, DEFAULT_THEME_ID } from './themes'
 import './App.css'
 
 export interface Session {
@@ -30,6 +32,15 @@ export default function App() {
   const [layoutMode, setLayoutMode] = useState<'single' | 'split'>('single')
   const [rightPaneSessionId, setRightPaneSessionId] = useState<string | null>(null)
   const [splitRatio, setSplitRatio] = useState(0.5)
+  const [themeId, setThemeId] = useState(() => localStorage.getItem('emmy-theme-id') ?? DEFAULT_THEME_ID)
+  const [showThemePicker, setShowThemePicker] = useState(false)
+
+  const handleSelectTheme = useCallback((id: string) => {
+    setThemeId(id)
+    const theme = getTheme(id)
+    applyTheme(theme)
+    localStorage.setItem('emmy-theme-id', id)
+  }, [])
 
   // In single mode, active pane always follows selection
   useEffect(() => {
@@ -139,6 +150,22 @@ export default function App() {
       <div className="titlebar">
         <div className="titlebar-drag-area" />
         <div className="titlebar-actions">
+          {/* Color theme picker */}
+          <button
+            className={`layout-btn${showThemePicker ? ' active' : ''}`}
+            onClick={() => setShowThemePicker((v) => !v)}
+            title="Color theme"
+          >
+            {/* Four-quadrant color wheel icon */}
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M8,8 L8,1 A7,7 0 0,1 15,8 Z" fill="#89b4fa"/>
+              <path d="M8,8 L15,8 A7,7 0 0,1 8,15 Z" fill="#a6e3a1"/>
+              <path d="M8,8 L8,15 A7,7 0 0,1 1,8 Z" fill="#f9e2af"/>
+              <path d="M8,8 L1,8 A7,7 0 0,1 8,1 Z" fill="#f38ba8"/>
+              <circle cx="8" cy="8" r="2.8" fill="rgba(30,30,46,0.75)"/>
+            </svg>
+          </button>
+          {/* Split-screen toggle */}
           <button
             className={`layout-btn ${layoutMode === 'split' ? 'active' : ''}`}
             onClick={toggleSplitScreen}
@@ -185,6 +212,7 @@ export default function App() {
                 openDrawer={openHistoryFor === session.id}
                 onDrawerClose={() => setOpenHistoryFor(null)}
                 onClosePane={isLeftSlot ? handleCloseLeftPane : isRightSlot ? handleCloseRightPane : undefined}
+                xtermTheme={getTheme(themeId).terminal}
               />
             )
           })}
@@ -224,6 +252,13 @@ export default function App() {
           )}
         </div>
       </div>
+      {showThemePicker && (
+        <ThemePicker
+          activeThemeId={themeId}
+          onSelect={handleSelectTheme}
+          onClose={() => setShowThemePicker(false)}
+        />
+      )}
     </div>
   )
 }
