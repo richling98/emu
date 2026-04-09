@@ -16,7 +16,7 @@ export interface AppTheme {
 export const THEMES: AppTheme[] = [
   {
     id: 'catppuccin-mocha',
-    name: 'Catppuccin Mocha',
+    name: 'Catppuccin',
     bgBase: '#1e1e2e',
     bgPanel: 'rgba(22, 22, 40, 0.42)',
     bgTitlebar: 'rgba(28, 28, 45, 0.45)',
@@ -64,7 +64,7 @@ export const THEMES: AppTheme[] = [
   },
   {
     id: 'cobalt2',
-    name: 'Cobalt2',
+    name: 'Francisco',
     bgBase: '#193549',
     bgPanel: 'rgba(15, 31, 45, 0.42)',
     bgTitlebar: 'rgba(18, 35, 50, 0.45)',
@@ -88,7 +88,7 @@ export const THEMES: AppTheme[] = [
   },
   {
     id: 'synthwave',
-    name: 'Synthwave',
+    name: 'Haze',
     bgBase: '#262335',
     bgPanel: 'rgba(28, 25, 44, 0.42)',
     bgTitlebar: 'rgba(30, 26, 48, 0.45)',
@@ -112,7 +112,7 @@ export const THEMES: AppTheme[] = [
   },
   {
     id: 'gruvbox-dark',
-    name: 'Gruvbox Dark',
+    name: 'Mocha',
     bgBase: '#282828',
     bgPanel: 'rgba(29, 29, 29, 0.42)',
     bgTitlebar: 'rgba(30, 28, 26, 0.45)',
@@ -136,7 +136,7 @@ export const THEMES: AppTheme[] = [
   },
   {
     id: 'monokai-pro',
-    name: 'Monokai Pro',
+    name: 'Monokai',
     bgBase: '#2d2a2e',
     bgPanel: 'rgba(32, 29, 32, 0.42)',
     bgTitlebar: 'rgba(34, 31, 34, 0.45)',
