@@ -24,17 +24,39 @@ function collapseSyncBlocks(str: string): string {
   )
 }
 
-// Strip ANSI escape sequences from a string, including cursor movement and bare CRs
+// Strip ANSI escape sequences from a string, including cursor movement and bare CRs.
+// Cursor-right sequences are replaced with equivalent spaces so word spacing is
+// preserved in TUI app output (e.g. Claude Code streams words with \x1b[NC positioning).
 function stripAnsi(str: string): string {
   return str
-    .replace(/\x1b\[[\x20-\x3f]*[\x40-\x7e]/g, '') // CSI sequences — full spec range,
-                                                      // handles DEC private (?2026h, ?2004h…)
-                                                      // and standard SGR/cursor/erase codes
+    .replace(/\x1b\[(\d*)C/g, (_, n) => ' '.repeat(Number(n) || 1)) // cursor-right → spaces
+    .replace(/\x1b\[[\x20-\x3f]*[\x40-\x7e]/g, '') // all other CSI sequences (full spec range)
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '') // OSC sequences (window title, etc.)
     .replace(/\x1b[()][AB012]/g, '')              // character set designations
     .replace(/\x1b[@-Z\\-_]/g, '')                // other two-byte escape sequences
     .replace(/[\x00-\x09\x0b-\x1f\x7f]/g, '')    // control chars (keep \n = 0x0a)
     .replace(/\r(?!\n)/g, '\n')                   // bare CR → newline (progress bars)
+}
+
+// Remove trailing shell artifacts: zsh partial-line marker (%) and shell prompt lines.
+// These are written to the PTY by the shell immediately after a command finishes,
+// so they always end up in the output buffer regardless of the idle-timer window.
+function trimShellArtifacts(str: string): string {
+  const lines = str.split('\n')
+  while (lines.length > 0) {
+    const last = lines[lines.length - 1].trim()
+    if (
+      last === '' ||
+      last === '%' ||
+      last === '$' ||
+      /^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+/.test(last) // username@hostname prompt line
+    ) {
+      lines.pop()
+    } else {
+      break
+    }
+  }
+  return lines.join('\n')
 }
 
 // Build the next currentInput given incoming data
@@ -330,7 +352,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       const MAX_OUTPUT_BYTES = 500_000
       const truncated = raw.length > MAX_OUTPUT_BYTES
       if (truncated) raw = raw.slice(0, MAX_OUTPUT_BYTES)
-      const clean = stripAnsi(collapseSyncBlocks(raw)).trim()
+      const clean = trimShellArtifacts(stripAnsi(collapseSyncBlocks(raw))).trim()
       if (!clean) return
       const outputFull = truncated ? clean + '\n[Output truncated — showing first 500 KB]' : clean
       setCommandHistory(prev =>
