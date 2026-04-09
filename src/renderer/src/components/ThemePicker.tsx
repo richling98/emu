@@ -24,45 +24,39 @@ export default function ThemePicker({ activeThemeId, onSelect, onClose }: Props)
         </div>
         <div className="tp-grid">
           {THEMES.map((theme) => (
-            <button
-              key={theme.id}
-              className={`tp-swatch${activeThemeId === theme.id ? ' tp-swatch--active' : ''}`}
-              style={{
-                '--sw-bg': theme.bgBase,
-                '--sw-accent': theme.accent,
-                '--sw-accent-alt': theme.accentAlt,
-              } as React.CSSProperties}
-              onClick={() => { onSelect(theme.id); onClose() }}
-              title={theme.name}
-            >
-              {/* Mini terminal lines — suggest code content */}
-              <div className="tp-swatch-lines">
-                <span className="tp-line tp-line--long" />
-                <span className="tp-line tp-line--med" />
-                <span className="tp-line tp-line--short" />
-              </div>
-              {/* Accent strip at the bottom */}
-              <div className="tp-swatch-strip" />
-              {/* Active checkmark */}
-              {activeThemeId === theme.id && (
-                <div className="tp-swatch-check">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
+            <div key={theme.id} className="tp-cell">
+              {/* Name above the swatch */}
+              <span className={`tp-label${activeThemeId === theme.id ? ' tp-label--active' : ''}`}>
+                {theme.name}
+              </span>
+              <button
+                className={`tp-swatch${activeThemeId === theme.id ? ' tp-swatch--active' : ''}`}
+                style={{
+                  '--sw-bg': theme.bgBase,
+                  '--sw-accent': theme.accent,
+                  '--sw-accent-alt': theme.accentAlt,
+                } as React.CSSProperties}
+                onClick={() => { onSelect(theme.id); onClose() }}
+                title={theme.name}
+              >
+                {/* Mini terminal lines — suggest code content */}
+                <div className="tp-swatch-lines">
+                  <span className="tp-line tp-line--long" />
+                  <span className="tp-line tp-line--med" />
+                  <span className="tp-line tp-line--short" />
                 </div>
-              )}
-            </button>
-          ))}
-        </div>
-        {/* Labels row — separate from the buttons so grid layout stays clean */}
-        <div className="tp-labels">
-          {THEMES.map((theme) => (
-            <span
-              key={theme.id}
-              className={`tp-label${activeThemeId === theme.id ? ' tp-label--active' : ''}`}
-            >
-              {theme.name}
-            </span>
+                {/* Accent strip at the bottom */}
+                <div className="tp-swatch-strip" />
+                {/* Active checkmark */}
+                {activeThemeId === theme.id && (
+                  <div className="tp-swatch-check">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  </div>
+                )}
+              </button>
+            </div>
           ))}
         </div>
       </div>
