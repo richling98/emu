@@ -10,53 +10,16 @@ import './TerminalPane.css'
 
 const DEFAULT_FONT_SIZE = 14
 
-// Collapse synchronized-output blocks (ESC[?2026h...ESC[?2026l) used by TUI apps
-// (e.g. Claude Code spinner animation). Each block is one rendered frame; we keep
-// only the last one (the final state) and discard all intermediate animation frames.
-function collapseSyncBlocks(str: string): string {
-  const SYNC_RE = /\x1b\[\?2026h([\s\S]*?)\x1b\[\?2026l/g
-  const matches = [...str.matchAll(SYNC_RE)]
-  if (matches.length <= 1) return str  // 0 or 1 block — nothing to collapse
-  // Replace every block except the last with an empty string
-  const lastIndex = matches[matches.length - 1].index!
-  return str.replace(SYNC_RE, (match, _content, offset) =>
-    offset === lastIndex ? match : ''
-  )
-}
-
-// Strip ANSI escape sequences from a string, including cursor movement and bare CRs.
-// Cursor-right sequences are replaced with equivalent spaces so word spacing is
-// preserved in TUI app output (e.g. Claude Code streams words with \x1b[NC positioning).
+// Strip ANSI escape sequences — used only for the one-line outputPreview capture.
+// Full output (outputFull) is read from xterm.js's rendered buffer, not raw bytes.
 function stripAnsi(str: string): string {
   return str
-    .replace(/\x1b\[(\d*)C/g, (_, n) => ' '.repeat(Number(n) || 1)) // cursor-right → spaces
-    .replace(/\x1b\[[\x20-\x3f]*[\x40-\x7e]/g, '') // all other CSI sequences (full spec range)
+    .replace(/\x1b\[[\x20-\x3f]*[\x40-\x7e]/g, '') // CSI sequences (full spec range)
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '') // OSC sequences (window title, etc.)
     .replace(/\x1b[()][AB012]/g, '')              // character set designations
     .replace(/\x1b[@-Z\\-_]/g, '')                // other two-byte escape sequences
     .replace(/[\x00-\x09\x0b-\x1f\x7f]/g, '')    // control chars (keep \n = 0x0a)
-    .replace(/\r(?!\n)/g, '\n')                   // bare CR → newline (progress bars)
-}
-
-// Remove trailing shell artifacts: zsh partial-line marker (%) and shell prompt lines.
-// These are written to the PTY by the shell immediately after a command finishes,
-// so they always end up in the output buffer regardless of the idle-timer window.
-function trimShellArtifacts(str: string): string {
-  const lines = str.split('\n')
-  while (lines.length > 0) {
-    const last = lines[lines.length - 1].trim()
-    if (
-      last === '' ||
-      last === '%' ||
-      last === '$' ||
-      /^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+/.test(last) // username@hostname prompt line
-    ) {
-      lines.pop()
-    } else {
-      break
-    }
-  }
-  return lines.join('\n')
+    .replace(/\r/g, '')                            // bare CR
 }
 
 // Build the next currentInput given incoming data
@@ -90,11 +53,12 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   const currentInputRef = useRef('')
   const waitingForPreviewRef = useRef<string | null>(null)
 
-  // Output buffering — accumulates PTY output between commands for "Copy Output"
-  const outputBufferRef = useRef('')
+  // Full output capture — tracks the terminal buffer line range for each command.
+  // We read from xterm.js's rendered buffer (not raw PTY bytes) so sync-output
+  // animations, cursor movements, and shell prompts are already resolved correctly.
   const currentEntryIdRef = useRef<string | null>(null)
+  const currentEntryStartLineRef = useRef<number>(-1)
   const outputFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const isAltScreenRef = useRef(false)
 
   const [commandHistory, setCommandHistory] = useState<HistoryEntry[]>([])
   const commandHistoryRef = useRef<HistoryEntry[]>([])
@@ -338,23 +302,36 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       terminal.focus()
     })
 
-    // Flush the accumulated output buffer for the current command entry
+    // Read the terminal's rendered buffer between startLine and the current cursor
+    // position to get clean output text. xterm.js has already resolved all in-place
+    // updates, cursor movements, and sync-output animation frames — we just read the
+    // final screen state, exactly as the user sees it.
     const flushOutputBuffer = () => {
       if (outputFlushTimerRef.current) {
         clearTimeout(outputFlushTimerRef.current)
         outputFlushTimerRef.current = null
       }
       const id = currentEntryIdRef.current
-      let raw = outputBufferRef.current
-      outputBufferRef.current = ''
+      const startLine = currentEntryStartLineRef.current
       currentEntryIdRef.current = null
-      if (!id || !raw.trim()) return
-      const MAX_OUTPUT_BYTES = 500_000
-      const truncated = raw.length > MAX_OUTPUT_BYTES
-      if (truncated) raw = raw.slice(0, MAX_OUTPUT_BYTES)
-      const clean = trimShellArtifacts(stripAnsi(collapseSyncBlocks(raw))).trim()
-      if (!clean) return
-      const outputFull = truncated ? clean + '\n[Output truncated — showing first 500 KB]' : clean
+      currentEntryStartLineRef.current = -1
+      if (!id || startLine < 0) return
+
+      const buf = terminal.buffer.active
+      const endLine = buf.baseY + buf.cursorY  // cursor is sitting at the new prompt
+
+      const lines: string[] = []
+      for (let ln = startLine + 1; ln < endLine; ln++) {
+        const bufLine = buf.getLine(ln)
+        if (bufLine) lines.push(bufLine.translateToString(true).trimEnd())
+      }
+
+      // Drop trailing blank lines
+      while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop()
+
+      const outputFull = lines.join('\n')
+      if (!outputFull.trim()) return
+
       setCommandHistory(prev =>
         prev.map(e => e.id === id ? { ...e, outputFull } : e)
       )
@@ -363,18 +340,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     const removeDataListener = window.api.onPtyData(session.id, (data) => {
       terminal.write(data)
 
-      // Detect alternate screen (vim, htop, man) — pause output capture to avoid garbage
-      if (data.includes('\x1b[?1049h')) {
-        isAltScreenRef.current = true
-        outputBufferRef.current = ''
-        currentEntryIdRef.current = null
-        if (outputFlushTimerRef.current) { clearTimeout(outputFlushTimerRef.current); outputFlushTimerRef.current = null }
-      }
-      if (data.includes('\x1b[?1049l')) {
-        isAltScreenRef.current = false
-      }
-
-      // Capture first line of output as preview for the most-recent command
+      // Capture first line of output as a quick preview for the Command Log entry
       if (waitingForPreviewRef.current) {
         const entryId = waitingForPreviewRef.current
         waitingForPreviewRef.current = null
@@ -386,9 +352,8 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         }
       }
 
-      // Accumulate full output for "Copy Output" button in Command Log
-      if (currentEntryIdRef.current && !isAltScreenRef.current) {
-        outputBufferRef.current += data
+      // Arm/re-arm idle timer — when PTY goes quiet for 600ms, read the rendered buffer
+      if (currentEntryIdRef.current) {
         if (outputFlushTimerRef.current) clearTimeout(outputFlushTimerRef.current)
         outputFlushTimerRef.current = setTimeout(flushOutputBuffer, 600)
       }
@@ -480,8 +445,8 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
             timestamp: new Date()
           }
           waitingForPreviewRef.current = id
-          currentEntryIdRef.current = id    // start capturing full output
-          outputBufferRef.current = ''
+          currentEntryIdRef.current = id
+          currentEntryStartLineRef.current = line  // note where Enter was pressed
           setCommandHistory(prev => [...prev, entry])
         }
       } else {
