@@ -84,6 +84,41 @@
   overflow-y: auto !important;
 }
 
+/* Scroll-to-bottom button — appears when user has scrolled up */
+.scroll-to-bottom-btn {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid rgba(180, 190, 254, 0.2);
+  background: rgba(30, 30, 46, 0.88);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: rgba(180, 190, 254, 0.7);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  z-index: 50;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.15s;
+  animation: scroll-btn-in 0.15s ease;
+}
+
+.scroll-to-bottom-btn:hover {
+  background: rgba(180, 190, 254, 0.15);
+  border-color: rgba(180, 190, 254, 0.4);
+  color: #b4befe;
+  transform: translateY(2px);
+}
+
+@keyframes scroll-btn-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 /* File drag-and-drop overlay */
 .file-drop-overlay {
   position: absolute;

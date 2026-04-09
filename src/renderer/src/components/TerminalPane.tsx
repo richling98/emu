@@ -96,6 +96,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   const [showDrawer, setShowDrawer] = useState(false)
   const [fileDropActive, setFileDropActive] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [isAtBottom, setIsAtBottom] = useState(true)
 
   // Keep isVisibleRef in sync so the key handler can check it
   useEffect(() => { isVisibleRef.current = isVisible }, [isVisible])
@@ -169,6 +170,15 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     setTimeout(() => setCopiedId(null), 1800)
   }
 
+  const handleScrollToBottom = () => {
+    const viewport = containerRef.current?.querySelector('.xterm-viewport') as HTMLElement | null
+    if (!viewport) return
+    viewport.style.scrollBehavior = 'smooth'
+    viewport.scrollTop = viewport.scrollHeight
+    // Reset scroll-behavior so normal scrolling is unaffected
+    setTimeout(() => { viewport.style.scrollBehavior = '' }, 500)
+  }
+
   useEffect(() => {
     if (!containerRef.current) return
 
@@ -223,6 +233,12 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     terminal.focus()
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
+
+    // Track whether the viewport is scrolled to the bottom
+    terminal.onScroll(() => {
+      const buf = terminal.buffer.active
+      setIsAtBottom(buf.viewportY >= buf.length - terminal.rows)
+    })
 
     // ── Clickable links ──────────────────────────────────────────────────────
 
@@ -587,6 +603,13 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         </div>
       )}
       <div ref={containerRef} className="terminal-container" />
+      {!isAtBottom && (
+        <button className="scroll-to-bottom-btn" onClick={handleScrollToBottom} title="Scroll to bottom">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+      )}
       {fileDropActive && (
         <div className="file-drop-overlay">
           <div className="file-drop-badge">
