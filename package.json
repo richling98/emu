@@ -4,14 +4,23 @@
   "description": "The world's best terminal emulator",
   "main": "./out/main/index.js",
   "build": {
+    "appId": "com.emu.terminal",
+    "productName": "Emu",
     "mac": {
+      "icon": "build/icon.icns",
+      "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }]
+    },
+    "dmg": {
+      "title": "Emu",
       "icon": "build/icon.icns"
-    }
+    },
+    "files": ["out/**/*"]
   },
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
+    "dist": "electron-vite build && electron-builder",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
