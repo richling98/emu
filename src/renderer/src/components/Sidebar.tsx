@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import type { Session } from '../App'
 import HotkeyModal from './HotkeyModal'
 import AboutModal from './AboutModal'
+import emuLogo from '../assets/emu-logo.png'
 import './Sidebar.css'
 
 interface Props {
@@ -128,7 +129,10 @@ export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSe
       <div className="sidebar" style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
       <div className="sidebar-resize-handle" onMouseDown={handleResizeStart} />
       <div className="sidebar-header">
-        <span className="sidebar-title">Emu</span>
+        <div className="sidebar-brand">
+          <img src={emuLogo} alt="Emu" className="sidebar-logo" />
+          <span className="sidebar-title">Emu</span>
+        </div>
         <div className="sidebar-header-actions">
           <button className="fire-btn" onClick={() => setShowHotkeys(true)} title="Keyboard shortcuts">🔥</button>
           <button className="gear-btn" onClick={() => setShowAbout(true)} title="About Emu">⚙️</button>
