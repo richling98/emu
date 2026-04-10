@@ -1,11 +1,48 @@
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
+import fs from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import * as pty from 'node-pty'
 import os from 'os'
 
 // Track active PTY processes by session ID
 const ptyProcesses = new Map<string, pty.IPty>()
+
+// Write zsh wrapper startup files to Emmy's app-data dir and return the path.
+// Setting ZDOTDIR to this dir makes zsh read our wrappers instead of ~/.zsh*;
+// each wrapper sources the user's real file then our .zshrc appends the
+// prompt-spacing hook so a blank line appears between output and the next prompt.
+function setupShellIntegration(): string {
+  const dir = join(app.getPath('userData'), 'shell-integration')
+  fs.mkdirSync(dir, { recursive: true })
+
+  // .zshenv — sourced for every zsh instance (login, interactive, scripts)
+  fs.writeFileSync(join(dir, '.zshenv'),
+    '[[ -f "$HOME/.zshenv" ]] && source "$HOME/.zshenv"\n')
+
+  // .zprofile — sourced for login shells before .zshrc
+  fs.writeFileSync(join(dir, '.zprofile'),
+    '[[ -f "$HOME/.zprofile" ]] && source "$HOME/.zprofile"\n')
+
+  // .zshrc — sourced for interactive shells; appends the spacing hook last
+  fs.writeFileSync(join(dir, '.zshrc'), [
+    '# Restore ZDOTDIR so any subshells use the normal ~/.zshrc, not this wrapper',
+    'export ZDOTDIR="$HOME"',
+    '',
+    '# Source the user\'s real interactive config',
+    '[[ -f "$HOME/.zshrc" ]] && source "$HOME/.zshrc"',
+    '',
+    '# Emmy: print a blank line before each prompt to visually separate output from input',
+    '_emmy_prompt_spacing() { printf "\\n" }',
+    'precmd_functions+=("_emmy_prompt_spacing")',
+  ].join('\n') + '\n')
+
+  // .zlogin — sourced for login shells after .zshrc
+  fs.writeFileSync(join(dir, '.zlogin'),
+    '[[ -f "$HOME/.zlogin" ]] && source "$HOME/.zlogin"\n')
+
+  return dir
+}
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -57,12 +94,23 @@ app.whenReady().then(() => {
   // Create a new PTY session
   ipcMain.handle('pty:create', (event, sessionId: string) => {
     const shell = os.platform() === 'win32' ? 'powershell.exe' : (process.env.SHELL || '/bin/zsh')
+
+    const env: Record<string, string> = {
+      ...process.env as Record<string, string>,
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor',
+    }
+    // Inject prompt-spacing hook for zsh via ZDOTDIR wrapper files
+    if (shell.includes('zsh')) {
+      env.ZDOTDIR = setupShellIntegration()
+    }
+
     const ptyProcess = pty.spawn(shell, [], {
       name: 'xterm-256color',
       cols: 80,
       rows: 24,
       cwd: os.homedir(),
-      env: { ...process.env as Record<string, string>, TERM: 'xterm-256color', COLORTERM: 'truecolor' }
+      env,
     })
 
     ptyProcesses.set(sessionId, ptyProcess)

@@ -10,7 +10,10 @@
 - **Split-Screen Mode** — Two terminals side-by-side. Drag the divider to resize, drop any tab into either pane, close individual panes with the ✕ button.
 - **Unlimited Tabs** — Spin up as many named tabs as you need. Each gets its own PTY, timestamps, and history. Rename any tab with a double-click.
 - **Command Log** — `⌘⇧L` opens a searchable, time-stamped log of every command you've run, with output previews and one-click jump-to.
+- **Output Copy Button** — Every entry in the Command Log has a one-click copy button that grabs clean, formatted output — stripping prompts and terminal noise.
 - **Jump to Prompt** — `⌘↑` / `⌘↓` jumps through your scrollback history one command at a time.
+- **Scroll to Bottom** — A button appears whenever you scroll up in a busy session, letting you jump back to live output in one click.
+- **Prompt Spacing** — A blank line automatically appears between each command's output and the next prompt, making dense output easy to scan.
 - **Clickable URLs & Domains** — Every URL (`https://`) and bare domain (`nvidia.com`, `perplexity.ai`) is `Cmd+click`able and opens in your browser.
 - **Clickable File Paths** — Any `/absolute` or `./relative` path in output is `Cmd+click`able and opens in Finder.
 - **Multi-Line Paste** — Paste a block of commands and Emmy hands them to your shell as a unit, waiting for a single Enter.
@@ -21,7 +24,7 @@
 - **Screenshot & File Drop** — Drag any file from Finder into the terminal to paste its shell-escaped path.
 
 ### Beauty
-- **Catppuccin Mocha** — Hand-tuned theme with lavender highlights, warm magentas, and sky blues.
+- **Color Themes** — 6 hand-tuned themes: Catppuccin, Matrix, Francisco, Haze, Mocha, and Monokai. Switch instantly from the titlebar.
 - **Frosted Glass UI** — Vibrancy on the sidebar and titlebar that responds to your desktop in real time.
 - **Premium Typography** — JetBrains Mono at pixel-perfect sizing with 1.0 line height and zero letter-spacing.
 - **Unfocused Split Dimming** — The inactive pane dims back so your focus is always clear.
