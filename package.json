@@ -8,19 +8,28 @@
     "productName": "Emu",
     "mac": {
       "icon": "build/icon.icns",
-      "target": [{ "target": "dmg", "arch": ["arm64"] }]
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ]
     },
     "dmg": {
       "title": "Emu",
       "icon": "build/icon.icns"
     },
-    "files": ["out/**/*"]
+    "files": [
+      "out/**/*"
+    ]
   },
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "dist": "electron-vite build && electron-builder",
+    "dist": "npm_config_python=/usr/bin/python3 electron-vite build && npm_config_python=/usr/bin/python3 electron-builder",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
@@ -36,6 +45,7 @@
     "node-pty": "^1.0.0"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.3",
     "@types/node": "^22.10.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
@@ -44,6 +54,7 @@
     "electron-builder": "^25.1.8",
     "electron-rebuild": "^3.2.9",
     "electron-vite": "^2.3.0",
+    "node-gyp": "^12.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "typescript": "^5.7.2",
