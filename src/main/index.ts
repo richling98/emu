@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, nativeImage } from 'electron'
 import { join } from 'path'
 import fs from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -45,6 +45,10 @@ function setupShellIntegration(): string {
 }
 
 function createWindow(): void {
+  const iconPath = join(__dirname, '../../build/icon.icns')
+  const appIcon = nativeImage.createFromPath(iconPath)
+  if (!appIcon.isEmpty()) app.dock?.setIcon(appIcon)
+
   const mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
