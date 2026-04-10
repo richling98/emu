@@ -108,6 +108,9 @@ export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSe
         {showAbout && <AboutModal onClose={() => setShowAbout(false)} />}
         <div className="sidebar sidebar--collapsed">
           <div className="sidebar-resize-handle" onMouseDown={handleResizeStart} />
+          <div className="sidebar-collapsed-logo">
+            <img src={emuLogo} alt="Emu" className="sidebar-logo" />
+          </div>
           <div className="sidebar-collapsed-actions">
             <button className="new-session-btn" onClick={onNew} title="New session">+</button>
             <button className="fire-btn" onClick={() => setShowHotkeys(true)} title="Keyboard shortcuts">🔥</button>
