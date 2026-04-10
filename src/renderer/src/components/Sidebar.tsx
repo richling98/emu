@@ -128,10 +128,10 @@ export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSe
       <div className="sidebar" style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
       <div className="sidebar-resize-handle" onMouseDown={handleResizeStart} />
       <div className="sidebar-header">
-        <span className="sidebar-title">Emmy</span>
+        <span className="sidebar-title">Emu</span>
         <div className="sidebar-header-actions">
           <button className="fire-btn" onClick={() => setShowHotkeys(true)} title="Keyboard shortcuts">🔥</button>
-          <button className="gear-btn" onClick={() => setShowAbout(true)} title="About Emmy">⚙️</button>
+          <button className="gear-btn" onClick={() => setShowAbout(true)} title="About Emu">⚙️</button>
           <button className="new-session-btn" onClick={onNew} title="New session">+</button>
           <button className="collapse-btn" onClick={onToggleCollapse} title="Collapse sidebar">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">

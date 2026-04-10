@@ -8,7 +8,7 @@ import os from 'os'
 // Track active PTY processes by session ID
 const ptyProcesses = new Map<string, pty.IPty>()
 
-// Write zsh wrapper startup files to Emmy's app-data dir and return the path.
+// Write zsh wrapper startup files to Emu's app-data dir and return the path.
 // Setting ZDOTDIR to this dir makes zsh read our wrappers instead of ~/.zsh*;
 // each wrapper sources the user's real file then our .zshrc appends the
 // prompt-spacing hook so a blank line appears between output and the next prompt.
@@ -32,9 +32,9 @@ function setupShellIntegration(): string {
     '# Source the user\'s real interactive config',
     '[[ -f "$HOME/.zshrc" ]] && source "$HOME/.zshrc"',
     '',
-    '# Emmy: print a blank line before each prompt to visually separate output from input',
-    '_emmy_prompt_spacing() { printf "\\n" }',
-    'precmd_functions+=("_emmy_prompt_spacing")',
+    '# Emu: print a blank line before each prompt to visually separate output from input',
+    '_emu_prompt_spacing() { printf "\\n" }',
+    'precmd_functions+=("_emu_prompt_spacing")',
   ].join('\n') + '\n')
 
   // .zlogin — sourced for login shells after .zshrc
@@ -85,7 +85,7 @@ mainWindow.webContents.setWindowOpenHandler((details) => {
 }
 
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.emmy.terminal')
+  electronApp.setAppUserModelId('com.emu.terminal')
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)

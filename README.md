@@ -1,6 +1,6 @@
-# Emmy
+# Emu
 
-**Emmy** is a feature-rich terminal emulator designed to be 10x more beautiful and functional than the default macOS terminal. Built on Electron + xterm.js with a hand-tuned Catppuccin Mocha theme. Emmy is everything you wished your terminal was.
+**Emu** is a feature-rich terminal emulator designed to be 10x more beautiful and functional than the default macOS terminal. Built on Electron + xterm.js with a hand-tuned Catppuccin Mocha theme. Emu is everything you wished your terminal was.
 
 ---
 
@@ -16,7 +16,7 @@
 - **Prompt Spacing** — A blank line automatically appears between each command's output and the next prompt, making dense output easy to scan.
 - **Clickable URLs & Domains** — Every URL (`https://`) and bare domain (`nvidia.com`, `perplexity.ai`) is `Cmd+click`able and opens in your browser.
 - **Clickable File Paths** — Any `/absolute` or `./relative` path in output is `Cmd+click`able and opens in Finder.
-- **Multi-Line Paste** — Paste a block of commands and Emmy hands them to your shell as a unit, waiting for a single Enter.
+- **Multi-Line Paste** — Paste a block of commands and Emu hands them to your shell as a unit, waiting for a single Enter.
 - **Tab Drag & Drop** — Drag any session tab and drop it onto a split pane to reassign it instantly.
 - **Highlight-to-Delete** — Select text, press backspace to delete exactly that many characters.
 - **Font Zoom** — `⌘+` / `⌘−` to scale font size, `⌘0` to reset.
@@ -28,7 +28,7 @@
 - **Frosted Glass UI** — Vibrancy on the sidebar and titlebar that responds to your desktop in real time.
 - **Premium Typography** — JetBrains Mono at pixel-perfect sizing with 1.0 line height and zero letter-spacing.
 - **Unfocused Split Dimming** — The inactive pane dims back so your focus is always clear.
-- **Smooth Animations** — Every transition is eased and timed so Emmy never feels abrupt.
+- **Smooth Animations** — Every transition is eased and timed so Emu never feels abrupt.
 - **Rotating Greetings** — 20+ welcome banners, a fresh one every session.
 - **Visual Polish** — Grain overlay, layered shadows, consistent border radii throughout.
 

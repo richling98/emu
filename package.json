@@ -1,5 +1,5 @@
 {
-  "name": "emmy",
+  "name": "emu",
   "version": "0.1.0",
   "description": "The world's best terminal emulator",
   "main": "./out/main/index.js",

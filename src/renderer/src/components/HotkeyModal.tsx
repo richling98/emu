@@ -6,7 +6,7 @@ interface Props {
 
 const SECTIONS = [
   {
-    title: 'Emmy',
+    title: 'Emu',
     rows: [
       { keys: ['⌘', '='], label: 'Zoom in' },
       { keys: ['⌘', '−'], label: 'Zoom out' },
