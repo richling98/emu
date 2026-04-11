@@ -15,6 +15,9 @@ jobs:
         with:
           node-version: 22.x
 
+      - name: Fix Python distutils (required by node-gyp)
+        run: python3 -m pip install setuptools --break-system-packages || python3 -m pip install setuptools
+
       - name: Install dependencies
         run: npm install
 
