@@ -3,11 +3,25 @@
   "version": "0.1.0",
   "description": "The world's best terminal emulator",
   "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "postinstall": "node scripts/fix-node-pty-helper-perms.cjs && electron-builder install-app-deps",
+    "dist": "npm_config_python=/usr/bin/python3 electron-vite build && npm_config_python=/usr/bin/python3 electron-builder"
+  },
   "build": {
     "appId": "com.emu.terminal",
     "productName": "Emu",
+    "publish": [
+      {
+        "provider": "github",
+        "releaseType": "release"
+      }
+    ],
     "mac": {
       "icon": "build/icon.icns",
+      "category": "public.app-category.developer-tools",
       "target": [
         {
           "target": "dmg",
@@ -15,22 +29,21 @@
             "arm64"
           ]
         }
-      ]
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
     },
     "dmg": {
       "title": "Emu",
-      "icon": "build/icon.icns"
+      "icon": "build/icon.icns",
+      "sign": false
     },
     "files": [
       "out/**/*"
-    ]
-  },
-  "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
-    "preview": "electron-vite preview",
-    "dist": "npm_config_python=/usr/bin/python3 electron-vite build && npm_config_python=/usr/bin/python3 electron-builder",
-    "postinstall": "electron-builder install-app-deps"
+    ],
+    "afterSign": "build/notarize.js"
   },
   "dependencies": {
     "@electron-toolkit/tsconfig": "^2.0.0",
@@ -45,6 +58,7 @@
     "node-pty": "^1.0.0"
   },
   "devDependencies": {
+    "@electron/notarize": "^2.5.0",
     "@electron/rebuild": "^4.0.3",
     "@types/node": "^22.10.1",
     "@types/react": "^18.3.12",
