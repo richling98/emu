@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Emu</title>
+    <meta
+      name="description"
+      content="Emu is a beautiful terminal for developers who want a faster, cleaner, more capable replacement for the default terminal."
+    />
+    <meta name="theme-color" content="#000000" />
+    <link rel="icon" href="./assets/emu-logo.png" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <div class="space space-1"></div>
+      <div class="space space-2"></div>
+      <div class="grain"></div>
+
+      <section class="hero" id="top">
+        <div class="terminal-stage" data-reveal>
+          <div class="terminal-card">
+            <div class="terminal-shell">
+              <div class="terminal-top">
+                <div class="terminal-lights" aria-hidden="true">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                <div class="terminal-brand" aria-label="Emu">
+                  <img src="./assets/emu-logo.png" alt="" class="terminal-brand-logo" />
+                  <span class="terminal-brand-name">emu</span>
+                </div>
+              </div>
+
+              <div class="terminal-body" aria-label="Emu introduction">
+                <div class="terminal-line" data-line></div>
+                <div class="terminal-line" data-line></div>
+                <div class="terminal-line" data-line></div>
+                <div class="terminal-line" data-line></div>
+                <div class="terminal-line" data-line></div>
+              </div>
+
+              <div class="terminal-actions">
+                <a class="button button-primary" href="https://github.com/richling98/emmy/releases/latest/download/Emu.dmg">
+                  <svg class="button-icon button-icon--download" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 3v10m0 0 4-4m-4 4-4-4M5 19h14" />
+                  </svg>
+                  Download
+                </a>
+                <a class="button button-secondary" href="https://github.com/richling98/emmy" target="_blank" rel="noreferrer">
+                  <svg class="button-icon button-icon--github" viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M12 2.5a9.5 9.5 0 0 0-3 18.52c.47.09.64-.2.64-.45v-1.58c-2.62.57-3.17-1.11-3.17-1.11-.43-1.1-1.05-1.39-1.05-1.39-.86-.59.06-.58.06-.58.95.07 1.45.98 1.45.98.85 1.45 2.23 1.03 2.78.79.09-.62.33-1.04.6-1.28-2.1-.24-4.31-1.05-4.31-4.67 0-1.03.36-1.87.96-2.53-.1-.24-.42-1.22.09-2.55 0 0 .78-.25 2.56.97a8.7 8.7 0 0 1 4.66 0c1.78-1.22 2.56-.97 2.56-.97.51 1.33.19 2.31.09 2.55.6.66.96 1.5.96 2.53 0 3.63-2.21 4.43-4.32 4.67.34.29.64.86.64 1.74v2.58c0 .25.17.54.65.45A9.5 9.5 0 0 0 12 2.5Z"
+                    />
+                  </svg>
+                  View Github
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="features-section" aria-labelledby="features-title">
+        <div class="features-shell" data-reveal>
+          <div class="features-header">
+            <p class="features-kicker">Why Emu stands out</p>
+            <h2 id="features-title">Features you&apos;ll love</h2>
+          </div>
+
+          <div class="features-grid">
+            <article class="feature-card" data-reveal data-reveal-delay="0">
+              <span class="feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <rect x="3.5" y="4" width="17" height="16" rx="3.5" />
+                  <path d="M3.5 10h17" />
+                  <path d="M10 4v16" />
+                </svg>
+              </span>
+              <div>
+                <h3>Split screen mode</h3>
+                <p>Run two terminals side by side and drop tabs into either pane without breaking flow.</p>
+              </div>
+            </article>
+
+            <article class="feature-card" data-reveal data-reveal-delay="70">
+              <span class="feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <rect x="3.5" y="5" width="17" height="14" rx="4" />
+                  <path d="M8 9h8" />
+                  <path d="M8 13h10" />
+                </svg>
+              </span>
+              <div>
+                <h3>Unlimited tabs</h3>
+                <p>Open as many named sessions as you need. Each tab keeps its own PTY, history, and timestamps.</p>
+              </div>
+            </article>
+
+            <article class="feature-card" data-reveal data-reveal-delay="140">
+              <span class="feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M7 17c-1.7 0-3-1.3-3-3s1.3-3 3-3h2" />
+                  <path d="M17 7c1.7 0 3 1.3 3 3s-1.3 3-3 3h-2" />
+                  <path d="M9 12h6" />
+                  <path d="M13 9l3 3-3 3" />
+                </svg>
+              </span>
+              <div>
+                <h3>Jump-to-command</h3>
+                <p>Fly through scrollback one command at a time with prompt-by-prompt navigation that keeps you organized.</p>
+              </div>
+            </article>
+
+            <article class="feature-card" data-reveal data-reveal-delay="210">
+              <span class="feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M10.5 13.5 13.5 10.5" />
+                  <path d="M8.5 7.5 6 10a4 4 0 0 0 5.7 5.7l2.5-2.5" />
+                  <path d="M15.5 16.5 18 14a4 4 0 0 0-5.7-5.7l-2.5 2.5" />
+                </svg>
+              </span>
+              <div>
+                <h3>Clickable links &amp; filepaths</h3>
+                <p>Cmd-click URLs and domains, or open absolute and relative paths directly in Finder.</p>
+              </div>
+            </article>
+
+            <article class="feature-card" data-reveal data-reveal-delay="280">
+              <span class="feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <rect x="5" y="5" width="14" height="14" rx="3.5" />
+                  <path d="M9 9h6v6H9z" />
+                  <path d="M12 2v3" />
+                  <path d="M12 19v3" />
+                  <path d="M2 12h3" />
+                  <path d="M19 12h3" />
+                </svg>
+              </span>
+              <div>
+                <h3>GPU rendering</h3>
+                <p>WebGL-accelerated text rendering keeps every character razor sharp and scrolling silky smooth, even in dense output.</p>
+              </div>
+            </article>
+
+            <article class="feature-card" data-reveal data-reveal-delay="350">
+              <span class="feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M4.5 7.5h15" />
+                  <path d="M4.5 12h15" />
+                  <path d="M4.5 16.5h15" />
+                  <path d="M18 5.5v13" />
+                </svg>
+              </span>
+              <div>
+                <h3>Custom color themes</h3>
+                <p>Six curated themes, from Catppuccin to Monokai, switch instantly and stay saved the next time you launch Emu.</p>
+              </div>
+            </article>
+
+            <article class="feature-card" data-reveal data-reveal-delay="420">
+              <span class="feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M8 18V6l8 12V6" />
+                  <path d="M6 6h12" />
+                </svg>
+              </span>
+              <div>
+                <h3>Premium typography</h3>
+                <p>JetBrains Mono tuned with pixel-perfect sizing, integer font size, and a clean 1.0 line height for crisp terminal text.</p>
+              </div>
+            </article>
+
+            <article class="feature-card" data-reveal data-reveal-delay="490">
+              <span class="feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <rect x="4.5" y="5.5" width="12.5" height="12.5" rx="3.5" />
+                  <rect x="7" y="3.5" width="12.5" height="12.5" rx="3.5" />
+                  <path d="M9.5 7.5h5.5" />
+                  <path d="M11 10h7" />
+                  <path d="M13.5 12.5h2.5" />
+                </svg>
+              </span>
+              <div>
+                <h3>Frosted glass UI</h3>
+                <p>Vibrancy, blur, and brightness work together on the shell, sidebar, and titlebar for a polished native feel.</p>
+              </div>
+            </article>
+
+            <article class="feature-card" data-reveal data-reveal-delay="560">
+              <span class="feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <rect x="5.5" y="5.5" width="11" height="11" rx="2.5" />
+                  <rect x="8.5" y="8.5" width="11" height="11" rx="2.5" />
+                </svg>
+              </span>
+              <div>
+                <h3>Output Copy Button</h3>
+                <p>Every entry in the Command Log includes a clipboard icon that copies the full output in one click, clean and shell-free.</p>
+              </div>
+            </article>
+
+            <article class="feature-card" data-reveal data-reveal-delay="630">
+              <span class="feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <circle cx="10" cy="10" r="5.5" />
+                  <path d="M10 7.5v5" />
+                  <path d="M7.5 10h5" />
+                  <path d="M15.5 15.5 20 20" />
+                </svg>
+              </span>
+              <div>
+                <h3>Font Zoom</h3>
+                <p>⌘+ and ⌘− scale the terminal font instantly, and ⌘0 snaps back to default while the layout auto-fits the viewport.</p>
+              </div>
+            </article>
+
+            <article class="feature-card" data-reveal data-reveal-delay="700">
+              <span class="feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M12 5v14" />
+                  <path d="M8.5 11.5 12 15l3.5-3.5" />
+                  <path d="M6.5 19h11" />
+                </svg>
+              </span>
+              <div>
+                <h3>Auto Scroll</h3>
+                <p>When you&apos;re not at the bottom, a button appears in the lower-right corner so you can jump straight back down.</p>
+              </div>
+            </article>
+
+            <article class="feature-card" data-reveal data-reveal-delay="770">
+              <span class="feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M9 7.5H7.5a3.5 3.5 0 0 0 0 7H9" />
+                  <path d="M15 7.5h1.5a3.5 3.5 0 0 1 0 7H15" />
+                  <path d="M10.5 12h3" />
+                  <path d="M12.5 9l1.5 3-1.5 3" />
+                </svg>
+              </span>
+              <div>
+                <h3>Highlight-to-Delete</h3>
+                <p>Select any text and press backspace to delete exactly that many characters, making surgical edits feel effortless.</p>
+              </div>
+            </article>
+          </div>
+
+          <div class="features-cta" data-reveal data-reveal-delay="840">
+            <a class="button button-primary" href="https://github.com/richling98/emmy/releases/latest/download/Emu.dmg">
+              <svg class="button-icon button-icon--download" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3v10m0 0 4-4m-4 4-4-4M5 19h14" />
+              </svg>
+              Download
+            </a>
+            <a class="button button-secondary" href="https://github.com/richling98/emmy" target="_blank" rel="noreferrer">
+              <svg class="button-icon button-icon--github" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M12 2.5a9.5 9.5 0 0 0-3 18.52c.47.09.64-.2.64-.45v-1.58c-2.62.57-3.17-1.11-3.17-1.11-.43-1.1-1.05-1.39-1.05-1.39-.86-.59.06-.58.06-.58.95.07 1.45.98 1.45.98.85 1.45 2.23 1.03 2.78.79.09-.62.33-1.04.6-1.28-2.1-.24-4.31-1.05-4.31-4.67 0-1.03.36-1.87.96-2.53-.1-.24-.42-1.22.09-2.55 0 0 .78-.25 2.56.97a8.7 8.7 0 0 1 4.66 0c1.78-1.22 2.56-.97 2.56-.97.51 1.33.19 2.31.09 2.55.6.66.96 1.5.96 2.53 0 3.63-2.21 4.43-4.32 4.67.34.29.64.86.64 1.74v2.58c0 .25.17.54.65.45A9.5 9.5 0 0 0 12 2.5Z"
+                />
+              </svg>
+              View Github
+            </a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="./script.js"></script>
+  </body>
+</html>
