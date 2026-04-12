@@ -4,7 +4,6 @@
     "prettier",
     "@typescript-eslint",
     "eslint-comments",
-    "lodash",
     "import"
   ],
   "extends": [
@@ -23,7 +22,7 @@
     },
     "allowImportExportEverywhere": true,
     "project": [
-      "./tsconfig.eslint.json"
+      "./tsconfig.json"
     ]
   },
   "env": {
@@ -100,11 +99,7 @@
         "@typescript-eslint/no-unsafe-member-access": "off",
         "@typescript-eslint/restrict-template-expressions": "off",
         "@typescript-eslint/consistent-type-imports": [ "error", { "disallowTypeAnnotations": false } ],
-        "lodash/prop-shorthand": [ "error", "always" ],
-        "lodash/import-scope": [ "error", "method" ],
-        "lodash/collection-return": "error",
-        "lodash/collection-method-value": "error",
-        "import/no-extraneous-dependencies": "error",
+"import/no-extraneous-dependencies": "error",
         "import/no-anonymous-default-export": "error",
         "import/order": [
           "error",

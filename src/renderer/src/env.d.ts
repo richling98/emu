@@ -12,5 +12,6 @@ interface Window {
     getFilePath: (file: File) => string
     openExternal: (url: string) => Promise<void>
     openPath: (path: string) => Promise<string>
+    ptyGetProcess: (sessionId: string) => Promise<string | null>
   }
 }

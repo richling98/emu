@@ -98,6 +98,15 @@ export default function App() {
     setRightPaneSessionId((cur) => (cur === id ? null : cur))
   }, [])
 
+  const handleSelect = useCallback((id: string) => {
+    if (layoutMode === 'split') {
+      if (id === selectedId || id === rightPaneSessionId) return
+      setSelectedId(id)
+    } else {
+      setSelectedId(id)
+    }
+  }, [layoutMode, selectedId, rightPaneSessionId])
+
   const toggleSplitScreen = useCallback(() => {
     if (layoutMode === 'single') {
       setLayoutMode('split')
@@ -197,7 +206,7 @@ export default function App() {
           sessions={sessions}
           selectedId={selectedId}
           rightPaneSessionId={rightPaneSessionId}
-          onSelect={setSelectedId}
+          onSelect={handleSelect}
           onNew={handleNewSession}
           onRename={handleRename}
           onDelete={handleDeleteSession}
