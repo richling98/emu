@@ -659,9 +659,20 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       window.api.ptyWrite(session.id, data)
     })
 
+    // Debounce resize events so that a slot change (which triggers TWO rapid
+    // ResizeObserver fires — one for the width change and one for the pane-header
+    // appearing and reducing the height) collapses into a single fit + ptyResize.
+    // Without debouncing, two back-to-back SIGWINCH signals are sent to zsh, and
+    // zsh outputs extra newlines while redrawing the prompt, which appear as
+    // spurious blank lines in the terminal content.
+    let resizeDebounce: ReturnType<typeof setTimeout> | null = null
     const resizeObserver = new ResizeObserver(() => {
-      fitAddon.fit()
-      window.api.ptyResize(session.id, terminal.cols, terminal.rows)
+      if (resizeDebounce) clearTimeout(resizeDebounce)
+      resizeDebounce = setTimeout(() => {
+        resizeDebounce = null
+        fitAddon.fit()
+        window.api.ptyResize(session.id, terminal.cols, terminal.rows)
+      }, 50)
     })
     resizeObserver.observe(containerRef.current)
 
@@ -709,6 +720,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
     return () => {
       if (outputFlushTimerRef.current) clearTimeout(outputFlushTimerRef.current)
+      if (resizeDebounce) clearTimeout(resizeDebounce)
       viewportEl?.removeEventListener('scroll', updateScrollState)
       removeDataListener()
       removeExitListener()
@@ -717,8 +729,13 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       containerRef.current?.removeEventListener('dragleave', handleDragLeave, { capture: true })
       containerRef.current?.removeEventListener('drop', handleDrop, { capture: true })
       containerRef.current?.removeEventListener('wheel', handleWheel, { capture: true })
-      terminal.dispose()
       window.api.ptyClose(session.id)
+      // Defer terminal disposal to the next tick so it runs after React finishes
+      // its commit phase. Disposing the WebGL canvas synchronously during React's
+      // commit can interact with Electron's compositor on a transparent window and
+      // blank the entire frame. The PTY is already closed above so no output will
+      // arrive in the meantime.
+      setTimeout(() => { try { terminal.dispose() } catch { /* swallow disposal errors */ } }, 0)
     }
   }, [])
 

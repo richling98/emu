@@ -286,7 +286,8 @@
 }
 
 .history-btn,
-.rename-btn {
+.rename-btn,
+.delete-btn {
   background: none;
   border: none;
   cursor: pointer;
@@ -294,7 +295,7 @@
   border-radius: 3px;
   opacity: 0;
   flex-shrink: 0;
-  transition: opacity 0.15s, background 0.15s;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
   line-height: 0;
   color: rgba(255, 255, 255, 0.8);
   display: flex;
@@ -303,7 +304,8 @@
 }
 
 .session-item:hover .history-btn,
-.session-item:hover .rename-btn {
+.session-item:hover .rename-btn,
+.session-item:hover .delete-btn {
   opacity: 0.55;
 }
 
@@ -311,6 +313,74 @@
 .session-item:hover .rename-btn:hover {
   opacity: 1;
   background: rgba(255, 255, 255, 0.1);
+}
+
+.session-item:hover .delete-btn:hover {
+  opacity: 1;
+  background: rgba(243, 139, 168, 0.18);
+  color: #f38ba8;
+}
+
+/* Delete confirmation modal */
+.delete-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.delete-modal {
+  background: var(--bg-panel, #1e1e2e);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 20px 24px;
+  min-width: 220px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.delete-modal-text {
+  margin: 0 0 16px;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.85);
+  text-align: center;
+}
+
+.delete-modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.delete-modal-cancel,
+.delete-modal-confirm {
+  border: none;
+  border-radius: 5px;
+  padding: 5px 16px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.delete-modal-cancel {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.delete-modal-cancel:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
+.delete-modal-confirm {
+  background: rgba(243, 139, 168, 0.25);
+  color: #f38ba8;
+}
+
+.delete-modal-confirm:hover {
+  background: rgba(243, 139, 168, 0.4);
 }
 
 .session-rename-input {

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import type { Session } from '../App'
 import HotkeyModal from './HotkeyModal'
 import AboutModal from './AboutModal'
@@ -12,6 +13,7 @@ interface Props {
   onSelect: (id: string) => void
   onNew: () => void
   onRename: (id: string, name: string) => void
+  onDelete: (id: string) => void
   collapsed: boolean
   onToggleCollapse: () => void
   onOpenHistory: (id: string) => void
@@ -32,9 +34,10 @@ const COLLAPSE_THRESHOLD = 190
 const MIN_WIDTH = 190
 const MAX_WIDTH = 420
 
-export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSelect, onNew, onRename, collapsed, onToggleCollapse, onOpenHistory }: Props) {
+export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSelect, onNew, onRename, onDelete, collapsed, onToggleCollapse, onOpenHistory }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const [now, setNow] = useState(() => new Date())
   const [showHotkeys, setShowHotkeys] = useState(false)
   const [showAbout, setShowAbout] = useState(false)
@@ -101,11 +104,25 @@ export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSe
     setEditingId(null)
   }
 
+  const deleteModal = deleteConfirmId && createPortal(
+    <div className="delete-modal-overlay" onClick={() => setDeleteConfirmId(null)}>
+      <div className="delete-modal" onClick={(e) => e.stopPropagation()}>
+        <p className="delete-modal-text">Delete this tab?</p>
+        <div className="delete-modal-actions">
+          <button className="delete-modal-cancel" onClick={() => setDeleteConfirmId(null)}>Cancel</button>
+          <button className="delete-modal-confirm" onClick={() => { onDelete(deleteConfirmId); setDeleteConfirmId(null) }}>Delete</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
+
   if (collapsed) {
     return (
       <>
         {showHotkeys && <HotkeyModal onClose={() => setShowHotkeys(false)} />}
         {showAbout && <AboutModal onClose={() => setShowAbout(false)} />}
+        {deleteModal}
         <div className="sidebar sidebar--collapsed">
           <div className="sidebar-resize-handle" onMouseDown={handleResizeStart} />
           <div className="sidebar-collapsed-logo">
@@ -129,6 +146,7 @@ export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSe
     <>
       {showHotkeys && <HotkeyModal onClose={() => setShowHotkeys(false)} />}
       {showAbout && <AboutModal onClose={() => setShowAbout(false)} />}
+      {deleteModal}
       <div className="sidebar" style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
       <div className="sidebar-resize-handle" onMouseDown={handleResizeStart} />
       <div className="sidebar-header">
@@ -191,6 +209,17 @@ export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSe
                         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                       </svg>
                     </button>
+                    {sessions.length > 1 && (
+                      <button className="delete-btn" onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(session.id) }} title="Delete tab">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 6 5 6 21 6" />
+                          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                          <path d="M10 11v6" />
+                          <path d="M14 11v6" />
+                          <path d="M9 6V4h6v2" />
+                        </svg>
+                      </button>
+                    )}
                   </div>
                 </>
               )}

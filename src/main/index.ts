@@ -8,6 +8,23 @@ import os from 'os'
 // Track active PTY processes by session ID
 const ptyProcesses = new Map<string, pty.IPty>()
 
+// Only allow http/https URLs to be opened externally.
+// Blocks file://, javascript:, custom schemes, and anything else that could
+// be used to open local files or trigger other installed apps maliciously.
+function isSafeExternalUrl(url: string): boolean {
+  try {
+    const { protocol } = new URL(url)
+    return protocol === 'https:' || protocol === 'http:'
+  } catch {
+    return false
+  }
+}
+
+// Only allow real absolute filesystem paths (no URLs, no null bytes).
+function isSafeOpenPath(p: string): boolean {
+  return typeof p === 'string' && p.startsWith('/') && !p.includes('\0')
+}
+
 // Write zsh wrapper startup files to Emu's app-data dir and return the path.
 // Setting ZDOTDIR to this dir makes zsh read our wrappers instead of ~/.zsh*;
 // each wrapper sources the user's real file then our .zshrc appends the
@@ -24,17 +41,13 @@ function setupShellIntegration(): string {
   fs.writeFileSync(join(dir, '.zprofile'),
     '[[ -f "$HOME/.zprofile" ]] && source "$HOME/.zprofile"\n')
 
-  // .zshrc — sourced for interactive shells; appends the spacing hook last
+  // .zshrc — sourced for interactive shells
   fs.writeFileSync(join(dir, '.zshrc'), [
     '# Restore ZDOTDIR so any subshells use the normal ~/.zshrc, not this wrapper',
     'export ZDOTDIR="$HOME"',
     '',
     '# Source the user\'s real interactive config',
     '[[ -f "$HOME/.zshrc" ]] && source "$HOME/.zshrc"',
-    '',
-    '# Emu: print a blank line before each prompt to visually separate output from input',
-    '_emu_prompt_spacing() { printf "\\n" }',
-    'precmd_functions+=("_emu_prompt_spacing")',
   ].join('\n') + '\n')
 
   // .zlogin — sourced for login shells after .zshrc
@@ -59,7 +72,9 @@ function createWindow(): void {
     titleBarStyle: 'hiddenInset',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false
     }
   })
 
@@ -77,7 +92,7 @@ function createWindow(): void {
   })
 
 mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    if (isSafeExternalUrl(details.url)) shell.openExternal(details.url)
     return { action: 'deny' }
   })
 
@@ -143,11 +158,15 @@ app.whenReady().then(() => {
     return ptyProcesses.get(sessionId)?.process ?? null
   })
 
-  // Open URLs in default browser
-  ipcMain.handle('shell:openExternal', (_, url: string) => shell.openExternal(url))
+  // Open URLs in default browser — only http/https allowed
+  ipcMain.handle('shell:openExternal', (_, url: string) => {
+    if (isSafeExternalUrl(url)) return shell.openExternal(url)
+  })
 
-  // Open file paths in Finder / default app
-  ipcMain.handle('shell:openPath', (_, path: string) => shell.openPath(path))
+  // Open file paths in Finder / default app — must be a real absolute path
+  ipcMain.handle('shell:openPath', (_, path: string) => {
+    if (isSafeOpenPath(path)) return shell.openPath(path)
+  })
 
   // Write input to PTY
   ipcMain.on('pty:write', (_, sessionId: string, data: string) => {

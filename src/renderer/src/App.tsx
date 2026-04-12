@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import Sidebar from './components/Sidebar'
 import TerminalPane from './components/TerminalPane'
 import ThemePicker from './components/ThemePicker'
@@ -26,6 +26,8 @@ const initialSession = createSession()
 
 export default function App() {
   const [sessions, setSessions] = useState<Session[]>([initialSession])
+  const sessionsRef = useRef(sessions)
+  sessionsRef.current = sessions
   const [selectedId, setSelectedId] = useState<string>(initialSession.id)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [openHistoryFor, setOpenHistoryFor] = useState<string | null>(null)
@@ -82,6 +84,18 @@ export default function App() {
   const handleOpenHistory = useCallback((id: string) => {
     setSelectedId(id)
     setOpenHistoryFor(id)
+  }, [])
+
+  const handleDeleteSession = useCallback((id: string) => {
+    const current = sessionsRef.current
+    if (current.length <= 1) return
+    const remaining = current.filter((s) => s.id !== id)
+    const idx = current.findIndex((s) => s.id === id)
+    const next = remaining[Math.min(idx, remaining.length - 1)]
+    setSessions(remaining)
+    setSelectedId((cur) => (cur === id ? (next?.id ?? cur) : cur))
+    setActivePaneId((cur) => (cur === id ? (next?.id ?? cur) : cur))
+    setRightPaneSessionId((cur) => (cur === id ? null : cur))
   }, [])
 
   const toggleSplitScreen = useCallback(() => {
@@ -186,6 +200,7 @@ export default function App() {
           onSelect={setSelectedId}
           onNew={handleNewSession}
           onRename={handleRename}
+          onDelete={handleDeleteSession}
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
           onOpenHistory={handleOpenHistory}
