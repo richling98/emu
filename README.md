@@ -2,6 +2,8 @@
 
 **Emu** is a feature-rich terminal emulator designed to be 10x more beautiful and functional than the default macOS terminal. Built on Electron + xterm.js with native GPU rendering, Emu is everything you wished your terminal was.
 
+Learn more on the website: https://richling98.github.io/emu/
+
 ---
 
 ## Features
