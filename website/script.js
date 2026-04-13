@@ -27,7 +27,8 @@ const phrases = [
   'We built the best terminal experience ever.',
   'Emu is 10x more beautiful and feature-rich than your native macOS terminal.',
   'GPU rendering, unlimited tabs, split-screen mode, custom color palettes, and many other delightful features.',
-  'This is everything you want your terminal to be, and nothing you don\'t.'
+  'This is everything you want your terminal to be, and nothing you don\'t.',
+  '100% open-source.'
 ]
 
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
