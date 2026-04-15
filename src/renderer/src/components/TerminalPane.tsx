@@ -343,24 +343,50 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     // sequences (↑/↓) instead of scrolling the viewport.  This makes scroll
     // navigate shell history rather than the terminal buffer — the opposite of
     // what every macOS terminal app does.  We intercept all wheel events in the
-    // capture phase and drive scrolling through xterm.js's own API so the
-    // viewport always scrolls, regardless of screen mode.
+    // capture phase and drive scrolling ourselves so the viewport always scrolls,
+    // regardless of screen mode.
+    //
+    // In normal mode we write directly to viewportEl.scrollTop (pixel-precise)
+    // rather than converting to integer line counts.  This preserves macOS
+    // trackpad momentum: late-stage momentum events have tiny deltaY values
+    // (e.g. 3 px) that would round to 0 lines and be silently dropped, causing
+    // scroll to stop abruptly.  By accumulating sub-line deltas in scrollTop,
+    // xterm.js's own scroll listener picks them up and re-renders when a full
+    // line boundary is crossed — natural deceleration instead of a hard cutoff.
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault()
       e.stopPropagation()
-      // deltaMode 0 = pixels, 1 = lines, 2 = pages
       const fontSize = terminal.options.fontSize ?? 14
       const lineHeight = terminal.options.lineHeight ?? 1.0
       const pxPerLine = fontSize * lineHeight
-      let lines: number
-      if (e.deltaMode === 1) {
-        lines = Math.round(e.deltaY)
-      } else if (e.deltaMode === 2) {
-        lines = e.deltaY > 0 ? terminal.rows : -terminal.rows
+      const isAltScreen = terminal.buffer.active.type === 'alternate'
+      if (isAltScreen) {
+        // Alt-screen (vim, htop, etc.): use integer line scrolls to override
+        // xterm.js cursor-key conversion.  No scrollback buffer here anyway.
+        // deltaMode 0 = pixels, 1 = lines, 2 = pages
+        let lines: number
+        if (e.deltaMode === 1) {
+          lines = Math.round(e.deltaY)
+        } else if (e.deltaMode === 2) {
+          lines = e.deltaY > 0 ? terminal.rows : -terminal.rows
+        } else {
+          lines = Math.round(e.deltaY / pxPerLine)
+        }
+        if (lines !== 0) terminal.scrollLines(lines)
       } else {
-        lines = Math.round(e.deltaY / pxPerLine)
+        // Normal mode: pixel-precise scroll — preserves trackpad momentum fully.
+        if (!viewportEl) return
+        if (e.deltaMode === 0) {
+          // Pixels (trackpad) — apply raw delta, momentum events accumulate naturally
+          viewportEl.scrollTop += e.deltaY
+        } else if (e.deltaMode === 1) {
+          // Lines (mouse wheel) — scale by line height for correct step size
+          viewportEl.scrollTop += e.deltaY * pxPerLine
+        } else {
+          // Pages
+          viewportEl.scrollTop += e.deltaY > 0 ? viewportEl.clientHeight : -viewportEl.clientHeight
+        }
       }
-      if (lines !== 0) terminal.scrollLines(lines)
     }
     containerRef.current.addEventListener('wheel', handleWheel, { capture: true, passive: false })
     // ── End scroll wheel override ─────────────────────────────────────────────
