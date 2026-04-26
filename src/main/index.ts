@@ -584,7 +584,7 @@ app.whenReady().then(() => {
       env.ZDOTDIR = setupShellIntegration()
     }
 
-    const ptyProcess = pty.spawn(shell, [], {
+    const ptyProcess = pty.spawn(shell, ['-l'], {
       name: 'xterm-256color',
       cols: 80,
       rows: 24,
