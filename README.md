@@ -24,9 +24,12 @@ Learn more on the website: https://richling98.github.io/emu/
 - **Font Zoom** — `⌘+` / `⌘−` to scale font size, `⌘0` to reset.
 - **GPU Rendering** — WebGL-accelerated text rendering with full Retina support.
 - **Screenshot & File Drop** — Drag any file from Finder into the terminal to paste its shell-escaped path.
+- **Prompt Optimizer** — Select any text in the terminal and click the floating "Optimize" button to rewrite it as a cleaner prompt using OpenAI. Requires an API key configured in Settings → Prompt Optimizer.
+- **Settings** — A full settings panel with Appearance (theme picker), Prompt Optimizer (API key, model, provider), and About sections.
+- **Login Shell** — Spawns your shell as a login shell, so your `~/.zprofile` and PATH match macOS Terminal exactly.
 
 ### Beauty
-- **Color Themes** — 6 hand-tuned themes: Catppuccin, Matrix, Francisco, Haze, Mocha, and Monokai. Switch instantly from the titlebar.
+- **Color Themes** — 6 hand-tuned themes: Catppuccin, Matrix, Francisco, Haze, Mocha, and Monokai. Switch instantly from Settings.
 - **Frosted Glass UI** — Vibrancy on the sidebar and titlebar that responds to your desktop in real time.
 - **Premium Typography** — JetBrains Mono at pixel-perfect sizing with 1.0 line height and zero letter-spacing.
 - **Unfocused Split Dimming** — The inactive pane dims back so your focus is always clear.
@@ -39,14 +42,14 @@ Learn more on the website: https://richling98.github.io/emu/
 ## Getting Started
 
 ### Prerequisites
-- [Node.js](https://nodejs.org/) 20+
+- [Node.js](https://nodejs.org/) 22+
 - [npm](https://www.npmjs.com/)
 
 ### Install & Run
 
 ```bash
-git clone https://github.com/richling98/emmy.git
-cd emmy
+git clone https://github.com/richling98/emu.git
+cd emu
 npm install
 npm run dev
 ```
@@ -74,7 +77,7 @@ npm run build
 
 ## Tech Stack
 
-- [Electron](https://www.electronjs.org/) 33
+- [Electron](https://www.electronjs.org/) 41
 - [xterm.js](https://xtermjs.org/) 5.5 with WebGL renderer
 - [React](https://react.dev/) 18
 - [electron-vite](https://electron-vite.org/)
