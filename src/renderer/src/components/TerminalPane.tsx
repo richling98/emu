@@ -57,8 +57,15 @@ function cleanCopiedOutput(text: string): string {
 function applyInput(current: string, data: string): string {
   if (data === '\x7f') return current.slice(0, -1)       // Backspace
   if (data === '\x15' || data === '\x03') return ''       // Ctrl+U / Ctrl+C
+  if (data.startsWith('\x1b[200~')) {
+    const pasted = data
+      .replace(/^\x1b\[200~/, '')
+      .replace(/\x1b\[201~$/, '')
+      .replace(/\r/g, '')
+    return current + pasted
+  }
   if (data.startsWith('\x1b')) return current             // skip escape seqs
-  const printable = data.replace(/[\x00-\x1f\x7f]/g, '') // strip control chars
+  const printable = data.replace(/[\x00-\x09\x0b-\x1f\x7f]/g, '') // strip control chars, keep \n
   return current + printable
 }
 
@@ -284,11 +291,11 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     const prompt = text.trim()
     if (!prompt) return
 
-    // Selection geometry is display state, not editable terminal state. Once
-    // focus moves into the drawer, the reliable way to replace the user's
-    // current prompt is to clear the active input line, then bracket-paste the
-    // optimized version without pressing Enter.
-    const input = `\x05\x15\x1b[200~${prompt}\x1b[201~`
+    // Move to the end of the active input, explicitly backspace the prompt Emu
+    // tracked from user input, then bracket-paste the optimized version. This is
+    // more reliable in agent TUIs than readline-only clear shortcuts.
+    const originalPrompt = currentInputRef.current || capturedPromptSelection?.text.replace(/\r/g, '') || ''
+    const input = `\x05${'\x7f'.repeat(originalPrompt.length)}\x1b[200~${prompt}\x1b[201~`
     window.api.ptyWrite(session.id, input)
     currentInputRef.current = prompt
     setCapturedPromptSelection(null)
