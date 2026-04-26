@@ -291,11 +291,14 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     const prompt = text.trim()
     if (!prompt) return
 
-    // Move to the end of the active input, explicitly backspace the prompt Emu
-    // tracked from user input, then bracket-paste the optimized version. This is
-    // more reliable in agent TUIs than readline-only clear shortcuts.
+    // Move to end of line, kill backward (\x15 clears the whole buffer in zsh;
+    // in bash it only kills back to the last newline), then backspace over any
+    // remaining content. Use the selection text length as a fallback for
+    // alt-screen contexts where currentInputRef may be empty.
+    // Excess backspaces at an empty buffer are silently ignored by all shells.
     const originalPrompt = currentInputRef.current || capturedPromptSelection?.text.replace(/\r/g, '') || ''
-    const input = `\x05${'\x7f'.repeat(originalPrompt.length)}\x1b[200~${prompt}\x1b[201~`
+    const clearLen = Math.max(originalPrompt.length + 100, 200)
+    const input = `\x05\x15${'\x7f'.repeat(clearLen)}\x1b[200~${prompt}\x1b[201~`
     window.api.ptyWrite(session.id, input)
     currentInputRef.current = prompt
     setCapturedPromptSelection(null)
