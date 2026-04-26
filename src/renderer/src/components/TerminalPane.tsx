@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Terminal, type IBufferRange, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { WebglAddon } from '@xterm/addon-webgl'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import type { Session } from '../App'
 import CommandHistoryDrawer, { type HistoryEntry } from './CommandHistoryDrawer'
@@ -9,7 +8,7 @@ import PromptOptimizerDrawer from './PromptOptimizerDrawer'
 import '@xterm/xterm/css/xterm.css'
 import './TerminalPane.css'
 
-const DEFAULT_FONT_SIZE = 14
+const DEFAULT_FONT_SIZE = 13
 
 // Strip ANSI escape sequences — used only for the one-line outputPreview capture.
 // Full output (outputFull) is read from xterm.js's rendered buffer, not raw bytes.
@@ -130,6 +129,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
+  const fitAndResizeRef = useRef<(() => void) | null>(null)
   const isVisibleRef = useRef(isVisible)
   const isActiveRef = useRef(isActive)
 
@@ -330,11 +330,12 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         white: '#bac2de',
         brightWhite: '#a6adc8'
       },
-      fontFamily: '"JetBrains Mono", "Fira Code", Menlo, Monaco, monospace',
+      fontFamily: 'Menlo, Monaco, "SF Mono", "JetBrains Mono", monospace',
       fontSize: DEFAULT_FONT_SIZE,
-      lineHeight: 1.0,
+      lineHeight: 1.15,
       letterSpacing: 0,
       fontWeight: '400',
+      fontWeightBold: '600',
       cursorBlink: true,
       cursorStyle: 'bar',
       scrollback: 5000
@@ -345,18 +346,24 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     terminal.open(containerRef.current)
     fitAddon.fit()
 
-    // WebGL renderer — sharper text, GPU-accelerated, especially noticeable on Retina
-    try {
-      const webglAddon = new WebglAddon()
-      webglAddon.onContextLoss(() => webglAddon.dispose())
-      terminal.loadAddon(webglAddon)
-    } catch {
-      // Falls back to canvas renderer silently if WebGL isn't available
-    }
-
     terminal.focus()
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
+
+    const fitAndResizeTerminal = () => {
+      const previousCols = terminal.cols
+      const previousRows = terminal.rows
+
+      fitAddon.fit()
+
+      const resized = terminal.cols !== previousCols || terminal.rows !== previousRows
+      if (resized) {
+        window.api.ptyResize(session.id, terminal.cols, terminal.rows)
+      }
+
+      terminal.refresh(0, Math.max(0, terminal.rows - 1))
+    }
+    fitAndResizeRef.current = fitAndResizeTerminal
 
     const clearPromptSelection = () => {
       if (promptSelectionRef.current) setPromptSelection(null)
@@ -750,8 +757,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       if (ev.metaKey) {
         const zoom = (delta: number) => {
           terminal.options.fontSize = Math.min(Math.max((terminal.options.fontSize ?? DEFAULT_FONT_SIZE) + delta, 8), 32)
-          fitAddon.fit()
-          window.api.ptyResize(session.id, terminal.cols, terminal.rows)
+          fitAndResizeTerminal()
         }
         if (ev.key === '=' || ev.key === '+' || ev.code === 'Equal') {
           ev.preventDefault(); zoom(+1); return false
@@ -762,8 +768,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         if (ev.key === '0' || ev.code === 'Digit0') {
           ev.preventDefault()
           terminal.options.fontSize = DEFAULT_FONT_SIZE
-          fitAddon.fit()
-          window.api.ptyResize(session.id, terminal.cols, terminal.rows)
+          fitAndResizeTerminal()
           return false
         }
 
@@ -872,13 +877,17 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     // zsh outputs extra newlines while redrawing the prompt, which appear as
     // spurious blank lines in the terminal content.
     let resizeDebounce: ReturnType<typeof setTimeout> | null = null
+    let resizeFrame: number | null = null
     const resizeObserver = new ResizeObserver(() => {
       if (resizeDebounce) clearTimeout(resizeDebounce)
       resizeDebounce = setTimeout(() => {
         resizeDebounce = null
         clearPromptSelection()
-        fitAddon.fit()
-        window.api.ptyResize(session.id, terminal.cols, terminal.rows)
+        if (resizeFrame !== null) cancelAnimationFrame(resizeFrame)
+        resizeFrame = requestAnimationFrame(() => {
+          resizeFrame = null
+          fitAndResizeTerminal()
+        })
       }, 50)
     })
     resizeObserver.observe(containerRef.current)
@@ -928,6 +937,8 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     return () => {
       if (outputFlushTimerRef.current) clearTimeout(outputFlushTimerRef.current)
       if (resizeDebounce) clearTimeout(resizeDebounce)
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame)
+      fitAndResizeRef.current = null
       selectionChangeDisposable.dispose()
       viewportEl?.removeEventListener('scroll', updateScrollState)
       removeDataListener()
@@ -955,8 +966,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         Math.max((terminalRef.current.options.fontSize ?? DEFAULT_FONT_SIZE) + delta, 8),
         32
       )
-      fitAddonRef.current.fit()
-      window.api.ptyResize(session.id, terminalRef.current.cols, terminalRef.current.rows)
+      fitAndResizeRef.current?.()
     })
     return remove
   }, [])
@@ -964,8 +974,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   useEffect(() => {
     if (isVisible && fitAddonRef.current && terminalRef.current) {
       setTimeout(() => {
-        fitAddonRef.current?.fit()
-        window.api.ptyResize(session.id, terminalRef.current!.cols, terminalRef.current!.rows)
+        fitAndResizeRef.current?.()
         terminalRef.current?.focus()
       }, 10)
     }

@@ -130,26 +130,6 @@
   letter-spacing: 0.5px;
 }
 
-.fire-btn {
-  background: rgba(255, 255, 255, 0.07);
-  border: none;
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  font-size: 13px;
-  line-height: 1;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.15s, transform 0.15s;
-}
-
-.fire-btn:hover {
-  background: rgba(255, 255, 255, 0.15);
-  transform: scale(1.15);
-}
-
 .gear-btn {
   background: rgba(255, 255, 255, 0.07);
   border: none;

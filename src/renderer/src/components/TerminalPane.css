@@ -78,6 +78,13 @@
 
 .terminal-container .xterm {
   height: 100%;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+}
+
+.terminal-container .xterm-screen {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
 }
 
 .terminal-container .xterm-viewport {

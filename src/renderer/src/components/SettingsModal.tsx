@@ -9,7 +9,56 @@ interface Props {
   onClose: () => void
 }
 
-type SettingsSection = 'appearance' | 'optimizer' | 'about'
+type SettingsSection = 'appearance' | 'optimizer' | 'hotkeys' | 'about'
+
+const HOTKEY_SECTIONS = [
+  {
+    title: 'Emu',
+    rows: [
+      { keys: ['⌘', '='], label: 'Zoom in' },
+      { keys: ['⌘', '−'], label: 'Zoom out' },
+      { keys: ['⌘', '0'], label: 'Reset zoom' },
+      { keys: ['⌘', 'N'], label: 'New session' },
+      { keys: ['⌘', '⇧', 'L'], label: 'Command log' },
+      { keys: ['⌘', '↑'], label: 'Jump to previous prompt' },
+      { keys: ['⌘', '↓'], label: 'Jump to next prompt' },
+    ]
+  },
+  {
+    title: 'Edit',
+    rows: [
+      { keys: ['⌘', 'C'], label: 'Copy selection' },
+      { keys: ['⌘', 'V'], label: 'Paste' },
+      { keys: ['⌘', 'K'], label: 'Clear screen' },
+      { keys: ['⌃', 'C'], label: 'Interrupt / cancel' },
+      { keys: ['⌃', 'D'], label: 'Send EOF / logout' },
+      { keys: ['⌃', 'L'], label: 'Clear screen' },
+      { keys: ['⌃', 'U'], label: 'Delete to start of line' },
+      { keys: ['⌃', 'W'], label: 'Delete word backward' },
+      { keys: ['⌃', 'K'], label: 'Delete to end of line' },
+    ]
+  },
+  {
+    title: 'Navigation',
+    rows: [
+      { keys: ['⌃', 'A'], label: 'Move to start of line' },
+      { keys: ['⌃', 'E'], label: 'Move to end of line' },
+      { keys: ['⌃', 'B'], label: 'Move back one character' },
+      { keys: ['⌃', 'F'], label: 'Move forward one character' },
+      { keys: ['⌥', '←'], label: 'Move back one word' },
+      { keys: ['⌥', '→'], label: 'Move forward one word' },
+    ]
+  },
+  {
+    title: 'History',
+    rows: [
+      { keys: ['↑'], label: 'Previous command' },
+      { keys: ['↓'], label: 'Next command' },
+      { keys: ['⌃', 'R'], label: 'Search history' },
+      { keys: ['⌃', 'G'], label: 'Cancel history search' },
+    ]
+  }
+]
 
 export default function SettingsModal({ activeThemeId, onSelectTheme, onClose }: Props) {
   const [section, setSection] = useState<SettingsSection>('appearance')
@@ -140,6 +189,12 @@ export default function SettingsModal({ activeThemeId, onSelectTheme, onClose }:
               Prompt Optimizer
             </button>
             <button
+              className={`settings-nav-item${section === 'hotkeys' ? ' settings-nav-item--active' : ''}`}
+              onClick={() => setSection('hotkeys')}
+            >
+              Hotkeys
+            </button>
+            <button
               className={`settings-nav-item${section === 'about' ? ' settings-nav-item--active' : ''}`}
               onClick={() => setSection('about')}
             >
@@ -263,6 +318,32 @@ export default function SettingsModal({ activeThemeId, onSelectTheme, onClose }:
                       Save
                     </button>
                   </div>
+                </div>
+              </section>
+            )}
+
+            {section === 'hotkeys' && (
+              <section className="settings-section settings-hotkeys-section" aria-labelledby="hotkeys-settings-title">
+                <h2 id="hotkeys-settings-title" className="settings-section-title">Hotkeys</h2>
+                <div className="settings-hotkey-list">
+                  {HOTKEY_SECTIONS.map((hotkeySection) => (
+                    <div key={hotkeySection.title} className="settings-hotkey-group">
+                      <div className="settings-hotkey-group-title">{hotkeySection.title}</div>
+                      {hotkeySection.rows.map((row) => (
+                        <div key={row.label} className="settings-hotkey-row">
+                          <span className="settings-hotkey-label">{row.label}</span>
+                          <span className="settings-hotkey-keys">
+                            {row.keys.map((key, index) => (
+                              <span key={index} className="settings-hotkey-keyset">
+                                <kbd className="settings-kbd">{key}</kbd>
+                                {index < row.keys.length - 1 && <span className="settings-kbd-plus">+</span>}
+                              </span>
+                            ))}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
                 </div>
               </section>
             )}
