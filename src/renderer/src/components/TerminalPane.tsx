@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { Terminal, type ITheme } from '@xterm/xterm'
+import { Terminal, type IBufferRange, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import type { Session } from '../App'
 import CommandHistoryDrawer, { type HistoryEntry } from './CommandHistoryDrawer'
+import PromptOptimizerDrawer from './PromptOptimizerDrawer'
 import '@xterm/xterm/css/xterm.css'
 import './TerminalPane.css'
 
@@ -61,6 +62,43 @@ function applyInput(current: string, data: string): string {
   return current + printable
 }
 
+function rangeTouchesText(
+  selection: IBufferRange,
+  textStartLine: number,
+  textStartCol: number,
+  textLength: number,
+  cols: number
+): boolean {
+  if (textStartLine < 0 || textStartCol < 0 || textLength <= 0 || cols <= 0) return false
+
+  const selectionStartLine = selection.start.y - 1
+  const selectionEndLine = selection.end.y - 1
+  const selectionStartCol = selection.start.x - 1
+  const selectionEndCol = selection.end.x - 1
+
+  for (let i = 0; i < textLength; i++) {
+    const absoluteCol = textStartCol + i
+    const line = textStartLine + Math.floor(absoluteCol / cols)
+    const col = absoluteCol % cols
+    if (line < selectionStartLine || line > selectionEndLine) continue
+    if (selectionStartLine === selectionEndLine) {
+      if (col >= selectionStartCol && col < selectionEndCol) return true
+    } else if (line === selectionStartLine) {
+      if (col >= selectionStartCol) return true
+    } else if (line === selectionEndLine) {
+      if (col < selectionEndCol) return true
+    } else {
+      return true
+    }
+  }
+
+  return false
+}
+
+function normalizedSelectionText(text: string): string {
+  return text.replace(/\s+/g, ' ').trim()
+}
+
 interface Props {
   session: Session
   isVisible: boolean
@@ -71,10 +109,17 @@ interface Props {
   openDrawer?: boolean
   onDrawerClose?: () => void
   onClosePane?: () => void
+  onOpenSettings?: () => void
   xtermTheme?: ITheme
 }
 
-export default function TerminalPane({ session, isVisible, slot = 'full', isActive = true, onActivate, onSessionEnd, openDrawer, onDrawerClose, onClosePane, xtermTheme }: Props) {
+interface PromptSelection {
+  text: string
+  position: IBufferRange
+  anchor: { x: number; y: number; placement: 'above' | 'below' }
+}
+
+export default function TerminalPane({ session, isVisible, slot = 'full', isActive = true, onActivate, onSessionEnd, openDrawer, onDrawerClose, onClosePane, onOpenSettings, xtermTheme }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -97,6 +142,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   // not the end.  Without this, multi-line commands navigate to the LAST line (where Enter was
   // pressed) instead of the first line, cutting off the beginning of the prompt.
   const promptStartLineRef = useRef(-1)
+  const promptStartColRef = useRef(-1)
 
   // Full output capture — tracks the terminal buffer line range for each command.
   // We read from xterm.js's rendered buffer (not raw PTY bytes) so sync-output
@@ -112,10 +158,19 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   const [fileDropActive, setFileDropActive] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [isAtBottom, setIsAtBottom] = useState(true)
+  const [promptSelection, setPromptSelection] = useState<PromptSelection | null>(null)
+  const [capturedPromptSelection, setCapturedPromptSelection] = useState<PromptSelection | null>(null)
+  const promptSelectionRef = useRef<PromptSelection | null>(null)
 
   // Keep isVisibleRef in sync so the key handler can check it
   useEffect(() => { isVisibleRef.current = isVisible }, [isVisible])
   useEffect(() => { isActiveRef.current = isActive }, [isActive])
+
+  useEffect(() => { promptSelectionRef.current = promptSelection }, [promptSelection])
+
+  useEffect(() => {
+    if (!isVisible || !isActive) setPromptSelection(null)
+  }, [isVisible, isActive])
 
   // Keep commandHistoryRef in sync so key handlers can read latest history
   useEffect(() => { commandHistoryRef.current = commandHistory }, [commandHistory])
@@ -219,6 +274,27 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     requestAnimationFrame(step)
   }
 
+  const handleOptimizeSelection = () => {
+    if (!promptSelection) return
+    setCapturedPromptSelection(promptSelection)
+    setPromptSelection(null)
+  }
+
+  const handleInsertOptimizedPrompt = (text: string) => {
+    const prompt = text.trim()
+    if (!prompt) return
+
+    // Selection geometry is display state, not editable terminal state. Once
+    // focus moves into the drawer, the reliable way to replace the user's
+    // current prompt is to clear the active input line, then bracket-paste the
+    // optimized version without pressing Enter.
+    const input = `\x05\x15\x1b[200~${prompt}\x1b[201~`
+    window.api.ptyWrite(session.id, input)
+    currentInputRef.current = prompt
+    setCapturedPromptSelection(null)
+    window.setTimeout(() => terminalRef.current?.focus(), 0)
+  }
+
   useEffect(() => {
     if (!containerRef.current) return
 
@@ -228,7 +304,8 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         foreground: '#cdd6f4',
         cursor: '#f5e0dc',
         cursorAccent: '#1e1e2e',
-        selectionBackground: 'rgba(88, 91, 112, 0.5)',
+        selectionBackground: 'rgba(255, 214, 10, 0.82)',
+        selectionForeground: '#111111',
         black: '#45475a',
         brightBlack: '#585b70',
         red: '#f38ba8',
@@ -274,6 +351,84 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
 
+    const clearPromptSelection = () => {
+      if (promptSelectionRef.current) setPromptSelection(null)
+    }
+
+    const getSelectionAnchor = (position: IBufferRange): PromptSelection['anchor'] | null => {
+      const container = containerRef.current
+      const screen = container?.querySelector('.xterm-screen') as HTMLElement | null
+      if (!container || !screen || terminal.cols <= 0 || terminal.rows <= 0) return null
+
+      const containerRect = container.getBoundingClientRect()
+      const screenRect = screen.getBoundingClientRect()
+      const cellWidth = screenRect.width / terminal.cols
+      const cellHeight = screenRect.height / terminal.rows
+      const viewportY = terminal.buffer.active.viewportY
+      const startCol = Math.max(0, position.start.x - 1)
+      const startRow = position.start.y - 1
+      const visibleRow = startRow - viewportY
+      if (visibleRow < 0 || visibleRow >= terminal.rows) return null
+
+      const rawX = screenRect.left - containerRect.left + startCol * cellWidth
+      const rawY = screenRect.top - containerRect.top + visibleRow * cellHeight
+      const placement = rawY < 42 ? 'below' : 'above'
+      return {
+        x: Math.min(Math.max(rawX, 8), Math.max(8, containerRect.width - 430)),
+        y: Math.min(Math.max(rawY, 8), Math.max(8, containerRect.height - 8)),
+        placement
+      }
+    }
+
+    const updatePromptSelection = () => {
+      if (!isVisibleRef.current || !isActiveRef.current) {
+        clearPromptSelection()
+        return
+      }
+      const text = terminal.getSelection()
+      const position = terminal.getSelectionPosition()
+      const selectedUserText = normalizedSelectionText(text)
+      if (!position || selectedUserText.length < 1) {
+        clearPromptSelection()
+        return
+      }
+      const touchesCurrentInput = rangeTouchesText(
+        position,
+        promptStartLineRef.current,
+        promptStartColRef.current,
+        currentInputRef.current.length,
+        terminal.cols
+      )
+      const currentInputContainsSelection = normalizedSelectionText(currentInputRef.current)
+        .includes(selectedUserText)
+      const touchesHistoricalCommand = commandHistoryRef.current.some((entry) =>
+        rangeTouchesText(
+          position,
+          entry.line,
+          entry.commandStartCol ?? 0,
+          entry.command.length,
+          terminal.cols
+        )
+      )
+      const historicalCommandContainsSelection = commandHistoryRef.current.some((entry) =>
+        normalizedSelectionText(entry.command).includes(selectedUserText)
+      )
+      if (!touchesCurrentInput && !currentInputContainsSelection && !touchesHistoricalCommand && !historicalCommandContainsSelection) {
+        clearPromptSelection()
+        return
+      }
+      const anchor = getSelectionAnchor(position)
+      if (!anchor) {
+        clearPromptSelection()
+        return
+      }
+      setPromptSelection({ text, position, anchor })
+    }
+
+    const selectionChangeDisposable = terminal.onSelectionChange(() => {
+      window.setTimeout(updatePromptSelection, 0)
+    })
+
     // ── Alternate-screen detection via xterm.js buffer events ────────────────
     // We listen to the authoritative buffer-switch event rather than scanning
     // raw PTY bytes for \x1b[?1049h / \x1b[?1049l.  The byte-scan approach
@@ -286,6 +441,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
                          '-zsh', '-bash', '-fish', '-sh']
 
     terminal.buffer.onBufferChange(async (newBuffer) => {
+      clearPromptSelection()
       if (newBuffer.type === 'alternate') {
         isAltScreenRef.current = true
         // Snapshot normal-buffer position — used as the navigation anchor for
@@ -293,6 +449,8 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         altScreenEntryLineRef.current =
           terminal.buffer.normal.baseY + terminal.buffer.normal.cursorY
         currentInputRef.current = ''
+        promptStartLineRef.current = -1
+        promptStartColRef.current = -1
         if (outputFlushTimerRef.current) {
           clearTimeout(outputFlushTimerRef.current)
           outputFlushTimerRef.current = null
@@ -314,6 +472,8 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       } else {
         isAltScreenRef.current = false
         currentInputRef.current = ''
+        promptStartLineRef.current = -1
+        promptStartColRef.current = -1
         currentEntryIdRef.current = null
         currentEntryStartLineRef.current = -1
         if (outputFlushTimerRef.current) {
@@ -332,6 +492,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     const viewportEl = containerRef.current.querySelector('.xterm-viewport') as HTMLElement | null
     const updateScrollState = () => {
       if (!viewportEl) return
+      clearPromptSelection()
       // < 10px from bottom counts as "at bottom" to handle sub-pixel rounding
       const distFromBottom = viewportEl.scrollHeight - viewportEl.scrollTop - viewportEl.clientHeight
       setIsAtBottom(distFromBottom < 10)
@@ -570,11 +731,13 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     containerRef.current.addEventListener('mouseup', () => {
       savedSelection = terminal.getSelection()
       const pos = terminal.getSelectionPosition()
-      savedSelStartCol = pos ? pos.startColumn : -1
+      savedSelStartCol = pos ? pos.start.x - 1 : -1
+      window.setTimeout(updatePromptSelection, 0)
     })
 
     terminal.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
       if (ev.type !== 'keydown') return true
+      if (ev.key === 'Escape') clearPromptSelection()
 
       // Font zoom: Cmd+= / Cmd+- / Cmd+0
       if (ev.metaKey) {
@@ -618,11 +781,14 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         savedSelection = ''
         savedSelStartCol = -1
         currentInputRef.current = ''
+        promptStartLineRef.current = -1
+        promptStartColRef.current = -1
         return
       }
 
       savedSelection = ''
       savedSelStartCol = -1
+      clearPromptSelection()
 
       // Pass data to PTY as-is — bracketed paste markers (\x1b[200~...\x1b[201~)
       // are left intact so zsh buffers all pasted lines and waits for a single
@@ -657,6 +823,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
             outputPreview: '',
             outputFull: '',
             line,
+            commandStartCol: promptStartColRef.current >= 0 ? promptStartColRef.current : 0,
             timestamp: new Date()
           }
           if (!isAltScreenRef.current) {
@@ -666,6 +833,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
             currentEntryStartLineRef.current = line
           }
           promptStartLineRef.current = -1  // reset for next command
+          promptStartColRef.current = -1
           setCommandHistory(prev => [...prev, entry])
         }
       } else {
@@ -674,11 +842,16 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         // keystrokes won't corrupt the captured text.
         const wasEmpty = currentInputRef.current === ''
         currentInputRef.current = applyInput(currentInputRef.current, data)
+        if (currentInputRef.current === '') {
+          promptStartLineRef.current = -1
+          promptStartColRef.current = -1
+        }
         // Snapshot the buffer line the instant the user types their FIRST character.
         // This is the prompt line — the beginning of the command, not the end.
         // We only do this on the main screen; alt-screen uses altScreenEntryLineRef instead.
         if (!isAltScreenRef.current && wasEmpty && currentInputRef.current !== '') {
           promptStartLineRef.current = terminal.buffer.active.baseY + terminal.buffer.active.cursorY
+          promptStartColRef.current = terminal.buffer.active.cursorX
         }
       }
 
@@ -696,6 +869,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       if (resizeDebounce) clearTimeout(resizeDebounce)
       resizeDebounce = setTimeout(() => {
         resizeDebounce = null
+        clearPromptSelection()
         fitAddon.fit()
         window.api.ptyResize(session.id, terminal.cols, terminal.rows)
       }, 50)
@@ -747,6 +921,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     return () => {
       if (outputFlushTimerRef.current) clearTimeout(outputFlushTimerRef.current)
       if (resizeDebounce) clearTimeout(resizeDebounce)
+      selectionChangeDisposable.dispose()
       viewportEl?.removeEventListener('scroll', updateScrollState)
       removeDataListener()
       removeExitListener()
@@ -812,6 +987,35 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         </div>
       )}
       <div ref={containerRef} className="terminal-container" />
+      {promptSelection && (
+        <button
+          className={`prompt-optimize-btn prompt-optimize-btn--${promptSelection.anchor.placement}`}
+          style={{
+            left: promptSelection.anchor.x,
+            top: promptSelection.anchor.y
+          }}
+          onMouseDown={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+          }}
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            handleOptimizeSelection()
+          }}
+          title="Optimize selected prompt"
+        >
+          Optimize
+        </button>
+      )}
+      {capturedPromptSelection && (
+        <PromptOptimizerDrawer
+          selectionText={capturedPromptSelection.text}
+          onClose={() => setCapturedPromptSelection(null)}
+          onOpenSettings={onOpenSettings}
+          onInsert={handleInsertOptimizedPrompt}
+        />
+      )}
       {!isAtBottom && (
         <button className="scroll-to-bottom-btn" onClick={handleScrollToBottom} title="Scroll to bottom">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">

@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import Sidebar from './components/Sidebar'
 import TerminalPane from './components/TerminalPane'
-import ThemePicker from './components/ThemePicker'
+import SettingsModal from './components/SettingsModal'
 import { getTheme, applyTheme, DEFAULT_THEME_ID } from './themes'
 import './App.css'
 
@@ -35,7 +35,7 @@ export default function App() {
   const [rightPaneSessionId, setRightPaneSessionId] = useState<string | null>(null)
   const [splitRatio, setSplitRatio] = useState(0.5)
   const [themeId, setThemeId] = useState(() => localStorage.getItem('emmy-theme-id') ?? DEFAULT_THEME_ID)
-  const [showThemePicker, setShowThemePicker] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
 
   const handleSelectTheme = useCallback((id: string) => {
     setThemeId(id)
@@ -173,19 +173,15 @@ export default function App() {
       <div className="titlebar">
         <div className="titlebar-drag-area" />
         <div className="titlebar-actions">
-          {/* Color theme picker */}
+          {/* Settings */}
           <button
-            className={`layout-btn${showThemePicker ? ' active' : ''}`}
-            onClick={() => setShowThemePicker((v) => !v)}
-            title="Color theme"
+            className={`layout-btn${showSettings ? ' active' : ''}`}
+            onClick={() => setShowSettings((v) => !v)}
+            title="Settings"
           >
-            {/* Four-quadrant color wheel icon */}
-            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M8,8 L8,1 A7,7 0 0,1 15,8 Z" fill="#89b4fa"/>
-              <path d="M8,8 L15,8 A7,7 0 0,1 8,15 Z" fill="#a6e3a1"/>
-              <path d="M8,8 L8,15 A7,7 0 0,1 1,8 Z" fill="#f9e2af"/>
-              <path d="M8,8 L1,8 A7,7 0 0,1 8,1 Z" fill="#f38ba8"/>
-              <circle cx="8" cy="8" r="2.8" fill="rgba(30,30,46,0.75)"/>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z" />
+              <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6l-.04.1a2 2 0 0 1-3.92 0L10 20a1.7 1.7 0 0 0-1-.6 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1l-.1-.04a2 2 0 0 1 0-3.92L4 10a1.7 1.7 0 0 0 .6-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6l.04-.1a2 2 0 0 1 3.92 0L14 4a1.7 1.7 0 0 0 1 .6 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.18.37.45.7.8 1l.1.04a2 2 0 0 1 0 3.92l-.1.04c-.35.3-.62.63-.8 1Z" />
             </svg>
           </button>
           {/* Split-screen toggle */}
@@ -236,6 +232,7 @@ export default function App() {
                 openDrawer={openHistoryFor === session.id}
                 onDrawerClose={() => setOpenHistoryFor(null)}
                 onClosePane={isLeftSlot ? handleCloseLeftPane : isRightSlot ? handleCloseRightPane : undefined}
+                onOpenSettings={() => setShowSettings(true)}
                 xtermTheme={getTheme(themeId).terminal}
               />
             )
@@ -276,11 +273,11 @@ export default function App() {
           )}
         </div>
       </div>
-      {showThemePicker && (
-        <ThemePicker
+      {showSettings && (
+        <SettingsModal
           activeThemeId={themeId}
-          onSelect={handleSelectTheme}
-          onClose={() => setShowThemePicker(false)}
+          onSelectTheme={handleSelectTheme}
+          onClose={() => setShowSettings(false)}
         />
       )}
     </div>

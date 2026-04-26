@@ -2,7 +2,6 @@ import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import type { Session } from '../App'
 import HotkeyModal from './HotkeyModal'
-import AboutModal from './AboutModal'
 import emuLogo from '../assets/emu-logo.png'
 import './Sidebar.css'
 
@@ -40,7 +39,6 @@ export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSe
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const [now, setNow] = useState(() => new Date())
   const [showHotkeys, setShowHotkeys] = useState(false)
-  const [showAbout, setShowAbout] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(220)
   const inputRef = useRef<HTMLInputElement>(null)
   const collapsedRef = useRef(collapsed)
@@ -121,7 +119,6 @@ export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSe
     return (
       <>
         {showHotkeys && <HotkeyModal onClose={() => setShowHotkeys(false)} />}
-        {showAbout && <AboutModal onClose={() => setShowAbout(false)} />}
         {deleteModal}
         <div className="sidebar sidebar--collapsed">
           <div className="sidebar-resize-handle" onMouseDown={handleResizeStart} />
@@ -145,7 +142,6 @@ export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSe
   return (
     <>
       {showHotkeys && <HotkeyModal onClose={() => setShowHotkeys(false)} />}
-      {showAbout && <AboutModal onClose={() => setShowAbout(false)} />}
       {deleteModal}
       <div className="sidebar" style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
       <div className="sidebar-resize-handle" onMouseDown={handleResizeStart} />
@@ -156,7 +152,6 @@ export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSe
         </div>
         <div className="sidebar-header-actions">
           <button className="fire-btn" onClick={() => setShowHotkeys(true)} title="Keyboard shortcuts">🔥</button>
-          <button className="gear-btn" onClick={() => setShowAbout(true)} title="About Emu">⚙️</button>
           <button className="new-session-btn" onClick={onNew} title="New session">+</button>
           <button className="collapse-btn" onClick={onToggleCollapse} title="Collapse sidebar">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">

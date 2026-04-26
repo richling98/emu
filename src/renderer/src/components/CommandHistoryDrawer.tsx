@@ -7,6 +7,7 @@ export interface HistoryEntry {
   outputPreview: string
   outputFull: string
   line: number
+  commandStartCol?: number
   timestamp: Date
 }
 

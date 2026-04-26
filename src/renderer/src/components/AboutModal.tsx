@@ -4,7 +4,7 @@ interface Props {
   onClose: () => void
 }
 
-const FEATURE_FEATURES = [
+export const FEATURE_FEATURES = [
   { title: 'Split-Screen Mode', desc: 'Two terminals, side-by-side. Drag the divider to resize, drop any tab into either pane, and work on two things at once without ever leaving Emu.' },
   { title: 'Highlight-to-Delete', desc: 'Select any text in the terminal, then press backspace to delete exactly that many characters. Surgical edits without hunting for the right position.' },
   { title: 'Unlimited Tabs', desc: 'Spin up as many named tabs as you need. Each gets its own PTY, timestamps, and history. Rename any tab inline with a simple double-click.' },
@@ -19,7 +19,7 @@ const FEATURE_FEATURES = [
   { title: 'Auto Scroll', desc: 'When you\'re not at the bottom of the terminal, a handy button will appear at the bottom right corner. Click it to auto-scroll to the bottom.' },
 ]
 
-const BEAUTY_FEATURES = [
+export const BEAUTY_FEATURES = [
   { title: 'Frosted Glass UI', desc: 'Vibrancy on the sidebar and titlebar — layered blur, saturation, and brightness that respond to your desktop in real time for a truly native macOS feel.' },
   { title: 'Pick Your Theme', desc: 'Six hand-curated color themes — Catppuccin, Matrix, Francisco, Haze, Mocha, and Monokai. Click the color wheel in the top-right corner to switch instantly. Your choice is saved and restored every time you open Emu.' },
   { title: 'Premium Typography', desc: 'JetBrains Mono at pixel-perfect sizing — integer font size, 1.0 line height, zero letter-spacing — so characters never droop, blur, or crowd each other.' },

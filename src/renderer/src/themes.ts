@@ -1,5 +1,8 @@
 import type { ITheme } from '@xterm/xterm'
 
+const SELECTION_BACKGROUND = 'rgba(255, 214, 10, 0.82)'
+const SELECTION_FOREGROUND = '#111111'
+
 export interface AppTheme {
   id: string
   name: string
@@ -27,7 +30,8 @@ export const THEMES: AppTheme[] = [
       foreground: '#cdd6f4',
       cursor: '#f5e0dc',
       cursorAccent: '#1e1e2e',
-      selectionBackground: 'rgba(88, 91, 112, 0.5)',
+      selectionBackground: SELECTION_BACKGROUND,
+      selectionForeground: SELECTION_FOREGROUND,
       black: '#45475a',   brightBlack: '#585b70',
       red: '#f38ba8',     brightRed: '#f38ba8',
       green: '#a6e3a1',   brightGreen: '#a6e3a1',
@@ -51,7 +55,8 @@ export const THEMES: AppTheme[] = [
       foreground: '#00ff41',
       cursor: '#00ff41',
       cursorAccent: '#000000',
-      selectionBackground: 'rgba(0, 255, 65, 0.2)',
+      selectionBackground: SELECTION_BACKGROUND,
+      selectionForeground: SELECTION_FOREGROUND,
       black: '#000000',   brightBlack: '#003b00',
       red: '#ff2222',     brightRed: '#ff5555',
       green: '#00ff41',   brightGreen: '#69ff47',
@@ -75,7 +80,8 @@ export const THEMES: AppTheme[] = [
       foreground: '#ffffff',
       cursor: '#ffc600',
       cursorAccent: '#193549',
-      selectionBackground: 'rgba(38, 79, 120, 0.6)',
+      selectionBackground: SELECTION_BACKGROUND,
+      selectionForeground: SELECTION_FOREGROUND,
       black: '#3d424d',   brightBlack: '#6a7d8b',
       red: '#ff3a3a',     brightRed: '#ff6d6b',
       green: '#3ad900',   brightGreen: '#3ad900',
@@ -99,7 +105,8 @@ export const THEMES: AppTheme[] = [
       foreground: '#ffffff',
       cursor: '#ff7edb',
       cursorAccent: '#262335',
-      selectionBackground: 'rgba(73, 84, 149, 0.5)',
+      selectionBackground: SELECTION_BACKGROUND,
+      selectionForeground: SELECTION_FOREGROUND,
       black: '#495495',   brightBlack: '#848bbd',
       red: '#f97e72',     brightRed: '#f97e72',
       green: '#72f1b8',   brightGreen: '#72f1b8',
@@ -123,7 +130,8 @@ export const THEMES: AppTheme[] = [
       foreground: '#ebdbb2',
       cursor: '#ebdbb2',
       cursorAccent: '#282828',
-      selectionBackground: 'rgba(60, 56, 54, 0.5)',
+      selectionBackground: SELECTION_BACKGROUND,
+      selectionForeground: SELECTION_FOREGROUND,
       black: '#282828',   brightBlack: '#928374',
       red: '#cc241d',     brightRed: '#fb4934',
       green: '#98971a',   brightGreen: '#b8bb26',
@@ -147,7 +155,8 @@ export const THEMES: AppTheme[] = [
       foreground: '#fcfcfa',
       cursor: '#fcfcfa',
       cursorAccent: '#2d2a2e',
-      selectionBackground: 'rgba(64, 61, 65, 0.5)',
+      selectionBackground: SELECTION_BACKGROUND,
+      selectionForeground: SELECTION_FOREGROUND,
       black: '#403e41',   brightBlack: '#727072',
       red: '#ff6188',     brightRed: '#ff6188',
       green: '#a9dc76',   brightGreen: '#a9dc76',
