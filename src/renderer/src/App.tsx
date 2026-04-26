@@ -9,6 +9,7 @@ export interface Session {
   id: string
   name: string
   createdAt: Date
+  lastActiveAt: Date
   isActive: boolean
 }
 
@@ -18,6 +19,7 @@ function createSession(): Session {
     id: crypto.randomUUID(),
     name: now.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }),
     createdAt: now,
+    lastActiveAt: now,
     isActive: true
   }
 }
@@ -36,6 +38,11 @@ export default function App() {
   const [splitRatio, setSplitRatio] = useState(0.5)
   const [themeId, setThemeId] = useState(() => localStorage.getItem('emmy-theme-id') ?? DEFAULT_THEME_ID)
   const [showSettings, setShowSettings] = useState(false)
+
+  const touchSession = useCallback((id: string) => {
+    const now = new Date()
+    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, lastActiveAt: now } : s)))
+  }, [])
 
   const handleSelectTheme = useCallback((id: string) => {
     setThemeId(id)
@@ -70,7 +77,10 @@ export default function App() {
   const handleNewSession = useCallback(() => {
     const s = createSession()
     setSessions((prev) => [...prev, s])
-    if (layoutMode === 'single') setSelectedId(s.id)
+    if (layoutMode === 'single') {
+      setSelectedId(s.id)
+      setActivePaneId(s.id)
+    }
   }, [layoutMode])
 
   const handleRename = useCallback((id: string, name: string) => {
@@ -82,16 +92,16 @@ export default function App() {
   }, [])
 
   const handleOpenHistory = useCallback((id: string) => {
+    touchSession(id)
     setSelectedId(id)
     setOpenHistoryFor(id)
-  }, [])
+  }, [touchSession])
 
   const handleDeleteSession = useCallback((id: string) => {
     const current = sessionsRef.current
     if (current.length <= 1) return
     const remaining = current.filter((s) => s.id !== id)
-    const idx = current.findIndex((s) => s.id === id)
-    const next = remaining[Math.min(idx, remaining.length - 1)]
+    const next = [...remaining].sort((a, b) => b.lastActiveAt.getTime() - a.lastActiveAt.getTime())[0]
     setSessions(remaining)
     setSelectedId((cur) => (cur === id ? (next?.id ?? cur) : cur))
     setActivePaneId((cur) => (cur === id ? (next?.id ?? cur) : cur))
@@ -99,13 +109,14 @@ export default function App() {
   }, [])
 
   const handleSelect = useCallback((id: string) => {
+    touchSession(id)
     if (layoutMode === 'split') {
       if (id === selectedId || id === rightPaneSessionId) return
       setSelectedId(id)
     } else {
       setSelectedId(id)
     }
-  }, [layoutMode, selectedId, rightPaneSessionId])
+  }, [layoutMode, selectedId, rightPaneSessionId, touchSession])
 
   const toggleSplitScreen = useCallback(() => {
     if (layoutMode === 'single') {
@@ -122,12 +133,14 @@ export default function App() {
   // • Left pane  → if right has a session, promote it to left; otherwise exit split
   const handleCloseLeftPane = useCallback(() => {
     if (rightPaneSessionId) {
+      touchSession(rightPaneSessionId)
       setSelectedId(rightPaneSessionId)
+      setActivePaneId(rightPaneSessionId)
       setRightPaneSessionId(null)
     } else {
       setLayoutMode('single')
     }
-  }, [rightPaneSessionId])
+  }, [rightPaneSessionId, touchSession])
 
   const handleCloseRightPane = useCallback(() => {
     setRightPaneSessionId(null)
@@ -157,14 +170,22 @@ export default function App() {
   const handleDropLeft = (e: React.DragEvent) => {
     e.preventDefault()
     const sessionId = e.dataTransfer.getData('application/session-id')
-    if (sessionId) setSelectedId(sessionId)
+    if (sessionId) {
+      touchSession(sessionId)
+      setSelectedId(sessionId)
+      setActivePaneId(sessionId)
+    }
     setDragOverLeft(false)
   }
 
   const handleDropRight = (e: React.DragEvent) => {
     e.preventDefault()
     const sessionId = e.dataTransfer.getData('application/session-id')
-    if (sessionId) setRightPaneSessionId(sessionId)
+    if (sessionId) {
+      touchSession(sessionId)
+      setRightPaneSessionId(sessionId)
+      setActivePaneId(sessionId)
+    }
     setDragOverRight(false)
   }
 
@@ -227,7 +248,10 @@ export default function App() {
                 isVisible={isLeftSlot || isRightSlot}
                 slot={slot}
                 isActive={session.id === activePaneId}
-                onActivate={() => setActivePaneId(session.id)}
+                onActivate={() => {
+                  touchSession(session.id)
+                  setActivePaneId(session.id)
+                }}
                 onSessionEnd={() => handleSessionEnd(session.id)}
                 openDrawer={openHistoryFor === session.id}
                 onDrawerClose={() => setOpenHistoryFor(null)}

@@ -43,6 +43,11 @@ export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSe
   const inputRef = useRef<HTMLInputElement>(null)
   const collapsedRef = useRef(collapsed)
   useEffect(() => { collapsedRef.current = collapsed }, [collapsed])
+  const orderedSessions = [...sessions].sort((a, b) => {
+    const activeDelta = b.lastActiveAt.getTime() - a.lastActiveAt.getTime()
+    if (activeDelta !== 0) return activeDelta
+    return b.createdAt.getTime() - a.createdAt.getTime()
+  })
 
   const handleResizeStart = (e: React.MouseEvent) => {
     e.preventDefault()
@@ -161,7 +166,7 @@ export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSe
         </div>
       </div>
       <div className="session-list">
-        {sessions.map((session) => (
+        {orderedSessions.map((session) => (
           <div
             key={session.id}
             className={`session-item ${session.id === selectedId || session.id === rightPaneSessionId ? 'selected' : ''}`}
@@ -219,7 +224,7 @@ export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSe
                 </>
               )}
             </div>
-            <span className="session-time">{relativeTime(session.createdAt, now)}</span>
+            <span className="session-time">{relativeTime(session.lastActiveAt, now)}</span>
           </div>
         ))}
       </div>
