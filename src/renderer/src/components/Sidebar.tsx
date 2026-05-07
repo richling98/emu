@@ -28,6 +28,22 @@ function relativeTime(date: Date, now: Date): string {
   return `${days}d ago`
 }
 
+type SessionDotStatus = 'running' | 'complete' | 'stale'
+
+const STALE_AFTER_MS = 5 * 60 * 1000
+
+function getSessionDotStatus(session: Session, now: Date): SessionDotStatus {
+  if (session.agentState === 'running') return 'running'
+  if (now.getTime() - session.lastActiveAt.getTime() >= STALE_AFTER_MS) return 'stale'
+  return 'complete'
+}
+
+function getSessionDotTitle(status: SessionDotStatus): string {
+  if (status === 'running') return 'Claude/Codex task active'
+  if (status === 'stale') return 'No activity for 5 minutes'
+  return 'Task complete or idle'
+}
+
 const COLLAPSE_THRESHOLD = 190
 const MIN_WIDTH = 190
 const MAX_WIDTH = 420
@@ -160,19 +176,24 @@ export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSe
         </div>
       </div>
       <div className="session-list">
-        {orderedSessions.map((session) => (
-          <div
-            key={session.id}
-            className={`session-item ${session.id === selectedId || session.id === rightPaneSessionId ? 'selected' : ''}`}
-            onClick={() => onSelect(session.id)}
-            draggable
-            onDragStart={(e) => {
-              e.dataTransfer.effectAllowed = 'copy'
-              e.dataTransfer.setData('application/session-id', session.id)
-            }}
-          >
-            <div className="session-item-inner">
-              {session.isActive && <span className="active-dot" />}
+        {orderedSessions.map((session) => {
+          const dotStatus = getSessionDotStatus(session, now)
+          return (
+            <div
+              key={session.id}
+              className={`session-item ${session.id === selectedId || session.id === rightPaneSessionId ? 'selected' : ''}`}
+              onClick={() => onSelect(session.id)}
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.effectAllowed = 'copy'
+                e.dataTransfer.setData('application/session-id', session.id)
+              }}
+            >
+              <div className="session-item-inner">
+                <span
+                  className={`session-status-dot session-status-dot--${dotStatus}`}
+                  title={getSessionDotTitle(dotStatus)}
+                />
               {editingId === session.id ? (
                 <input
                   ref={inputRef}
@@ -220,7 +241,8 @@ export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSe
             </div>
             <span className="session-time">{relativeTime(session.lastActiveAt, now)}</span>
           </div>
-        ))}
+          )
+        })}
       </div>
     </div>
     </>

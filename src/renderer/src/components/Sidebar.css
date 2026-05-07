@@ -239,12 +239,37 @@
   margin-left: auto;
 }
 
-.active-dot {
+.session-status-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #a6e3a1;
   flex-shrink: 0;
+}
+
+.session-status-dot--complete {
+  background: #a6e3a1;
+}
+
+.session-status-dot--running {
+  background: #f9e2af;
+  box-shadow: 0 0 8px rgba(249, 226, 175, 0.45);
+  animation: session-status-pulse 1s ease-in-out infinite;
+}
+
+.session-status-dot--stale {
+  background: #f38ba8;
+}
+
+@keyframes session-status-pulse {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 8px rgba(249, 226, 175, 0.45);
+  }
+
+  50% {
+    opacity: 0.35;
+    box-shadow: 0 0 3px rgba(249, 226, 175, 0.2);
+  }
 }
 
 .session-name {

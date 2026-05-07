@@ -11,7 +11,11 @@ export interface Session {
   createdAt: Date
   lastActiveAt: Date
   isActive: boolean
+  agentState: AgentState
+  foregroundProcess: string | null
 }
+
+export type AgentState = 'none' | 'running' | 'idle'
 
 function createSession(): Session {
   const now = new Date()
@@ -20,7 +24,9 @@ function createSession(): Session {
     name: now.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }),
     createdAt: now,
     lastActiveAt: now,
-    isActive: true
+    isActive: true,
+    agentState: 'none',
+    foregroundProcess: null
   }
 }
 
@@ -88,7 +94,17 @@ export default function App() {
   }, [])
 
   const handleSessionEnd = useCallback((id: string) => {
-    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, isActive: false } : s)))
+    setSessions((prev) => prev.map((s) => (
+      s.id === id ? { ...s, isActive: false, agentState: 'none', foregroundProcess: null } : s
+    )))
+  }, [])
+
+  const handleAgentStateChange = useCallback((id: string, agentState: AgentState, foregroundProcess: string | null = null) => {
+    setSessions((prev) => prev.map((s) => (
+      s.id === id && (s.agentState !== agentState || s.foregroundProcess !== foregroundProcess)
+        ? { ...s, agentState, foregroundProcess }
+        : s
+    )))
   }, [])
 
   const handleOpenHistory = useCallback((id: string) => {
@@ -252,6 +268,8 @@ export default function App() {
                   touchSession(session.id)
                   setActivePaneId(session.id)
                 }}
+                onSessionTouched={() => touchSession(session.id)}
+                onAgentStateChange={(agentState, foregroundProcess) => handleAgentStateChange(session.id, agentState, foregroundProcess)}
                 onSessionEnd={() => handleSessionEnd(session.id)}
                 openDrawer={openHistoryFor === session.id}
                 onDrawerClose={() => setOpenHistoryFor(null)}

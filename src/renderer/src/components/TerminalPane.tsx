@@ -2,13 +2,34 @@ import { useEffect, useRef, useState } from 'react'
 import { Terminal, type IBufferRange, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
-import type { Session } from '../App'
+import type { AgentState, Session } from '../App'
 import CommandHistoryDrawer, { type HistoryEntry } from './CommandHistoryDrawer'
 import PromptOptimizerDrawer from './PromptOptimizerDrawer'
 import '@xterm/xterm/css/xterm.css'
 import './TerminalPane.css'
 
 const DEFAULT_FONT_SIZE = 13
+const AGENT_IDLE_DELAY_MS = 6_000
+const AGENT_PROCESS_POLL_MS = 4_000
+
+function isAgentProcessName(processName: string | null): boolean {
+  if (!processName) return false
+  const normalized = processName.toLowerCase().replace(/\\/g, '/').split('/').pop()?.replace(/^-/, '') ?? ''
+  return /\b(claude|codex)\b/.test(normalized)
+}
+
+function isAgentLaunchCommand(command: string): boolean {
+  const normalized = command.trim().toLowerCase()
+  if (!normalized) return false
+  return /(^|[\s;&|])(claude|codex)([\s;&|]|$)/.test(normalized) ||
+    /(^|[\s;&|])(npx|npm exec|bunx|pnpm dlx|yarn dlx)\s+([@\w./-]*claude[-\w./]*|[@\w./-]*codex[-\w./]*)/.test(normalized)
+}
+
+function isShellProcessName(processName: string | null): boolean {
+  if (!processName) return false
+  const normalized = processName.toLowerCase().replace(/\\/g, '/').split('/').pop() ?? ''
+  return ['zsh', 'bash', 'fish', 'sh', 'dash', 'ksh', 'tcsh', '-zsh', '-bash', '-fish', '-sh'].includes(normalized)
+}
 
 // Strip ANSI escape sequences — used only for the one-line outputPreview capture.
 // Full output (outputFull) is read from xterm.js's rendered buffer, not raw bytes.
@@ -116,6 +137,8 @@ interface Props {
   onDrawerClose?: () => void
   onClosePane?: () => void
   onOpenSettings?: () => void
+  onSessionTouched?: () => void
+  onAgentStateChange?: (state: AgentState, foregroundProcess?: string | null) => void
   xtermTheme?: ITheme
 }
 
@@ -125,13 +148,21 @@ interface PromptSelection {
   anchor: { x: number; y: number; placement: 'above' | 'below' }
 }
 
-export default function TerminalPane({ session, isVisible, slot = 'full', isActive = true, onActivate, onSessionEnd, openDrawer, onDrawerClose, onClosePane, onOpenSettings, xtermTheme }: Props) {
+export default function TerminalPane({ session, isVisible, slot = 'full', isActive = true, onActivate, onSessionEnd, openDrawer, onDrawerClose, onClosePane, onOpenSettings, onSessionTouched, onAgentStateChange, xtermTheme }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const fitAndResizeRef = useRef<(() => void) | null>(null)
   const isVisibleRef = useRef(isVisible)
   const isActiveRef = useRef(isActive)
+  const onSessionTouchedRef = useRef(onSessionTouched)
+  const onAgentStateChangeRef = useRef(onAgentStateChange)
+  const agentStateRef = useRef<AgentState>('none')
+  const agentProcessRef = useRef<string | null>(null)
+  const agentSessionRef = useRef(false)
+  const agentTaskInFlightRef = useRef(false)
+  const agentIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const agentProcessPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const currentInputRef = useRef('')
   const waitingForPreviewRef = useRef<string | null>(null)
@@ -172,6 +203,8 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   // Keep isVisibleRef in sync so the key handler can check it
   useEffect(() => { isVisibleRef.current = isVisible }, [isVisible])
   useEffect(() => { isActiveRef.current = isActive }, [isActive])
+  useEffect(() => { onSessionTouchedRef.current = onSessionTouched }, [onSessionTouched])
+  useEffect(() => { onAgentStateChangeRef.current = onAgentStateChange }, [onAgentStateChange])
 
   useEffect(() => { promptSelectionRef.current = promptSelection }, [promptSelection])
 
@@ -300,6 +333,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     const clearLen = Math.max(originalPrompt.length + 100, 200)
     const input = `\x05\x15${'\x7f'.repeat(clearLen)}\x1b[200~${prompt}\x1b[201~`
     window.api.ptyWrite(session.id, input)
+    onSessionTouchedRef.current?.()
     currentInputRef.current = prompt
     setCapturedPromptSelection(null)
     window.setTimeout(() => terminalRef.current?.focus(), 0)
@@ -370,6 +404,71 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
     const clearPromptSelection = () => {
       if (promptSelectionRef.current) setPromptSelection(null)
+    }
+
+    let disposed = false
+
+    const touchSessionActivity = () => {
+      onSessionTouchedRef.current?.()
+    }
+
+    const clearAgentIdleTimer = () => {
+      if (agentIdleTimerRef.current) {
+        clearTimeout(agentIdleTimerRef.current)
+        agentIdleTimerRef.current = null
+      }
+    }
+
+    const setAgentState = (state: AgentState, foregroundProcess: string | null = agentProcessRef.current) => {
+      agentStateRef.current = state
+      agentProcessRef.current = foregroundProcess
+      onAgentStateChangeRef.current?.(state, foregroundProcess)
+    }
+
+    const markAgentIdle = (foregroundProcess: string | null = agentProcessRef.current) => {
+      clearAgentIdleTimer()
+      agentTaskInFlightRef.current = false
+      if (!agentSessionRef.current && !isAgentProcessName(foregroundProcess)) return
+      setAgentState('idle', foregroundProcess)
+    }
+
+    const markAgentRunning = (foregroundProcess: string | null = agentProcessRef.current) => {
+      agentSessionRef.current = true
+      agentTaskInFlightRef.current = true
+      setAgentState('running', foregroundProcess)
+      clearAgentIdleTimer()
+      agentIdleTimerRef.current = setTimeout(() => markAgentIdle(foregroundProcess), AGENT_IDLE_DELAY_MS)
+    }
+
+    const clearAgentSession = (foregroundProcess: string | null = agentProcessRef.current) => {
+      clearAgentIdleTimer()
+      agentSessionRef.current = false
+      agentTaskInFlightRef.current = false
+      setAgentState('none', foregroundProcess)
+    }
+
+    const refreshAgentProcess = async () => {
+      const proc = await window.api.ptyGetProcess(session.id)
+      if (disposed) return
+
+      const isAgent = isAgentProcessName(proc)
+      const previousProcess = agentProcessRef.current
+      agentProcessRef.current = proc
+
+      if (isAgent) {
+        agentSessionRef.current = true
+        if (agentStateRef.current === 'none') {
+          setAgentState('idle', proc)
+        } else if (previousProcess !== proc) {
+          setAgentState(agentStateRef.current, proc)
+        }
+      } else if (isShellProcessName(proc) && agentStateRef.current !== 'running') {
+        clearAgentSession(proc)
+      } else if (!agentSessionRef.current && agentStateRef.current !== 'none') {
+        clearAgentSession(proc)
+      } else if (previousProcess !== proc && agentStateRef.current !== 'none') {
+        setAgentState(agentStateRef.current, proc)
+      }
     }
 
     const getSelectionAnchor = (position: IBufferRange): PromptSelection['anchor'] | null => {
@@ -453,10 +552,6 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     // `echo "\x1b[?1049h"` on a zsh that interprets \x escapes), breaking the
     // entire terminal session.  onBufferChange only fires when xterm.js actually
     // switches buffers — immune to text that merely looks like the sequence.
-    // Shell process names — login shells on macOS appear with a leading dash
-    const SHELL_NAMES = ['zsh', 'bash', 'fish', 'sh', 'dash', 'ksh', 'tcsh',
-                         '-zsh', '-bash', '-fish', '-sh']
-
     terminal.buffer.onBufferChange(async (newBuffer) => {
       clearPromptSelection()
       if (newBuffer.type === 'alternate') {
@@ -479,9 +574,12 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         // The check is async (IPC round-trip) but fast; we guard with isAltScreenRef
         // so we don't force-exit if a TUI already exited naturally during the await.
         const proc: string | null = await window.api.ptyGetProcess(session.id)
-        const isShellForeground = proc !== null &&
-          SHELL_NAMES.some(s => proc.toLowerCase() === s)
-        if (isShellForeground && isAltScreenRef.current) {
+        agentProcessRef.current = proc
+        if (isAgentProcessName(proc)) {
+          agentSessionRef.current = true
+          if (agentStateRef.current === 'none') setAgentState('idle', proc)
+        }
+        if (isShellProcessName(proc) && isAltScreenRef.current) {
           // Write the exit sequence directly to the terminal display (not the PTY)
           // to restore the normal buffer without disrupting the running shell.
           terminal.write('\x1b[?1049l')
@@ -646,6 +744,10 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     // ── End clickable links ──────────────────────────────────────────────────
 
     window.api.ptyCreate(session.id).then(() => {
+      if (disposed) return
+      refreshAgentProcess()
+      agentProcessPollRef.current = setInterval(refreshAgentProcess, AGENT_PROCESS_POLL_MS)
+
       // Rotating greeting banners — picks a fresh one each time
       const GREETINGS = [
         "Hi there, let's build something great together!",
@@ -716,6 +818,11 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     }
 
     const removeDataListener = window.api.onPtyData(session.id, (data) => {
+      touchSessionActivity()
+      if (agentTaskInFlightRef.current) {
+        markAgentRunning(agentProcessRef.current)
+      }
+
       terminal.write(data)
 
       // Capture first line of output as a quick preview for the Command Log entry
@@ -739,6 +846,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
     const removeExitListener = window.api.onPtyExit(session.id, () => {
       terminal.write('\r\n\x1b[2m[Process exited]\x1b[0m\r\n')
+      clearAgentSession(null)
       onSessionEnd()
     })
 
@@ -781,6 +889,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     })
 
     terminal.onData((data) => {
+      touchSessionActivity()
       const BACKSPACE = '\x7f'
 
       // Highlight-to-delete
@@ -821,6 +930,12 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         const cmd = currentInputRef.current.trim()
         currentInputRef.current = ''
         if (cmd) {
+          if (isAgentLaunchCommand(cmd) || agentSessionRef.current || isAgentProcessName(agentProcessRef.current)) {
+            markAgentRunning(agentProcessRef.current)
+          } else if (agentStateRef.current !== 'running') {
+            clearAgentSession(agentProcessRef.current)
+          }
+
           // Alt-screen commands anchor to where the TUI launched in the main buffer.
           // Regular commands use promptStartLineRef — the line where the user began typing,
           // which is always the prompt line (first line of the command).  Falling back to
@@ -928,7 +1043,10 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         .map((f) => shellEscape(window.api.getFilePath(f as File)))
         .filter(Boolean)
         .join(' ')
-      if (paths) window.api.ptyWrite(session.id, paths)
+      if (paths) {
+        window.api.ptyWrite(session.id, paths)
+        touchSessionActivity()
+      }
       terminal.focus()
     }
 
@@ -938,6 +1056,12 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     containerRef.current.addEventListener('drop', handleDrop, { capture: true })
 
     return () => {
+      disposed = true
+      clearAgentIdleTimer()
+      if (agentProcessPollRef.current) {
+        clearInterval(agentProcessPollRef.current)
+        agentProcessPollRef.current = null
+      }
       if (outputFlushTimerRef.current) clearTimeout(outputFlushTimerRef.current)
       if (resizeDebounce) clearTimeout(resizeDebounce)
       if (resizeFrame !== null) cancelAnimationFrame(resizeFrame)
