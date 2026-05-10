@@ -58,7 +58,7 @@ export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSe
   const collapsedRef = useRef(collapsed)
   useEffect(() => { collapsedRef.current = collapsed }, [collapsed])
   const orderedSessions = [...sessions].sort((a, b) => {
-    const activeDelta = b.lastActiveAt.getTime() - a.lastActiveAt.getTime()
+    const activeDelta = b.userSelectedAt.getTime() - a.userSelectedAt.getTime()
     if (activeDelta !== 0) return activeDelta
     return b.createdAt.getTime() - a.createdAt.getTime()
   })

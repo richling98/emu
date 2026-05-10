@@ -10,6 +10,7 @@ export interface Session {
   name: string
   createdAt: Date
   lastActiveAt: Date
+  userSelectedAt: Date
   isActive: boolean
   agentState: AgentState
   foregroundProcess: string | null
@@ -24,6 +25,7 @@ function createSession(): Session {
     name: now.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }),
     createdAt: now,
     lastActiveAt: now,
+    userSelectedAt: now,
     isActive: true,
     agentState: 'none',
     foregroundProcess: null
@@ -48,6 +50,11 @@ export default function App() {
   const touchSession = useCallback((id: string) => {
     const now = new Date()
     setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, lastActiveAt: now } : s)))
+  }, [])
+
+  const selectSession = useCallback((id: string) => {
+    const now = new Date()
+    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, lastActiveAt: now, userSelectedAt: now } : s)))
   }, [])
 
   const handleSelectTheme = useCallback((id: string) => {
@@ -125,14 +132,14 @@ export default function App() {
   }, [])
 
   const handleSelect = useCallback((id: string) => {
-    touchSession(id)
+    selectSession(id)
     if (layoutMode === 'split') {
       if (id === selectedId || id === rightPaneSessionId) return
       setSelectedId(id)
     } else {
       setSelectedId(id)
     }
-  }, [layoutMode, selectedId, rightPaneSessionId, touchSession])
+  }, [layoutMode, selectedId, rightPaneSessionId, selectSession])
 
   const toggleSplitScreen = useCallback(() => {
     if (layoutMode === 'single') {
@@ -149,14 +156,14 @@ export default function App() {
   // • Left pane  → if right has a session, promote it to left; otherwise exit split
   const handleCloseLeftPane = useCallback(() => {
     if (rightPaneSessionId) {
-      touchSession(rightPaneSessionId)
+      selectSession(rightPaneSessionId)
       setSelectedId(rightPaneSessionId)
       setActivePaneId(rightPaneSessionId)
       setRightPaneSessionId(null)
     } else {
       setLayoutMode('single')
     }
-  }, [rightPaneSessionId, touchSession])
+  }, [rightPaneSessionId, selectSession])
 
   const handleCloseRightPane = useCallback(() => {
     setRightPaneSessionId(null)
@@ -187,7 +194,7 @@ export default function App() {
     e.preventDefault()
     const sessionId = e.dataTransfer.getData('application/session-id')
     if (sessionId) {
-      touchSession(sessionId)
+      selectSession(sessionId)
       setSelectedId(sessionId)
       setActivePaneId(sessionId)
     }
@@ -198,7 +205,7 @@ export default function App() {
     e.preventDefault()
     const sessionId = e.dataTransfer.getData('application/session-id')
     if (sessionId) {
-      touchSession(sessionId)
+      selectSession(sessionId)
       setRightPaneSessionId(sessionId)
       setActivePaneId(sessionId)
     }
