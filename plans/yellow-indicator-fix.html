@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Plan: Yellow Indicator Fix</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f0f13;
+      color: #cdd6f4;
+      line-height: 1.6;
+      padding: 40px 24px;
+    }
+    .container { max-width: 860px; margin: 0 auto; }
+    h1 { font-size: 1.6rem; font-weight: 700; color: #cba6f7; margin-bottom: 4px; }
+    .subtitle { font-size: 0.85rem; color: #6c7086; margin-bottom: 36px; }
+    h2 { font-size: 0.85rem; font-weight: 600; color: #89b4fa; margin: 32px 0 12px; text-transform: uppercase; letter-spacing: 0.07em; }
+    h3 { font-size: 0.95rem; font-weight: 600; color: #cdd6f4; margin: 20px 0 8px; }
+    p { color: #a6adc8; margin-bottom: 10px; font-size: 0.9rem; }
+    code {
+      font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+      font-size: 0.82rem;
+      background: #1e1e2e;
+      color: #f9e2af;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    pre {
+      background: #1e1e2e;
+      border: 1px solid #313244;
+      border-radius: 8px;
+      padding: 16px 20px;
+      overflow-x: auto;
+      font-size: 0.82rem;
+      font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+      color: #cdd6f4;
+      margin: 12px 0 20px;
+      line-height: 1.8;
+    }
+    pre .comment { color: #6c7086; }
+    pre .added { color: #a6e3a1; }
+    pre .removed { color: #f38ba8; text-decoration: line-through; opacity: 0.65; }
+    pre .keyword { color: #cba6f7; }
+    pre .label { color: #89b4fa; }
+    pre .string { color: #a6e3a1; }
+    pre .num { color: #fab387; }
+
+    .card {
+      background: #181825;
+      border: 1px solid #313244;
+      border-radius: 10px;
+      padding: 20px 24px;
+      margin-bottom: 16px;
+    }
+    .card-title {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: #cdd6f4;
+      margin-bottom: 8px;
+    }
+    .card p { margin-bottom: 0; }
+    .card p + p { margin-top: 8px; }
+
+    .tag {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+    .tag-critical { background: rgba(243,139,168,0.18); color: #f38ba8; }
+    .tag-compounding { background: rgba(249,226,175,0.18); color: #f9e2af; }
+    .tag-minor { background: rgba(137,180,250,0.15); color: #89b4fa; }
+
+    .indicator-demo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 10px 0 4px;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .dot-yellow {
+      background: #f9e2af;
+      box-shadow: 0 0 8px rgba(249,226,175,0.5);
+      animation: pulse 1s ease-in-out infinite;
+    }
+    .dot-green { background: #a6e3a1; }
+    .dot-red { background: #f38ba8; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; box-shadow: 0 0 8px rgba(249,226,175,0.5); }
+      50% { opacity: 0.3; box-shadow: 0 0 3px rgba(249,226,175,0.2); }
+    }
+    .dot-label { font-size: 0.82rem; color: #a6adc8; }
+
+    .timeline {
+      border-left: 2px solid #313244;
+      margin: 12px 0 20px 8px;
+      padding-left: 20px;
+    }
+    .timeline-step {
+      position: relative;
+      margin-bottom: 14px;
+    }
+    .timeline-step::before {
+      content: '';
+      position: absolute;
+      left: -26px;
+      top: 6px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #313244;
+      border: 2px solid #585b70;
+    }
+    .timeline-step.bug::before { border-color: #f38ba8; background: rgba(243,139,168,0.2); }
+    .timeline-step .step-title { font-size: 0.85rem; font-weight: 600; color: #cdd6f4; }
+    .timeline-step .step-body { font-size: 0.82rem; color: #a6adc8; margin-top: 2px; }
+    .timeline-step .step-state {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 1px 7px;
+      border-radius: 3px;
+      margin-left: 8px;
+      vertical-align: middle;
+    }
+    .state-running { background: rgba(249,226,175,0.18); color: #f9e2af; }
+    .state-idle { background: rgba(166,227,161,0.15); color: #a6e3a1; }
+    .state-none { background: rgba(88,91,112,0.3); color: #6c7086; }
+    .state-bug { background: rgba(243,139,168,0.18); color: #f38ba8; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin: 12px 0 20px; }
+    th { text-align: left; padding: 8px 12px; color: #89b4fa; font-weight: 600; border-bottom: 1px solid #313244; }
+    td { padding: 8px 12px; color: #a6adc8; border-bottom: 1px solid #1e1e2e; vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+
+    .change-block {
+      background: #12121a;
+      border: 1px solid #313244;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      overflow: hidden;
+    }
+    .change-header {
+      padding: 10px 16px;
+      background: #181825;
+      border-bottom: 1px solid #313244;
+      font-size: 0.8rem;
+      color: #6c7086;
+      font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+    }
+    .change-header span { color: #89b4fa; }
+    .change-block pre { border: none; border-radius: 0; margin: 0; }
+
+    .summary-list { list-style: none; padding: 0; margin: 0; }
+    .summary-list li {
+      padding: 8px 0;
+      border-bottom: 1px solid #1e1e2e;
+      font-size: 0.88rem;
+      color: #a6adc8;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .summary-list li:last-child { border-bottom: none; }
+    .check { color: #a6e3a1; font-weight: 700; flex-shrink: 0; margin-top: 1px; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <h1>Yellow Indicator Fix</h1>
+  <p class="subtitle">TerminalPane.tsx · Sidebar.tsx — Agent running-state detection</p>
+
+  <!-- INDICATOR LEGEND -->
+  <h2>Indicator Legend</h2>
+  <div class="card">
+    <div class="indicator-demo"><div class="dot dot-yellow"></div><span class="dot-label"><strong style="color:#f9e2af">Yellow blinking</strong> — Agent is actively working (tool calls, thinking, generating output)</span></div>
+    <div class="indicator-demo"><div class="dot dot-green"></div><span class="dot-label"><strong style="color:#a6e3a1">Green solid</strong> — Agent session exists but is idle at its prompt</span></div>
+    <div class="indicator-demo"><div class="dot dot-red"></div><span class="dot-label"><strong style="color:#f38ba8">Red solid</strong> — Session stale (no activity for 5+ minutes)</span></div>
+  </div>
+
+  <!-- HOW IT WORKS TODAY -->
+  <h2>How It Works Today</h2>
+
+  <div class="card">
+    <div class="card-title">State Machine — <code>AgentState</code></div>
+    <p>Defined in <code>App.tsx</code>: <code>'none' | 'running' | 'idle'</code>. Lives on each <code>Session</code> object. Flows: <code>TerminalPane</code> → <code>onAgentStateChange</code> prop → <code>App</code> → <code>Sidebar</code> → dot CSS class.</p>
+    <p>The dot is yellow/blinking only when <code>session.agentState === 'running'</code> (<code>getSessionDotStatus</code> in <code>Sidebar.tsx</code>).</p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">State Transitions in <code>TerminalPane.tsx</code></div>
+    <table>
+      <tr><th>Function</th><th>Sets state to</th><th>When called</th></tr>
+      <tr><td><code>markAgentRunning()</code></td><td><code>'running'</code></td><td>User presses Enter with an agent command or in an agent session; PTY data arrives while <code>agentTaskInFlightRef.current</code> is true</td></tr>
+      <tr><td><code>markAgentIdle()</code></td><td><code>'idle'</code></td><td>Idle timer fires after <code>AGENT_IDLE_DELAY_MS</code> (6 s) of no PTY output</td></tr>
+      <tr><td><code>clearAgentSession()</code></td><td><code>'none'</code></td><td>PTY exits; shell process detected and agent session is gone</td></tr>
+    </table>
+  </div>
+
+  <!-- ROOT CAUSES -->
+  <h2>Root Causes</h2>
+
+  <div class="card">
+    <p><span class="tag tag-critical">Critical</span><strong>Bug 1 — <code>agentTaskInFlightRef</code> gate breaks re-arm after idle timer fires</strong></p>
+    <p style="margin-top:10px">In the PTY output handler (<code>onPtyData</code>, line 823), the indicator only re-arms if <code>agentTaskInFlightRef.current</code> is <code>true</code>:</p>
+    <pre><span class="comment">// TerminalPane.tsx ~line 823</span>
+<span class="keyword">const</span> removeDataListener = window.api.<span class="label">onPtyData</span>(session.id, (data) => {
+  touchSessionActivity()
+  <span class="keyword">if</span> (agentTaskInFlightRef.current) {       <span class="comment">// &lt;-- the gate</span>
+    <span class="label">markAgentRunning</span>(agentProcessRef.current)
+  }
+  ...</pre>
+    <p><code>markAgentIdle()</code> sets <code>agentTaskInFlightRef.current = false</code>. So once the 6-second timer fires — even mid-task — subsequent PTY output never re-triggers <code>'running'</code>. The indicator goes dark and <strong>stays</strong> dark for the rest of the task.</p>
+  </div>
+
+  <div class="card">
+    <p><span class="tag tag-compounding">Compounding</span><strong>Bug 2 — Idle delay (6 s) is shorter than typical Claude API round-trips</strong></p>
+    <p style="margin-top:10px">Claude API calls with thinking enabled, large context, or slow tools regularly take 10–45 seconds to return. The constant <code>AGENT_IDLE_DELAY_MS = 6_000</code> causes the idle timer to fire <em>routinely</em> during normal task execution, not just after a task completes.</p>
+  </div>
+
+  <!-- FAILURE SCENARIO WALKTHROUGH -->
+  <h2>Failure Scenario Walkthrough</h2>
+  <div class="timeline">
+    <div class="timeline-step">
+      <span class="step-title">User types task + Enter</span>
+      <span class="step-state state-running">running</span>
+      <div class="step-body">Enter key → <code>agentSessionRef.current</code> is true → <code>markAgentRunning()</code> → <code>agentTaskInFlightRef = true</code>, idle timer = 6 s. Indicator blinks yellow. ✓</div>
+    </div>
+    <div class="timeline-step">
+      <span class="step-title">Claude generates initial output (0–3 s)</span>
+      <span class="step-state state-running">running</span>
+      <div class="step-body">PTY data flows → <code>agentTaskInFlightRef.current</code> is true → <code>markAgentRunning()</code> resets idle timer. ✓</div>
+    </div>
+    <div class="timeline-step">
+      <span class="step-title">Claude calls a tool (e.g. Bash, Read) — PTY goes quiet</span>
+      <span class="step-state state-running">running</span>
+      <div class="step-body">No PTY output while Claude waits for tool execution or the Anthropic API. Idle timer counting down. ✓ (still correct)</div>
+    </div>
+    <div class="timeline-step bug">
+      <span class="step-title">6-second idle timer fires</span>
+      <span class="step-state state-bug">goes idle ✗</span>
+      <div class="step-body"><code>markAgentIdle()</code> → <code>agentTaskInFlightRef = false</code>, state = <code>'idle'</code>. Indicator turns green even though Claude is still mid-task.</div>
+    </div>
+    <div class="timeline-step bug">
+      <span class="step-title">Tool finishes — Claude resumes, PTY output arrives</span>
+      <span class="step-state state-bug">stays idle ✗</span>
+      <div class="step-body">PTY data fires but <code>agentTaskInFlightRef.current</code> is now <code>false</code> → gate blocks → <code>markAgentRunning()</code> is never called. Indicator stays green for the rest of the task, through all further tool calls and output.</div>
+    </div>
+    <div class="timeline-step">
+      <span class="step-title">Task completes, Claude returns to prompt</span>
+      <span class="step-state state-idle">idle</span>
+      <div class="step-body">State was already (wrongly) idle, so nothing changes.</div>
+    </div>
+  </div>
+
+  <!-- PROPOSED FIX -->
+  <h2>Proposed Fix</h2>
+
+  <div class="card" style="border-color: rgba(166,227,161,0.3);">
+    <div class="card-title">Two-line change in <code>TerminalPane.tsx</code></div>
+    <p>No new state, no new refs. The existing <code>agentSessionRef</code> already correctly tracks whether an agent process is running in this terminal.</p>
+  </div>
+
+  <h3>Change 1 — Increase idle delay (line 13)</h3>
+  <div class="change-block">
+    <div class="change-header"><span>src/renderer/src/components/TerminalPane.tsx</span> · line 13</div>
+    <pre><span class="removed">const AGENT_IDLE_DELAY_MS = 6_000</span>
+<span class="added">const AGENT_IDLE_DELAY_MS = 20_000</span></pre>
+  </div>
+  <p>20 seconds covers the vast majority of Claude API round-trips (including thinking mode). It means the indicator may stay yellow up to 20 s after a task completes — acceptable latency vs. the current bug of it going dark mid-task.</p>
+
+  <h3>Change 2 — Fix the PTY data re-arm gate (lines 823–825)</h3>
+  <div class="change-block">
+    <div class="change-header"><span>src/renderer/src/components/TerminalPane.tsx</span> · onPtyData handler, ~line 823</div>
+    <pre><span class="keyword">const</span> removeDataListener = window.api.<span class="label">onPtyData</span>(session.id, (data) => {
+  touchSessionActivity()
+<span class="removed">  if (agentTaskInFlightRef.current) {</span>
+<span class="added">  if (agentSessionRef.current) {</span>
+    <span class="label">markAgentRunning</span>(agentProcessRef.current)
+  }
+  ...</pre>
+  </div>
+  <p>Replace the <code>agentTaskInFlightRef</code> gate with <code>agentSessionRef.current</code>. Now <em>any</em> PTY output while an agent is in session re-arms the running state and resets the idle timer. This directly fixes the scenario where the idle timer fired mid-task: the moment Claude resumes printing output, the indicator snaps back to yellow.</p>
+  <p><strong>Why this is safe:</strong> Claude Code in alt-screen (TUI mode) only generates PTY output when it's actually doing something — rendering output, tool results, thinking blocks. It does not emit a continuous stream of bytes at its idle prompt. The 20-second timer handles the transition back to idle after Claude returns to its prompt.</p>
+
+  <!-- WHAT AGENTTTASKINFLIGHTREF IS STILL USED FOR -->
+  <h3>What happens to <code>agentTaskInFlightRef</code>?</h3>
+  <p>After this change, <code>agentTaskInFlightRef</code> is still set to <code>true</code> by <code>markAgentRunning()</code> and <code>false</code> by <code>markAgentIdle()</code> and <code>clearAgentSession()</code> — its writes are unchanged. Its reads are just no longer the gate for PTY re-arm. It can be removed in a follow-up cleanup, but touching it here is unnecessary scope.</p>
+
+  <!-- COVERAGE OF EDGE CASES -->
+  <h2>Edge Cases Covered</h2>
+  <table>
+    <tr><th>Scenario</th><th>Before fix</th><th>After fix</th></tr>
+    <tr>
+      <td>Tool call takes 10–30 s (API, bash)</td>
+      <td>Idle timer fires at 6 s → indicator goes dark, stays dark</td>
+      <td>20 s timer gives more headroom; if timer fires, first subsequent PTY output re-arms immediately</td>
+    </tr>
+    <tr>
+      <td>Multiple sequential tool calls</td>
+      <td>Dark after first 6-second gap, stays dark for all later calls</td>
+      <td>Re-arms on every burst of PTY output; 20 s window between bursts</td>
+    </tr>
+    <tr>
+      <td>Agent idle at its prompt (no task running)</td>
+      <td>Goes idle after 6 s of no PTY data — correct</td>
+      <td>Goes idle after 20 s of no PTY data — slightly slower, still correct</td>
+    </tr>
+    <tr>
+      <td>Claude Code thinking (no output yet)</td>
+      <td>Idle timer fires at 6 s → dark while thinking</td>
+      <td>20 s window covers typical thinking latency; once thinking output arrives, re-arms</td>
+    </tr>
+    <tr>
+      <td>Non-agent session (regular shell)</td>
+      <td>Unaffected — <code>agentSessionRef.current</code> is false</td>
+      <td>Same — <code>agentSessionRef.current</code> is false, condition never triggers</td>
+    </tr>
+    <tr>
+      <td>Agent exits cleanly</td>
+      <td><code>clearAgentSession()</code> → state = 'none'</td>
+      <td>Same — <code>clearAgentSession()</code> sets <code>agentSessionRef.current = false</code>, so PTY gate no longer fires</td>
+    </tr>
+  </table>
+
+  <!-- FILES TOUCHED -->
+  <h2>Files Touched</h2>
+  <ul class="summary-list">
+    <li>
+      <span class="check">→</span>
+      <span><code>src/renderer/src/components/TerminalPane.tsx</code> — 2 lines changed: <code>AGENT_IDLE_DELAY_MS</code> constant and the <code>onPtyData</code> gate condition. No new logic, no new refs, no structural changes.</span>
+    </li>
+    <li>
+      <span class="check">✗</span>
+      <span><code>Sidebar.tsx</code> — no changes needed. The <code>getSessionDotStatus</code> logic and CSS animation are correct; the bug is entirely upstream in how <code>agentState</code> gets set.</span>
+    </li>
+  </ul>
+
+  <!-- TESTING -->
+  <h2>How to Verify</h2>
+  <ol style="padding-left: 20px; color: #a6adc8; font-size: 0.88rem; line-height: 2;">
+    <li>Open a new terminal tab and run <code>claude</code> or <code>codex</code></li>
+    <li>Submit a task that requires multiple tool calls (e.g. "read all .ts files and summarize the architecture")</li>
+    <li>Watch the sidebar dot — it should blink yellow continuously throughout the entire task, including during tool execution gaps</li>
+    <li>After Claude returns to its prompt, dot should turn green within ~20 seconds of inactivity</li>
+    <li>Confirm non-agent sessions are unaffected (plain shell commands should not trigger yellow)</li>
+  </ol>
+
+</div>
+</body>
+</html>

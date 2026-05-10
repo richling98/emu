@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Plan: Tab Ordering Fix</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f0f13;
+      color: #cdd6f4;
+      line-height: 1.6;
+      padding: 40px 24px;
+    }
+    .container { max-width: 820px; margin: 0 auto; }
+    h1 { font-size: 1.6rem; font-weight: 700; color: #cba6f7; margin-bottom: 4px; }
+    .subtitle { font-size: 0.85rem; color: #6c7086; margin-bottom: 36px; }
+    h2 { font-size: 1rem; font-weight: 600; color: #89b4fa; margin: 32px 0 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+    h3 { font-size: 0.95rem; font-weight: 600; color: #cdd6f4; margin: 20px 0 8px; }
+    p { color: #a6adc8; margin-bottom: 10px; font-size: 0.9rem; }
+    code {
+      font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+      font-size: 0.82rem;
+      background: #1e1e2e;
+      color: #f38ba8;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    pre {
+      background: #1e1e2e;
+      border: 1px solid #313244;
+      border-radius: 8px;
+      padding: 16px 20px;
+      overflow-x: auto;
+      font-size: 0.82rem;
+      font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+      color: #cdd6f4;
+      margin: 12px 0 20px;
+      line-height: 1.7;
+    }
+    pre .comment { color: #6c7086; }
+    pre .added { color: #a6e3a1; }
+    pre .removed { color: #f38ba8; text-decoration: line-through; opacity: 0.7; }
+    pre .keyword { color: #cba6f7; }
+    pre .type { color: #89b4fa; }
+    pre .string { color: #a6e3a1; }
+
+    .card {
+      background: #181825;
+      border: 1px solid #313244;
+      border-radius: 10px;
+      padding: 20px 24px;
+      margin-bottom: 16px;
+    }
+    .card-title {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: #cdd6f4;
+      margin-bottom: 8px;
+    }
+    .card p { margin-bottom: 0; }
+
+    .badge {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 20px;
+      margin-right: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .badge-green  { background: #1a3a2a; color: #a6e3a1; }
+    .badge-red    { background: #3a1a1a; color: #f38ba8; }
+    .badge-blue   { background: #1a2a3a; color: #89b4fa; }
+    .badge-purple { background: #2a1a3a; color: #cba6f7; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+      margin: 12px 0 20px;
+    }
+    th {
+      text-align: left;
+      padding: 8px 12px;
+      color: #89b4fa;
+      border-bottom: 1px solid #313244;
+      font-weight: 600;
+    }
+    td {
+      padding: 9px 12px;
+      border-bottom: 1px solid #1e1e2e;
+      color: #a6adc8;
+      vertical-align: top;
+    }
+    tr:last-child td { border-bottom: none; }
+    td code { background: #0f0f13; }
+
+    .step {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 24px;
+      align-items: flex-start;
+    }
+    .step-num {
+      flex-shrink: 0;
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      background: #313244;
+      color: #cba6f7;
+      font-weight: 700;
+      font-size: 0.8rem;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .step-body { flex: 1; }
+    .step-body h3 { margin-top: 0; }
+
+    .file-pill {
+      display: inline-block;
+      font-size: 0.75rem;
+      font-family: "JetBrains Mono", Menlo, monospace;
+      background: #1e1e2e;
+      color: #89b4fa;
+      border: 1px solid #313244;
+      padding: 2px 8px;
+      border-radius: 4px;
+      margin-bottom: 8px;
+    }
+
+    hr { border: none; border-top: 1px solid #1e1e2e; margin: 36px 0; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <h1>Tab Ordering Fix</h1>
+  <p class="subtitle">Plan · emu · May 2026</p>
+
+  <!-- ── PROBLEM ── -->
+  <h2>Problem</h2>
+  <div class="card">
+    <p>
+      Tabs in the left sidebar reorder whenever <strong>any</strong> session activity occurs —
+      including Claude Code output arriving in a background tab. The user only wants the order
+      to change when they <strong>physically click (or navigate to) a tab</strong>.
+    </p>
+    <p style="margin-top:8px">
+      Root cause: the <code>Session</code> object has a single <code>lastActiveAt</code> timestamp
+      that is updated both for user navigation <em>and</em> for background PTY activity. The sidebar
+      sorts by this field, so any background activity reshuffles the list mid-session.
+    </p>
+  </div>
+
+  <h2>Primary Symptom: Tab Flickering</h2>
+  <div class="card" style="border-color: #f38ba840;">
+    <div class="card-title" style="color:#f38ba8;">⚡ Rapid tab flashing with two concurrent Claude Code sessions</div>
+    <p style="margin-top:8px">
+      When two tabs both have Claude Code actively running (yellow indicator blinking),
+      each stream of PTY output calls <code>touchSession</code>, bumping that tab's
+      <code>lastActiveAt</code> to <em>right now</em>. Since both sessions are streaming
+      output simultaneously, they alternate being the most-recently-active — whichever
+      received a byte last jumps to position #1. This causes the two tabs to swap
+      positions dozens of times per second, producing visible flicker in the sidebar.
+    </p>
+    <p style="margin-top:8px">
+      The fix eliminates this entirely: PTY activity will <strong>never</strong> touch
+      the sort key. Tabs only move when the user explicitly navigates to one.
+    </p>
+  </div>
+
+  <!-- ── ROOT CAUSE ── -->
+  <h2>Root Cause — Call Map</h2>
+  <p>Every call to <code>touchSession(id)</code> bumps <code>lastActiveAt</code>, which the sidebar sorts by.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Call site in App.tsx</th>
+        <th>Triggered by</th>
+        <th>Should reorder?</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>handleSelect</code></td>
+        <td>User clicks a tab</td>
+        <td><span class="badge badge-green">Yes</span></td>
+      </tr>
+      <tr>
+        <td><code>handleNewSession</code></td>
+        <td>User clicks "+" (new tab)</td>
+        <td><span class="badge badge-green">Yes</span></td>
+      </tr>
+      <tr>
+        <td><code>handleDropLeft / handleDropRight</code></td>
+        <td>User drags a tab into a pane</td>
+        <td><span class="badge badge-green">Yes</span></td>
+      </tr>
+      <tr>
+        <td><code>handleCloseLeftPane</code></td>
+        <td>User closes a pane; right session is promoted</td>
+        <td><span class="badge badge-green">Yes</span></td>
+      </tr>
+      <tr>
+        <td><code>handleOpenHistory</code></td>
+        <td>User clicks history icon on a tab</td>
+        <td><span class="badge badge-red">No — keep current order</span></td>
+      </tr>
+      <tr>
+        <td><code>onSessionTouched</code> → <code>touchSessionActivity</code> (TerminalPane)</td>
+        <td>PTY data arrives — Claude Code / any background process</td>
+        <td><span class="badge badge-red">No — this is the bug</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ── SOLUTION ── -->
+  <h2>Solution</h2>
+  <div class="card">
+    <p>
+      Introduce a second timestamp, <code>userSelectedAt</code>, on the <code>Session</code> type.
+      It is initialised to <code>createdAt</code> and only ever updated when the user explicitly
+      navigates to a tab. The sidebar sorts by <code>userSelectedAt</code>; <code>lastActiveAt</code>
+      is kept purely for the relative-time display label ("just now", "5 min ago").
+    </p>
+  </div>
+
+  <h2>Affected Files</h2>
+  <table>
+    <thead><tr><th>File</th><th>Change</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>src/renderer/src/App.tsx</code></td>
+        <td>Add <code>userSelectedAt</code> to <code>Session</code>; init in <code>createSession</code>; update only at explicit navigation sites; pass a new <code>onSelectSession</code> update to <code>handleSelect</code>, <code>handleNewSession</code>, <code>handleDropLeft</code>, <code>handleDropRight</code>, <code>handleCloseLeftPane</code></td>
+      </tr>
+      <tr>
+        <td><code>src/renderer/src/components/Sidebar.tsx</code></td>
+        <td>Change sort key from <code>lastActiveAt</code> → <code>userSelectedAt</code> (1 line)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ── STEPS ── -->
+  <h2>Implementation Steps</h2>
+
+  <div class="step">
+    <div class="step-num">1</div>
+    <div class="step-body">
+      <div class="file-pill">src/renderer/src/App.tsx</div>
+      <h3>Add <code>userSelectedAt</code> to the Session type &amp; factory</h3>
+      <p>Add the new field next to <code>lastActiveAt</code>. Initialise it to <code>now</code> in <code>createSession()</code> so new tabs start at the top of the list.</p>
+      <pre><span class="comment">// Session interface</span>
+<span class="removed">  lastActiveAt: Date</span>
+<span class="added">  lastActiveAt: Date      <span class="comment">// updated by any PTY activity — used for the time label</span></span>
+<span class="added">  userSelectedAt: Date    <span class="comment">// updated only on explicit user navigation — used for sort order</span></span>
+
+<span class="comment">// createSession()</span>
+<span class="added">  userSelectedAt: now,</span></pre>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">2</div>
+    <div class="step-body">
+      <div class="file-pill">src/renderer/src/App.tsx</div>
+      <h3>Add a <code>selectSession</code> helper that bumps <code>userSelectedAt</code></h3>
+      <p>Keep <code>touchSession</code> exactly as-is (it still drives the timestamp label). Add a tiny helper that also bumps the sort key:</p>
+      <pre><span class="added">const selectSession = useCallback((id: string) => {
+  const now = new Date()
+  setSessions((prev) =>
+    prev.map((s) => s.id === id ? { ...s, lastActiveAt: now, userSelectedAt: now } : s)
+  )
+}, [])</span></pre>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">3</div>
+    <div class="step-body">
+      <div class="file-pill">src/renderer/src/App.tsx</div>
+      <h3>Replace <code>touchSession</code> with <code>selectSession</code> at explicit-navigation call sites</h3>
+      <p>The five places where the user is actively choosing a tab:</p>
+      <table>
+        <thead><tr><th>Handler</th><th>Change</th></tr></thead>
+        <tbody>
+          <tr><td><code>handleSelect</code></td><td><code>touchSession(id)</code> → <code>selectSession(id)</code></td></tr>
+          <tr><td><code>handleNewSession</code></td><td>call <code>selectSession(s.id)</code> after creating the session (single mode only)</td></tr>
+          <tr><td><code>handleDropLeft</code></td><td><code>touchSession(sessionId)</code> → <code>selectSession(sessionId)</code></td></tr>
+          <tr><td><code>handleDropRight</code></td><td><code>touchSession(sessionId)</code> → <code>selectSession(sessionId)</code></td></tr>
+          <tr><td><code>handleCloseLeftPane</code></td><td><code>touchSession(rightPaneSessionId)</code> → <code>selectSession(rightPaneSessionId)</code></td></tr>
+        </tbody>
+      </table>
+      <p><code>handleOpenHistory</code> and <code>onSessionTouched</code> (PTY activity) are left calling <code>touchSession</code> — they update the label but not the order.</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">4</div>
+    <div class="step-body">
+      <div class="file-pill">src/renderer/src/components/Sidebar.tsx</div>
+      <h3>Sort by <code>userSelectedAt</code> instead of <code>lastActiveAt</code></h3>
+      <p>One-line change in <code>orderedSessions</code>:</p>
+      <pre><span class="removed">  const activeDelta = b.lastActiveAt.getTime() - a.lastActiveAt.getTime()</span>
+<span class="added">  const activeDelta = b.userSelectedAt.getTime() - a.userSelectedAt.getTime()</span></pre>
+      <p>The fallback sort (<code>createdAt</code>) is unchanged — it handles ties between tabs the user has never manually visited.</p>
+    </div>
+  </div>
+
+  <!-- ── BEHAVIOUR AFTER FIX ── -->
+  <h2>Behaviour After Fix</h2>
+  <table>
+    <thead><tr><th>Action</th><th>Order changes?</th><th>Timestamp label updates?</th></tr></thead>
+    <tbody>
+      <tr><td>User clicks a tab</td><td><span class="badge badge-green">Yes</span></td><td><span class="badge badge-green">Yes</span></td></tr>
+      <tr><td>User opens a new tab</td><td><span class="badge badge-green">Yes — appears at top</span></td><td><span class="badge badge-green">Yes</span></td></tr>
+      <tr><td>User drags a tab to a pane</td><td><span class="badge badge-green">Yes</span></td><td><span class="badge badge-green">Yes</span></td></tr>
+      <tr><td>User closes a pane (promotes right tab)</td><td><span class="badge badge-green">Yes</span></td><td><span class="badge badge-green">Yes</span></td></tr>
+      <tr><td>Claude Code / PTY output in background tab</td><td><span class="badge badge-red">No — order stable</span></td><td><span class="badge badge-green">Yes — label still live</span></td></tr>
+      <tr><td>User clicks history icon on a tab</td><td><span class="badge badge-red">No — order stable</span></td><td><span class="badge badge-green">Yes</span></td></tr>
+    </tbody>
+  </table>
+
+  <!-- ── END RESULT ── -->
+  <h2>End Result</h2>
+
+  <div class="card" style="border-color: #a6e3a140; margin-bottom: 12px;">
+    <div class="card-title" style="color:#a6e3a1;">No more tab flickering</div>
+    <p>
+      Running two or more concurrent Claude Code sessions will no longer cause tabs to flash
+      or swap positions. The sidebar stays completely still while background tasks run —
+      regardless of how much output they produce or how fast they stream it.
+    </p>
+  </div>
+
+  <div class="card" style="border-color: #a6e3a140; margin-bottom: 12px;">
+    <div class="card-title" style="color:#a6e3a1;">Tab order reflects your navigation, not machine activity</div>
+    <p>
+      The sidebar becomes a reliable history of where <em>you</em> have been. The tab you
+      most recently clicked sits at the top. Tabs you haven't visited stay where you left them,
+      even if Claude Code has been streaming output in them for minutes.
+    </p>
+  </div>
+
+  <div class="card" style="border-color: #a6e3a140; margin-bottom: 12px;">
+    <div class="card-title" style="color:#a6e3a1;">Relative timestamps still live</div>
+    <p>
+      The "just now / 5 min ago" label under each tab name continues to update in real time
+      based on PTY activity — so you can still glance at the sidebar and know which sessions
+      have been recently active, without that activity disturbing the order.
+    </p>
+  </div>
+
+  <div class="card" style="border-color: #a6e3a140; margin-bottom: 12px;">
+    <div class="card-title" style="color:#a6e3a1;">New tabs still appear at the top</div>
+    <p>
+      Creating a new session initialises <code>userSelectedAt</code> to the current time,
+      so it naturally lands at position #1 — consistent with the existing expectation that
+      a freshly opened tab is the one you want to use.
+    </p>
+  </div>
+
+  <div class="card" style="border-color: #a6e3a140;">
+    <div class="card-title" style="color:#a6e3a1;">Zero regressions to existing UX</div>
+    <p>
+      Drag-to-pane, close-pane promotion, split-screen, and sidebar collapse all behave
+      identically to today. The only observable change is that background agent activity
+      no longer has any effect on sidebar order.
+    </p>
+  </div>
+
+  <!-- ── SCOPE ── -->
+  <h2>Scope &amp; Risk</h2>
+  <div class="card">
+    <div class="card-title"><span class="badge badge-blue">Minimal blast radius</span></div>
+    <p>
+      No IPC changes, no new components, no new dependencies. The diff is ~15 lines across two files.
+      <code>lastActiveAt</code> continues to work exactly as before for timestamp display;
+      only the sort key is swapped.
+    </p>
+  </div>
+
+  <hr />
+  <p style="font-size:0.78rem; color:#45475a; text-align:center">emu · tab-ordering-fix · May 2026</p>
+</div>
+</body>
+</html>

@@ -1,0 +1,987 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Plan: Ghostty Infrastructure Parity</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f0f13;
+      color: #cdd6f4;
+      line-height: 1.6;
+      padding: 40px 24px;
+    }
+    .container { max-width: 860px; margin: 0 auto; }
+    h1 { font-size: 1.6rem; font-weight: 700; color: #cba6f7; margin-bottom: 4px; }
+    .subtitle { font-size: 0.85rem; color: #6c7086; margin-bottom: 36px; }
+    h2 { font-size: 1rem; font-weight: 600; color: #89b4fa; margin: 32px 0 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+    h3 { font-size: 0.95rem; font-weight: 600; color: #cdd6f4; margin: 20px 0 8px; }
+    p { color: #a6adc8; margin-bottom: 10px; font-size: 0.9rem; }
+    code {
+      font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+      font-size: 0.82rem;
+      background: #1e1e2e;
+      color: #f38ba8;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    pre {
+      background: #1e1e2e;
+      border: 1px solid #313244;
+      border-radius: 8px;
+      padding: 16px 20px;
+      overflow-x: auto;
+      font-size: 0.82rem;
+      font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+      color: #cdd6f4;
+      margin: 12px 0 20px;
+      line-height: 1.7;
+    }
+    pre .comment { color: #6c7086; }
+    pre .added { color: #a6e3a1; }
+    pre .removed { color: #f38ba8; text-decoration: line-through; opacity: 0.7; }
+    pre .keyword { color: #cba6f7; }
+    pre .string { color: #a6e3a1; }
+
+    .card {
+      background: #181825;
+      border: 1px solid #313244;
+      border-radius: 10px;
+      padding: 20px 24px;
+      margin-bottom: 16px;
+    }
+    .card-title {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: #cdd6f4;
+      margin-bottom: 8px;
+    }
+    .card p { margin-bottom: 0; }
+
+    .badge {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 20px;
+      margin-right: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .badge-green  { background: #1a3a2a; color: #a6e3a1; }
+    .badge-red    { background: #3a1a1a; color: #f38ba8; }
+    .badge-blue   { background: #1a2a3a; color: #89b4fa; }
+    .badge-purple { background: #2a1a3a; color: #cba6f7; }
+    .badge-yellow { background: #3a2e1a; color: #f9e2af; }
+    .badge-orange { background: #3a221a; color: #fab387; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+      margin: 12px 0 20px;
+    }
+    th {
+      text-align: left;
+      padding: 8px 12px;
+      color: #89b4fa;
+      border-bottom: 1px solid #313244;
+      font-weight: 600;
+    }
+    td {
+      padding: 9px 12px;
+      border-bottom: 1px solid #1e1e2e;
+      color: #a6adc8;
+      vertical-align: top;
+    }
+    tr:last-child td { border-bottom: none; }
+    td code { background: #0f0f13; }
+
+    .step {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 28px;
+      align-items: flex-start;
+    }
+    .step-num {
+      flex-shrink: 0;
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      background: #313244;
+      color: #cba6f7;
+      font-weight: 700;
+      font-size: 0.8rem;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .step-num.green { background: #1a3a2a; color: #a6e3a1; }
+    .step-num.blue { background: #1a2a3a; color: #89b4fa; }
+    .step-num.orange { background: #3a221a; color: #fab387; }
+    .step-body { flex: 1; }
+    .step-body h3 { margin-top: 0; }
+
+    .file-pill {
+      display: inline-block;
+      font-size: 0.75rem;
+      font-family: "JetBrains Mono", Menlo, monospace;
+      background: #1e1e2e;
+      color: #89b4fa;
+      border: 1px solid #313244;
+      padding: 2px 8px;
+      border-radius: 4px;
+      margin-bottom: 8px;
+      margin-right: 4px;
+    }
+
+    .phase-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 36px 0 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #313244;
+    }
+    .phase-label {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding: 3px 10px;
+      border-radius: 20px;
+    }
+    .phase-label.p1 { background: #1a3a2a; color: #a6e3a1; }
+    .phase-label.p2 { background: #1a2a3a; color: #89b4fa; }
+    .phase-label.p3 { background: #3a221a; color: #fab387; }
+    .phase-label.p4 { background: #2a1a3a; color: #cba6f7; }
+    .phase-title { font-size: 1.05rem; font-weight: 600; color: #cdd6f4; }
+    .phase-effort { font-size: 0.8rem; color: #6c7086; }
+
+    .vs-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin: 16px 0 24px;
+    }
+    .vs-card {
+      background: #181825;
+      border: 1px solid #313244;
+      border-radius: 10px;
+      padding: 18px 20px;
+    }
+    .vs-card.ghostty { border-color: #89b4fa40; }
+    .vs-card.emu { border-color: #cba6f740; }
+    .vs-card-title {
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 12px;
+    }
+    .vs-card.ghostty .vs-card-title { color: #89b4fa; }
+    .vs-card.emu .vs-card-title { color: #cba6f7; }
+    .vs-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin-bottom: 8px;
+      font-size: 0.83rem;
+    }
+    .vs-icon { flex-shrink: 0; margin-top: 1px; }
+    .vs-text { color: #a6adc8; }
+    .vs-text strong { color: #cdd6f4; font-weight: 600; }
+
+    .impact-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 8px;
+    }
+    .impact-label { font-size: 0.75rem; color: #6c7086; min-width: 50px; }
+    .bar-track { flex: 1; height: 4px; background: #313244; border-radius: 2px; }
+    .bar-fill { height: 100%; border-radius: 2px; }
+    .bar-fill.low { width: 25%; background: #f9e2af; }
+    .bar-fill.med { width: 55%; background: #89b4fa; }
+    .bar-fill.high { width: 85%; background: #a6e3a1; }
+    .bar-fill.full { width: 100%; background: #cba6f7; }
+
+    hr { border: none; border-top: 1px solid #1e1e2e; margin: 36px 0; }
+
+    .callout {
+      border-left: 3px solid #89b4fa;
+      background: #181825;
+      padding: 14px 18px;
+      border-radius: 0 8px 8px 0;
+      margin: 12px 0 20px;
+      font-size: 0.87rem;
+      color: #a6adc8;
+    }
+    .callout.warn { border-color: #f9e2af; }
+    .callout.success { border-color: #a6e3a1; }
+    .callout strong { color: #cdd6f4; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <h1>Ghostty Infrastructure Parity</h1>
+  <p class="subtitle">Competitive analysis &amp; improvement roadmap · emu · May 2026</p>
+
+  <!-- ── EXECUTIVE SUMMARY ── -->
+  <h2>Executive Summary</h2>
+  <div class="card">
+    <p>
+      Ghostty is the most technically ambitious terminal emulator on the market — 54k GitHub stars,
+      millions of daily users, written in <strong>Zig + Swift</strong> with a custom Metal renderer,
+      a SIMD-accelerated VT parser, and a native multi-threaded architecture that matches Alacritty
+      on benchmarks while being far more feature-rich.
+    </p>
+    <p style="margin-top:8px">
+      Emu is built on <strong>Electron + xterm.js</strong>. This gives us an outstanding UI/UX
+      foundation and rapid iteration speed, but creates a fundamental performance gap in raw
+      throughput, latency, and protocol coverage. This plan identifies what we can close within the
+      Electron model and where we ultimately need to go further.
+    </p>
+    <p style="margin-top:8px">
+      Emu's differentiators — AI prompt optimizer, agent status detection, command history with
+      smart output capture — are not in Ghostty at all. We shouldn't abandon them.
+      The goal is to close the <em>infrastructure</em> gap while keeping those product advantages.
+    </p>
+  </div>
+
+  <!-- ── THE REAL ANSWER ── -->
+  <h2>The Real Answer: A Native Swift Rebuild</h2>
+  <div class="callout warn">
+    <strong>True infrastructure parity with Ghostty requires leaving Electron.</strong>
+    Phases 1–3 below are genuine improvements worth shipping — but they have a ceiling.
+    No combination of native addons, SharedArrayBuffers, or xterm.js tuning can match a
+    Metal renderer + CoreText + a multi-threaded native binary. This section explains what
+    true parity actually looks like and why it's achievable without writing Zig from scratch.
+  </div>
+
+  <h3>The Native Stack</h3>
+  <table>
+    <thead><tr><th>Layer</th><th>Ghostty</th><th>Emu Native (proposed)</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>App shell</strong></td>
+        <td>Swift + SwiftUI</td>
+        <td>Swift + SwiftUI — same approach, gives us native menu bar, AppleScript, Shortcuts</td>
+      </tr>
+      <tr>
+        <td><strong>VT parser &amp; terminal state</strong></td>
+        <td>Custom Zig parser (SIMD)</td>
+        <td><strong>libghostty-vt</strong> — Ghostty's own open-source C/Zig VT library, callable from Swift via C FFI. No need to write our own parser.</td>
+      </tr>
+      <tr>
+        <td><strong>PTY management</strong></td>
+        <td>Native Zig PTY</td>
+        <td>Swift <code>Foundation.Process</code> + <code>posix_openpt</code> — standard macOS POSIX PTY APIs</td>
+      </tr>
+      <tr>
+        <td><strong>Renderer</strong></td>
+        <td>Custom Metal shader + glyph atlas</td>
+        <td>Metal — <code>MTKView</code> with a custom glyph atlas. Can start with a simpler shader and optimize over time.</td>
+      </tr>
+      <tr>
+        <td><strong>Font system</strong></td>
+        <td>CoreText (system-native)</td>
+        <td>CoreText — automatic sub-pixel AA, system font discovery, ligature support</td>
+      </tr>
+      <tr>
+        <td><strong>Threading</strong></td>
+        <td>Read / write / render threads per terminal</td>
+        <td>Swift concurrency (<code>async/await</code> + <code>Actor</code>) — maps naturally to the same model</td>
+      </tr>
+      <tr>
+        <td><strong>AI features</strong></td>
+        <td>N/A</td>
+        <td>Swift <code>URLSession</code> for OpenAI API — trivial port. Agent detection and command history are pure state-machine logic that ports directly.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout success">
+    <strong>Key insight: we don't need to write Zig.</strong> libghostty-vt is already open source,
+    battle-tested by millions of Ghostty users, and ships as a C-compatible library. Swift can call
+    C libraries directly with no bridging overhead. We get Ghostty's SIMD-accelerated parser for free,
+    and we never have to maintain a VT parser ourselves. This is the biggest risk-reducer in the
+    native rebuild path.
+  </div>
+
+  <h3>What we lose from Electron — and whether it matters</h3>
+  <table>
+    <thead><tr><th>Electron feature</th><th>Lost?</th><th>Native alternative</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>React UI components</td>
+        <td><span class="badge badge-yellow">Partially</span></td>
+        <td>SwiftUI is expressive and fast. Command history, settings modal, theme picker all port in days.</td>
+      </tr>
+      <tr>
+        <td>Hot reload during development</td>
+        <td><span class="badge badge-red">Yes</span></td>
+        <td>Xcode previews + Swift's fast recompilation (debug builds). Slower iteration than Vite HMR but acceptable.</td>
+      </tr>
+      <tr>
+        <td>npm ecosystem</td>
+        <td><span class="badge badge-red">Yes</span></td>
+        <td>Swift Package Manager. Smaller ecosystem but sufficient for what we need (networking, crypto, etc.).</td>
+      </tr>
+      <tr>
+        <td>Cross-platform (if ever needed)</td>
+        <td><span class="badge badge-yellow">macOS only initially</span></td>
+        <td>libghostty-vt supports Linux/Windows. Swift is available on Linux. A Linux port would use GTK (like Ghostty).</td>
+      </tr>
+      <tr>
+        <td>xterm.js (all protocol work done for us)</td>
+        <td><span class="badge badge-red">Yes</span></td>
+        <td>libghostty-vt handles VT parsing. Metal renderer needs to be written — this is the main work item.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Realistic effort estimate for a native rebuild</h3>
+  <div class="card">
+    <table style="margin:0">
+      <thead><tr><th>Component</th><th>Effort</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>SwiftUI app shell, window management, tabs, splits</td><td><span class="badge badge-yellow">2–3 weeks</span></td><td>Ghostty's macOS app is open source — we can study its SwiftUI structure directly</td></tr>
+        <tr><td>PTY management in Swift</td><td><span class="badge badge-green">3–5 days</span></td><td>POSIX PTY APIs are well-documented; spawn shell, resize, read/write</td></tr>
+        <tr><td>libghostty-vt Swift bindings</td><td><span class="badge badge-green">1 week</span></td><td>C interop in Swift is straightforward; Ghostty's C header is the API surface</td></tr>
+        <tr><td>Metal renderer (basic)</td><td><span class="badge badge-orange">3–4 weeks</span></td><td>Glyph atlas + CoreText rasterization + Metal shader. Hardest part of the rebuild.</td></tr>
+        <tr><td>Port AI features (prompt optimizer, agent detection, history)</td><td><span class="badge badge-yellow">1–2 weeks</span></td><td>Pure logic port; URLSession replaces fetch; state machines translate directly</td></tr>
+        <tr><td>Themes, settings UI, keyboard shortcuts</td><td><span class="badge badge-yellow">1 week</span></td><td>SwiftUI makes this fast; can match current Catppuccin themes exactly</td></tr>
+        <tr><td>Testing, polish, distribution</td><td><span class="badge badge-yellow">2 weeks</span></td><td>Notarization is simpler for a native app than Electron</td></tr>
+        <tr><td style="font-weight:600">Total</td><td><span class="badge badge-orange">~10–14 weeks</span></td><td>For a v1 that matches current emu features with native infrastructure</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <hr />
+
+  <!-- ── ARCHITECTURE COMPARISON ── -->
+  <h2>Architecture Comparison</h2>
+
+  <div class="vs-grid">
+    <div class="vs-card ghostty">
+      <div class="vs-card-title">Ghostty</div>
+      <div class="vs-row"><span class="vs-icon">⚙️</span><span class="vs-text"><strong>Zig core</strong> — compiles to a native binary, zero GC overhead</span></div>
+      <div class="vs-row"><span class="vs-icon">🖥️</span><span class="vs-text"><strong>Swift + SwiftUI</strong> — true macOS native app (menu bar, AppleScript, Shortcuts)</span></div>
+      <div class="vs-row"><span class="vs-icon">🎨</span><span class="vs-text"><strong>Metal renderer</strong> on macOS; OpenGL on Linux — no browser involved</span></div>
+      <div class="vs-row"><span class="vs-icon">🔤</span><span class="vs-text"><strong>CoreText</strong> for font discovery and shaping on macOS</span></div>
+      <div class="vs-row"><span class="vs-icon">🚀</span><span class="vs-text"><strong>SIMD-optimized VT parser</strong> in Zig — CPU-specific acceleration</span></div>
+      <div class="vs-row"><span class="vs-icon">🧵</span><span class="vs-text"><strong>Multi-threaded</strong> — dedicated read, write, and render thread per terminal</span></div>
+      <div class="vs-row"><span class="vs-icon">📡</span><span class="vs-text"><strong>libghostty</strong> — embeddable C/Zig library for third parties</span></div>
+      <div class="vs-row"><span class="vs-icon">✅</span><span class="vs-text">Kitty graphics protocol, image protocol, synchronized rendering, clipboard sequences</span></div>
+    </div>
+    <div class="vs-card emu">
+      <div class="vs-card-title">Emu</div>
+      <div class="vs-row"><span class="vs-icon">⚙️</span><span class="vs-text"><strong>TypeScript + React</strong> — runs inside Chromium/Node.js (Electron)</span></div>
+      <div class="vs-row"><span class="vs-icon">🖥️</span><span class="vs-text"><strong>Electron app</strong> — not a native macOS app; no menu bar, no AppleScript</span></div>
+      <div class="vs-row"><span class="vs-icon">🎨</span><span class="vs-text"><strong>WebGL via xterm.js</strong> — rendered by Chromium's compositor, not Metal</span></div>
+      <div class="vs-row"><span class="vs-icon">🔤</span><span class="vs-text"><strong>Web font stack</strong> (CSS) — JetBrains Mono via fontsource; no CoreText</span></div>
+      <div class="vs-row"><span class="vs-icon">🔀</span><span class="vs-text"><strong>xterm.js VT parser</strong> — solid JavaScript parser, no SIMD</span></div>
+      <div class="vs-row"><span class="vs-icon">🧵</span><span class="vs-text"><strong>Single-threaded</strong> JS event loop + IPC overhead (main ↔ renderer)</span></div>
+      <div class="vs-row"><span class="vs-icon">🤖</span><span class="vs-text"><strong>AI prompt optimizer</strong> — unique differentiator vs Ghostty</span></div>
+      <div class="vs-row"><span class="vs-icon">🤖</span><span class="vs-text"><strong>Agent status detection</strong> &amp; command history — also unique</span></div>
+    </div>
+  </div>
+
+  <!-- ── GAP TABLE ── -->
+  <h2>Gap Analysis</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Dimension</th>
+        <th>Ghostty</th>
+        <th>Emu Today</th>
+        <th>Gap</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Raw throughput</strong></td>
+        <td>Native Metal + SIMD parser; ~same as Alacritty</td>
+        <td>xterm.js WebGL; Electron IPC adds latency</td>
+        <td><span class="badge badge-red">Large</span></td>
+      </tr>
+      <tr>
+        <td><strong>Input latency</strong></td>
+        <td>Keypress → PTY write in same process thread</td>
+        <td>Keypress → IPC → main process → PTY write</td>
+        <td><span class="badge badge-red">Medium</span></td>
+      </tr>
+      <tr>
+        <td><strong>Rendering path</strong></td>
+        <td>Custom Metal shader, CoreText glyph cache</td>
+        <td>Chromium compositor → WebGL → xterm.js glyph atlas</td>
+        <td><span class="badge badge-red">Large</span></td>
+      </tr>
+      <tr>
+        <td><strong>Font rendering</strong></td>
+        <td>CoreText (macOS system-native, sub-pixel AA)</td>
+        <td>Web font (CSS, no sub-pixel, no CoreText)</td>
+        <td><span class="badge badge-yellow">Medium</span></td>
+      </tr>
+      <tr>
+        <td><strong>Terminal protocol</strong></td>
+        <td>Kitty keyboard, image protocol, sync rendering, OSC 133</td>
+        <td>xterm.js standard set; no Kitty, no sync rendering</td>
+        <td><span class="badge badge-yellow">Medium</span></td>
+      </tr>
+      <tr>
+        <td><strong>Memory overhead</strong></td>
+        <td>~50–80 MB per instance (native)</td>
+        <td>~200–400 MB (Electron + Chromium)</td>
+        <td><span class="badge badge-yellow">Medium</span></td>
+      </tr>
+      <tr>
+        <td><strong>Shell integration</strong></td>
+        <td>OSC 133 semantic zones (standard protocol)</td>
+        <td>ZDOTDIR zsh wrapper (fragile, zsh-only)</td>
+        <td><span class="badge badge-yellow">Medium</span></td>
+      </tr>
+      <tr>
+        <td><strong>Multi-window / tabs / splits</strong></td>
+        <td>Native SwiftUI windows + tabs + panes</td>
+        <td>React-managed panes (single window)</td>
+        <td><span class="badge badge-blue">Small</span></td>
+      </tr>
+      <tr>
+        <td><strong>AI / agent features</strong></td>
+        <td>None</td>
+        <td>Prompt optimizer, agent status, command history</td>
+        <td><span class="badge badge-green">Emu wins</span></td>
+      </tr>
+      <tr>
+        <td><strong>Cross-platform</strong></td>
+        <td>macOS + Linux (GTK)</td>
+        <td>macOS only (Electron could support others)</td>
+        <td><span class="badge badge-blue">Neutral</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ── THE HONEST TRUTH ── -->
+  <h2>The Honest Truth About the Architecture Gap</h2>
+  <div class="callout warn">
+    <strong>Electron has a ceiling.</strong> No amount of tuning will make Chromium's WebGL pipeline
+    match Ghostty's custom Metal renderer. The IPC hop between main and renderer adds inherent latency.
+    xterm.js is excellent JavaScript, but it isn't SIMD-accelerated Zig. We should close every gap
+    we can within the Electron model — but we should be clear-eyed that some gaps require a deeper
+    architectural change to close fully.
+  </div>
+  <div class="callout success">
+    <strong>The plan below is phased by effort and impact.</strong> Phases 1–2 can be done now,
+    within the existing codebase. Phase 3 requires a native addon. Phase 4 is the strategic
+    rearchitecture question we'll need to answer if we want true parity.
+  </div>
+
+  <!-- ── PHASE 1 ── -->
+  <div class="phase-header">
+    <div class="phase-label p1">Phase 1</div>
+    <div class="phase-title">xterm.js &amp; Electron Quick Wins</div>
+    <div class="phase-effort">Low effort · High value · Shippable now</div>
+  </div>
+
+  <div class="step">
+    <div class="step-num green">1</div>
+    <div class="step-body">
+      <div class="file-pill">src/renderer/src/components/TerminalPane.tsx</div>
+      <h3>Lock in the WebGL renderer — never fall back to canvas</h3>
+      <p>
+        xterm.js silently falls back to a Canvas2D renderer when WebGL context creation fails
+        (low memory, too many canvases, headless mode). Canvas2D is ~10× slower. We should detect
+        the fallback and report it, and force WebGL options that make a fallback less likely.
+      </p>
+      <pre><span class="comment">// Add after addon load:</span>
+<span class="added">const webglAddon = new WebglAddon()
+webglAddon.onContextLoss(() => {
+  <span class="comment">// reload the addon — this keeps WebGL alive after GPU context loss</span>
+  webglAddon.dispose()
+  terminal.loadAddon(new WebglAddon())
+})
+terminal.loadAddon(webglAddon)</span></pre>
+      <div class="impact-bar">
+        <span class="impact-label">Impact</span>
+        <div class="bar-track"><div class="bar-fill high"></div></div>
+        <span class="impact-label">High</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num green">2</div>
+    <div class="step-body">
+      <div class="file-pill">src/renderer/src/components/TerminalPane.tsx</div>
+      <h3>Tune xterm.js terminal options for maximum rendering performance</h3>
+      <p>Several xterm.js options have significant throughput impact but are currently at defaults.</p>
+      <pre><span class="keyword">const</span> terminal = <span class="keyword">new</span> Terminal({
+  <span class="comment">// existing options...</span>
+  <span class="added">fastScrollModifier: 'alt',     <span class="comment">// native scroll feels faster</span></span>
+  <span class="added">fastScrollSensitivity: 5,</span>
+  <span class="added">smoothScrollDuration: 0,       <span class="comment">// disable smooth scroll — adds JS frame cost</span></span>
+  <span class="added">overviewRulerWidth: 0,         <span class="comment">// disable ruler — saves a render pass</span></span>
+  <span class="added">drawBoldTextInBrightColors: false, <span class="comment">// avoid re-color pass for bold</span></span>
+  <span class="added">minimumContrastRatio: 1,       <span class="comment">// disable contrast correction — perf cost</span></span>
+})</pre>
+      <div class="impact-bar">
+        <span class="impact-label">Impact</span>
+        <div class="bar-track"><div class="bar-fill med"></div></div>
+        <span class="impact-label">Medium</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num green">3</div>
+    <div class="step-body">
+      <div class="file-pill">src/main/index.ts</div>
+      <h3>Batch PTY output writes — eliminate per-byte IPC round-trips</h3>
+      <p>
+        Right now every <code>data</code> event from node-pty fires a separate
+        <code>pty:data</code> IPC event to the renderer. High-throughput programs (e.g. <code>cat large_file</code>)
+        can produce thousands of events per second, hammering the IPC bridge. We should
+        coalesce writes in a short timer window (≤4 ms — one animation frame).
+      </p>
+      <pre><span class="comment">// In pty:create handler, replace direct emit with a batching queue:</span>
+<span class="keyword">const</span> buffers = <span class="keyword">new</span> Map&lt;string, string[]&gt;()
+<span class="keyword">const</span> flushTimers = <span class="keyword">new</span> Map&lt;string, NodeJS.Timeout&gt;()
+
+ptyProcess.onData((data) => {
+  <span class="removed">  event.sender.send('pty:data', { id, data })</span>
+  <span class="added">  if (!buffers.has(id)) buffers.set(id, [])</span>
+  <span class="added">  buffers.get(id)!.push(data)</span>
+  <span class="added">  if (!flushTimers.has(id)) {</span>
+  <span class="added">    flushTimers.set(id, setTimeout(() => {</span>
+  <span class="added">      const chunk = buffers.get(id)!.join('')</span>
+  <span class="added">      buffers.delete(id)</span>
+  <span class="added">      flushTimers.delete(id)</span>
+  <span class="added">      event.sender.send('pty:data', { id, data: chunk })</span>
+  <span class="added">    }, 4))</span>
+  <span class="added">  }</span>
+})</pre>
+      <div class="impact-bar">
+        <span class="impact-label">Impact</span>
+        <div class="bar-track"><div class="bar-fill high"></div></div>
+        <span class="impact-label">High</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num green">4</div>
+    <div class="step-body">
+      <div class="file-pill">src/main/index.ts · electron-builder config</div>
+      <h3>Enable process sandbox (security + memory isolation)</h3>
+      <p>
+        The current security review flagged that Electron's sandbox is <strong>disabled</strong>.
+        Enabling it isolates the renderer process, reduces the attack surface, and brings us
+        in line with what Ghostty gets for free from macOS's native app sandbox entitlements.
+        This also reduces renderer memory pressure — sandboxed processes share OS memory pages better.
+      </p>
+      <pre><span class="comment">// electron-builder config or BrowserWindow options</span>
+<span class="removed">webPreferences: { sandbox: false, contextIsolation: true }</span>
+<span class="added">webPreferences: { sandbox: true, contextIsolation: true }</span>
+
+<span class="comment">// Also add to entitlements.plist:</span>
+<span class="added">&lt;key&gt;com.apple.security.app-sandbox&lt;/key&gt;&lt;true/&gt;</span></pre>
+      <div class="impact-bar">
+        <span class="impact-label">Impact</span>
+        <div class="bar-track"><div class="bar-fill med"></div></div>
+        <span class="impact-label">Security + Memory</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── PHASE 2 ── -->
+  <div class="phase-header">
+    <div class="phase-label p2">Phase 2</div>
+    <div class="phase-title">Terminal Protocol Parity</div>
+    <div class="phase-effort">Medium effort · Closes most visible UX gaps vs Ghostty</div>
+  </div>
+
+  <div class="step">
+    <div class="step-num blue">5</div>
+    <div class="step-body">
+      <div class="file-pill">src/renderer/src/components/TerminalPane.tsx</div>
+      <h3>OSC 133 shell integration — replace the ZDOTDIR zsh hack</h3>
+      <p>
+        Emu currently injects prompt-detection via a ZDOTDIR wrapper that patches zsh startup.
+        This is fragile (zsh only, breaks if users have custom ZDOTDIR, can conflict with frameworks
+        like Oh My Zsh). Ghostty uses the <strong>OSC 133</strong> shell integration protocol —
+        the same protocol used by iTerm2, WezTerm, and kitty. It works via a few escape sequences
+        that any shell can emit via <code>~/.zshrc</code> snippets, and it's shell-agnostic.
+      </p>
+      <p style="margin-top:8px">
+        xterm.js already parses OSC sequences. We need to:
+      </p>
+      <table>
+        <thead><tr><th>Step</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td>1. Write shell snippets</td><td>Small <code>~/.config/emu/shell-integration.zsh</code> and <code>.bash</code> files that emit OSC 133 A/B/C/D marks at prompt and command boundaries</td></tr>
+          <tr><td>2. Source them from emu</td><td>Set <code>EMU_SHELL_INTEGRATION=1</code> in the spawned PTY env; snippets check this var before activating</td></tr>
+          <tr><td>3. Parse in renderer</td><td>Handle OSC 133 sequences in <code>TerminalPane.tsx</code> to mark prompt lines — replace the current buffer-scan logic</td></tr>
+          <tr><td>4. Remove ZDOTDIR wrapper</td><td>Delete <code>zdotdir/</code> and related main-process setup</td></tr>
+        </tbody>
+      </table>
+      <div class="impact-bar">
+        <span class="impact-label">Impact</span>
+        <div class="bar-track"><div class="bar-fill high"></div></div>
+        <span class="impact-label">High (reliability + bash/fish support)</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num blue">6</div>
+    <div class="step-body">
+      <div class="file-pill">src/renderer/src/components/TerminalPane.tsx</div>
+      <h3>Synchronized output rendering (DEC mode 2026)</h3>
+      <p>
+        Ghostty supports <strong>synchronized rendering</strong> — an escape sequence
+        (<code>ESC[?2026h</code>) that lets programs (like vim, tmux, neovim) tell the terminal
+        "batch this output, don't render until I say go." This eliminates screen tearing and
+        partial-render flicker in TUI apps. xterm.js v5 supports it natively; we just need to
+        enable it.
+      </p>
+      <pre><span class="keyword">const</span> terminal = <span class="keyword">new</span> Terminal({
+  <span class="added">  allowProposedApi: true,   <span class="comment">// required for sync render</span></span>
+  <span class="comment">  // rest of options...</span>
+})</pre>
+      <p>Synchronized output is already in xterm.js 5.x. Enabling <code>allowProposedApi</code> unlocks it with zero additional code.</p>
+      <div class="impact-bar">
+        <span class="impact-label">Impact</span>
+        <div class="bar-track"><div class="bar-fill med"></div></div>
+        <span class="impact-label">Medium (visible quality in TUI apps)</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num blue">7</div>
+    <div class="step-body">
+      <div class="file-pill">src/renderer/src/components/TerminalPane.tsx</div>
+      <h3>Kitty keyboard protocol</h3>
+      <p>
+        Ghostty supports the <strong>Kitty keyboard protocol</strong>, which allows applications
+        like Neovim and Helix to receive key events with full modifier information that traditional
+        VT100 sequences can't express (e.g., <kbd>Ctrl+Shift+Enter</kbd>, <kbd>Ctrl+i</kbd> vs
+        <kbd>Tab</kbd>). This is a significant quality-of-life feature for power users of modern
+        terminal editors.
+      </p>
+      <p style="margin-top:8px">
+        xterm.js 5.x has a <code>customKeyEventHandler</code> API. A Kitty protocol addon is
+        also in active development in the xterm.js community. We should track and integrate
+        the first stable implementation.
+      </p>
+      <div class="impact-bar">
+        <span class="impact-label">Impact</span>
+        <div class="bar-track"><div class="bar-fill med"></div></div>
+        <span class="impact-label">Medium (critical for Neovim/Helix users)</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num blue">8</div>
+    <div class="step-body">
+      <div class="file-pill">src/renderer/src/components/TerminalPane.tsx</div>
+      <h3>True color (24-bit) + undercurl support</h3>
+      <p>
+        We already set <code>COLORTERM=truecolor</code> in the PTY environment, which is correct.
+        But we should audit the xterm.js theme configuration to ensure we're not accidentally
+        clamping to 256 colors anywhere. We should also enable <strong>undercurl</strong> styling
+        (wavy underlines used by Neovim diagnostics) — xterm.js 5.x supports it via
+        <code>allowProposedApi: true</code> + CSS <code>text-decoration-style: wavy</code>.
+      </p>
+      <div class="impact-bar">
+        <span class="impact-label">Impact</span>
+        <div class="bar-track"><div class="bar-fill low"></div></div>
+        <span class="impact-label">Low-Medium (polish)</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── PHASE 3 ── -->
+  <div class="phase-header">
+    <div class="phase-label p3">Phase 3</div>
+    <div class="phase-title">Native Performance Layer</div>
+    <div class="phase-effort">High effort · Closes the IPC and throughput gaps</div>
+  </div>
+
+  <div class="step">
+    <div class="step-num orange">9</div>
+    <div class="step-body">
+      <div class="file-pill">src/main/ · native addon (new)</div>
+      <h3>SharedArrayBuffer PTY bridge — eliminate IPC serialization</h3>
+      <p>
+        The biggest remaining bottleneck in the Electron model is the IPC bridge between the main
+        process (where PTY lives) and the renderer (where xterm.js lives). Every byte of terminal
+        output crosses this bridge as a serialized string IPC message. Electron supports
+        <strong>SharedArrayBuffer</strong> (SAB), which lets the main process write PTY bytes
+        directly into memory the renderer can read without serialization.
+      </p>
+      <table>
+        <thead><tr><th>Approach</th><th>Mechanism</th><th>Latency reduction</th></tr></thead>
+        <tbody>
+          <tr><td>Current</td><td><code>ipcMain.emit</code> → structured clone → <code>ipcRenderer.on</code></td><td>baseline</td></tr>
+          <tr><td>Phase 1 batch</td><td>Same, but coalesced over 4ms</td><td>~50% on throughput tasks</td></tr>
+          <tr><td>SAB ring buffer</td><td>Main writes to SAB ring; renderer polls via <code>Atomics.waitAsync</code></td><td>~70–80% on latency</td></tr>
+        </tbody>
+      </table>
+      <p style="margin-top:8px">
+        Implementation requires enabling <code>crossOriginIsolation</code> in the Electron
+        BrowserWindow (sets <code>COOP</code>/<code>COEP</code> headers). This is a breaking
+        change to the renderer's security context but is well-supported in modern Electron.
+      </p>
+      <div class="impact-bar">
+        <span class="impact-label">Impact</span>
+        <div class="bar-track"><div class="bar-fill high"></div></div>
+        <span class="impact-label">High (biggest latency win in Electron model)</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num orange">10</div>
+    <div class="step-body">
+      <div class="file-pill">native addon (new)</div>
+      <h3>Native Node.js addon for VT state — embed libghostty-vt</h3>
+      <p>
+        Ghostty has released <strong>libghostty-vt</strong> as a standalone C/Zig library for
+        VT sequence parsing and terminal state management. It's available for macOS, Linux, Windows,
+        and WebAssembly. We can use it as a Node.js native addon (N-API) to replace xterm.js's
+        JavaScript VT parser for the hot path.
+      </p>
+      <p style="margin-top:8px">
+        The architecture would be:
+      </p>
+      <table>
+        <thead><tr><th>Layer</th><th>Current</th><th>After</th></tr></thead>
+        <tbody>
+          <tr><td>VT parsing</td><td>xterm.js JS parser</td><td>libghostty-vt native addon (N-API)</td></tr>
+          <tr><td>State management</td><td>xterm.js terminal state</td><td>libghostty-vt C structs</td></tr>
+          <tr><td>Rendering data</td><td>xterm.js cell grid</td><td>Shared memory grid from native addon</td></tr>
+          <tr><td>Rendering</td><td>xterm.js WebGL addon</td><td>xterm.js WebGL (initially); custom Metal later</td></tr>
+        </tbody>
+      </table>
+      <p style="margin-top:8px">
+        This is the highest-leverage single change we can make — the VT parser and state machine
+        are the bottleneck for high-throughput output (e.g., <code>find /</code> or large log files).
+      </p>
+      <div class="impact-bar">
+        <span class="impact-label">Impact</span>
+        <div class="bar-track"><div class="bar-fill full"></div></div>
+        <span class="impact-label">Highest (native parsing = Ghostty-class throughput)</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── PHASE 4 ── -->
+  <div class="phase-header">
+    <div class="phase-label p4">Phase 4</div>
+    <div class="phase-title">Native Swift + libghostty-vt Rebuild</div>
+    <div class="phase-effort">~10–14 weeks · True infrastructure parity with Ghostty</div>
+  </div>
+
+  <div class="callout warn">
+    <strong>This is not optional if infrastructure parity is the actual goal.</strong>
+    Phases 1–3 are genuine improvements and worth shipping now. But they are incremental gains
+    within a fundamentally limited architecture. Phase 4 is where emu becomes a peer to Ghostty,
+    not just a well-tuned Electron app.
+  </div>
+
+  <div class="card" style="border-color: #cba6f740;">
+    <div class="card-title" style="color:#cba6f7;">The Native Path: Swift + libghostty-vt + Metal</div>
+    <p>
+      Rebuild emu as a native macOS app using <strong>SwiftUI</strong> for the shell,
+      <strong>libghostty-vt</strong> (Ghostty's open-source C/Zig library) for VT parsing,
+      and a custom <strong>Metal</strong> renderer with <strong>CoreText</strong> for fonts.
+      This is exactly how Ghostty is built — and since libghostty-vt is open source,
+      we inherit Ghostty's SIMD-accelerated parser without writing any Zig ourselves.
+    </p>
+    <p style="margin-top:8px">
+      All of emu's AI features (prompt optimizer, agent detection, command history) port
+      cleanly to Swift. <code>URLSession</code> replaces <code>fetch</code>. State machines
+      translate directly. The terminal domain knowledge we've built up stays intact.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Intermediate option: Tauri (Rust + system WebView)</div>
+    <p>
+      Tauri replaces Electron's Chromium with WKWebView (macOS system WebView), cutting memory
+      by ~70% and removing Chromium overhead. The React + xterm.js renderer stays intact.
+      This is a 2–4 week migration and gets us partway there — better memory and startup,
+      but still no Metal renderer or CoreText. A useful stepping stone if the full native
+      rebuild feels too large to commit to right now.
+    </p>
+  </div>
+
+  <!-- ── PRIORITY TABLE ── -->
+  <h2>Prioritized Action Table</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Action</th>
+        <th>Effort</th>
+        <th>Impact</th>
+        <th>Phase</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>WebGL context-loss recovery (lock WebGL renderer)</td>
+        <td><span class="badge badge-green">Hours</span></td>
+        <td><span class="badge badge-green">High</span></td>
+        <td><span class="badge badge-green">1</span></td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>Batch PTY output over 4ms window</td>
+        <td><span class="badge badge-green">1 day</span></td>
+        <td><span class="badge badge-green">High</span></td>
+        <td><span class="badge badge-green">1</span></td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>OSC 133 shell integration (replace ZDOTDIR)</td>
+        <td><span class="badge badge-yellow">3–5 days</span></td>
+        <td><span class="badge badge-green">High</span></td>
+        <td><span class="badge badge-blue">2</span></td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>Enable Electron sandbox</td>
+        <td><span class="badge badge-yellow">1–2 days</span></td>
+        <td><span class="badge badge-blue">Security</span></td>
+        <td><span class="badge badge-green">1</span></td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td>xterm.js performance option tuning</td>
+        <td><span class="badge badge-green">Hours</span></td>
+        <td><span class="badge badge-yellow">Medium</span></td>
+        <td><span class="badge badge-green">1</span></td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td>Synchronized rendering (DEC 2026)</td>
+        <td><span class="badge badge-green">Hours</span></td>
+        <td><span class="badge badge-yellow">Medium</span></td>
+        <td><span class="badge badge-blue">2</span></td>
+      </tr>
+      <tr>
+        <td>7</td>
+        <td>Kitty keyboard protocol</td>
+        <td><span class="badge badge-yellow">1 week</span></td>
+        <td><span class="badge badge-yellow">Medium</span></td>
+        <td><span class="badge badge-blue">2</span></td>
+      </tr>
+      <tr>
+        <td>8</td>
+        <td>SharedArrayBuffer PTY bridge</td>
+        <td><span class="badge badge-orange">2 weeks</span></td>
+        <td><span class="badge badge-green">High</span></td>
+        <td><span class="badge badge-orange">3</span></td>
+      </tr>
+      <tr>
+        <td>9</td>
+        <td>libghostty-vt native addon (N-API)</td>
+        <td><span class="badge badge-red">4–8 weeks</span></td>
+        <td><span class="badge badge-purple">Highest</span></td>
+        <td><span class="badge badge-orange">3</span></td>
+      </tr>
+      <tr>
+        <td>10</td>
+        <td>Tauri migration (if needed after Phase 3)</td>
+        <td><span class="badge badge-red">2–4 weeks</span></td>
+        <td><span class="badge badge-purple">Native perf</span></td>
+        <td><span class="badge badge-purple">4</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ── WHERE EMU WINS ── -->
+  <h2>Where Emu Already Wins vs Ghostty</h2>
+  <div class="card" style="border-color: #a6e3a140;">
+    <div class="card-title" style="color:#a6e3a1;">These are our moats — protect and extend them</div>
+    <p style="margin-top:8px">
+      <strong>AI Prompt Optimizer</strong> — No other terminal emulator has this. Ghostty has
+      explicitly stated they have no AI features. This is a differentiated product advantage.
+    </p>
+    <p style="margin-top:8px">
+      <strong>Agent Status Detection</strong> — Knowing when Claude Code is running/idle/stale,
+      and surfacing that in the sidebar, is unique to Emu. Ghostty just shows processes.
+    </p>
+    <p style="margin-top:8px">
+      <strong>Command History with Smart Output Capture</strong> — Ghostty has no equivalent.
+      Emu's ability to browse past commands with searchable output previews is a genuine
+      productivity feature that power users notice immediately.
+    </p>
+    <p style="margin-top:8px">
+      <strong>UI Polish and Themes</strong> — Emu's design aesthetic (Catppuccin-first, dark and
+      beautiful) is subjectively better than Ghostty's more utilitarian look. Continue investing here.
+    </p>
+  </div>
+
+  <!-- ── RECOMMENDATION ── -->
+  <h2>Recommendation</h2>
+
+  <div class="callout">
+    <strong>The two-track strategy:</strong> ship Phase 1–2 improvements now (days of effort,
+    immediate user-visible gains), while planning the native rebuild in parallel. Don't wait for
+    Phase 3 — the SharedArrayBuffer work and libghostty-vt native addon are valuable engineering
+    experience that directly informs the native rebuild, but they aren't prerequisites for it.
+  </div>
+
+  <div class="card" style="border-color: #a6e3a140;">
+    <div class="card-title" style="color:#a6e3a1;">Now: Phase 1 quick wins — ~3 days</div>
+    <p>
+      WebGL lock, PTY batching, xterm.js tuning, and enabling the Electron sandbox.
+      Zero architectural risk. Ship as a "performance &amp; reliability" release.
+      These buy goodwill with users while the native rebuild is planned.
+    </p>
+  </div>
+  <div class="card" style="border-color: #a6e3a140;">
+    <div class="card-title" style="color:#a6e3a1;">Next: Phase 2 protocol parity — ~1 week</div>
+    <p>
+      OSC 133 shell integration (removes the zsh-only ZDOTDIR hack) and synchronized rendering.
+      These are the most user-visible gaps vs Ghostty and close real complaints from power users
+      who use bash, fish, or neovim.
+    </p>
+  </div>
+  <div class="card" style="border-color: #cba6f740;">
+    <div class="card-title" style="color:#cba6f7;">Strategic: Begin native Swift rebuild planning — 10–14 weeks to v1</div>
+    <p>
+      This is the real answer to "parity with Ghostty." Start with a Swift prototype: PTY
+      management + libghostty-vt bindings + a minimal Metal renderer. Once text renders correctly
+      in a native window, the rest (SwiftUI shell, AI features, themes, settings) follows
+      quickly. The Electron app stays live during the rebuild — users see no disruption.
+    </p>
+    <p style="margin-top:8px">
+      Ghostty's macOS app source code is open. We can study exactly how they structure their
+      SwiftUI app, their Metal renderer, and their libghostty-vt integration. We're not starting
+      from zero — we're starting from a proven blueprint.
+    </p>
+  </div>
+  <div class="card" style="border-color: #313244;">
+    <div class="card-title">Skip if not ready: Tauri as an intermediate step</div>
+    <p>
+      If committing to the full native rebuild feels too large right now, Tauri is a valid
+      2–4 week intermediate step that cuts memory and removes Chromium. It doesn't achieve
+      infrastructure parity, but it buys time and reduces Electron-specific complaints while
+      the native app is built in parallel.
+    </p>
+  </div>
+
+  <hr />
+  <p style="font-size:0.78rem; color:#45475a; text-align:center">emu · ghostty-infrastructure-parity · May 2026</p>
+
+</div>
+</body>
+</html>
