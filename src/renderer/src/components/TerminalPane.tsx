@@ -152,7 +152,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
-  const fitAndResizeRef = useRef<(() => void) | null>(null)
+  const fitAndResizeRef = useRef<((forcePtyResize?: boolean) => void) | null>(null)
   const isVisibleRef = useRef(isVisible)
   const isActiveRef = useRef(isActive)
   const onSessionTouchedRef = useRef(onSessionTouched)
@@ -387,14 +387,14 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
 
-    const fitAndResizeTerminal = () => {
+    const fitAndResizeTerminal = (forcePtyResize = false) => {
       const previousCols = terminal.cols
       const previousRows = terminal.rows
 
       fitAddon.fit()
 
       const resized = terminal.cols !== previousCols || terminal.rows !== previousRows
-      if (resized) {
+      if (resized || forcePtyResize) {
         window.api.ptyResize(session.id, terminal.cols, terminal.rows)
       }
 
@@ -860,26 +860,47 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       window.setTimeout(updatePromptSelection, 0)
     })
 
+    let zoomFitFrame: number | null = null
+    let zoomFitTimer: ReturnType<typeof setTimeout> | null = null
+
+    const scheduleZoomFit = () => {
+      fitAndResizeTerminal(true)
+
+      if (zoomFitFrame !== null) cancelAnimationFrame(zoomFitFrame)
+      zoomFitFrame = requestAnimationFrame(() => {
+        zoomFitFrame = null
+        fitAndResizeTerminal(true)
+      })
+
+      if (zoomFitTimer) clearTimeout(zoomFitTimer)
+      zoomFitTimer = setTimeout(() => {
+        zoomFitTimer = null
+        fitAndResizeTerminal(true)
+      }, 80)
+    }
+
+    const applyFontZoom = (delta: number) => {
+      terminal.options.fontSize = delta === 0
+        ? DEFAULT_FONT_SIZE
+        : Math.min(Math.max((terminal.options.fontSize ?? DEFAULT_FONT_SIZE) + delta, 8), 32)
+      scheduleZoomFit()
+    }
+
     terminal.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
       if (ev.type !== 'keydown') return true
       if (ev.key === 'Escape') clearPromptSelection()
 
       // Font zoom: Cmd+= / Cmd+- / Cmd+0
       if (ev.metaKey) {
-        const zoom = (delta: number) => {
-          terminal.options.fontSize = Math.min(Math.max((terminal.options.fontSize ?? DEFAULT_FONT_SIZE) + delta, 8), 32)
-          fitAndResizeTerminal()
-        }
         if (ev.key === '=' || ev.key === '+' || ev.code === 'Equal') {
-          ev.preventDefault(); zoom(+1); return false
+          ev.preventDefault(); applyFontZoom(+1); return false
         }
         if (ev.key === '-' || ev.code === 'Minus') {
-          ev.preventDefault(); zoom(-1); return false
+          ev.preventDefault(); applyFontZoom(-1); return false
         }
         if (ev.key === '0' || ev.code === 'Digit0') {
           ev.preventDefault()
-          terminal.options.fontSize = DEFAULT_FONT_SIZE
-          fitAndResizeTerminal()
+          applyFontZoom(0)
           return false
         }
 
@@ -1065,6 +1086,8 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       if (outputFlushTimerRef.current) clearTimeout(outputFlushTimerRef.current)
       if (resizeDebounce) clearTimeout(resizeDebounce)
       if (resizeFrame !== null) cancelAnimationFrame(resizeFrame)
+      if (zoomFitFrame !== null) cancelAnimationFrame(zoomFitFrame)
+      if (zoomFitTimer) clearTimeout(zoomFitTimer)
       fitAndResizeRef.current = null
       selectionChangeDisposable.dispose()
       viewportEl?.removeEventListener('scroll', updateScrollState)
@@ -1085,15 +1108,17 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     }
   }, [])
 
-  // Handle Cmd+- forwarded from main process (macOS menu accelerator swallows it otherwise)
+  // Handle font zoom forwarded from the main process before Electron can apply page zoom.
   useEffect(() => {
     const remove = window.api.onFontZoom((delta) => {
-      if (!terminalRef.current || !fitAddonRef.current) return
-      terminalRef.current.options.fontSize = Math.min(
-        Math.max((terminalRef.current.options.fontSize ?? DEFAULT_FONT_SIZE) + delta, 8),
-        32
-      )
-      fitAndResizeRef.current?.()
+      const terminal = terminalRef.current
+      if (!terminal || !fitAddonRef.current) return
+      terminal.options.fontSize = delta === 0
+        ? DEFAULT_FONT_SIZE
+        : Math.min(Math.max((terminal.options.fontSize ?? DEFAULT_FONT_SIZE) + delta, 8), 32)
+      fitAndResizeRef.current?.(true)
+      requestAnimationFrame(() => fitAndResizeRef.current?.(true))
+      setTimeout(() => fitAndResizeRef.current?.(true), 80)
     })
     return remove
   }, [])

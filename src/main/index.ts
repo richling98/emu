@@ -553,16 +553,26 @@ function createWindow(): void {
     mainWindow.show()
   })
 
-  // Intercept Cmd+- at the main process level — macOS menu accelerator swallows it
-  // before the renderer sees it, so we must catch it here and forward via IPC.
+  // Intercept font zoom at the main process level so Electron's page zoom and
+  // menu accelerators never steal these keys from the terminal.
   mainWindow.webContents.on('before-input-event', (event, input) => {
-    if (input.meta && input.type === 'keyDown' && input.key === '-') {
+    if (!input.meta || input.type !== 'keyDown') return
+
+    const key = input.key
+    const code = input.code
+    const zoomDelta =
+      key === '=' || key === '+' || code === 'Equal' ? 1 :
+      key === '-' || code === 'Minus' ? -1 :
+      key === '0' || code === 'Digit0' ? 0 :
+      null
+
+    if (zoomDelta !== null) {
       event.preventDefault()
-      mainWindow.webContents.send('font:zoom', -1)
+      mainWindow.webContents.send('font:zoom', zoomDelta)
     }
   })
 
-mainWindow.webContents.setWindowOpenHandler((details) => {
+  mainWindow.webContents.setWindowOpenHandler((details) => {
     if (isSafeExternalUrl(details.url)) shell.openExternal(details.url)
     return { action: 'deny' }
   })
