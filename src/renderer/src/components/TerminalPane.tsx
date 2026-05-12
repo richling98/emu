@@ -9,7 +9,7 @@ import '@xterm/xterm/css/xterm.css'
 import './TerminalPane.css'
 
 const DEFAULT_FONT_SIZE = 13
-const AGENT_IDLE_DELAY_MS = 6_000
+const AGENT_IDLE_DELAY_MS = 8_000
 const AGENT_PROCESS_POLL_MS = 4_000
 
 function isAgentProcessName(processName: string | null): boolean {
@@ -160,7 +160,6 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   const agentStateRef = useRef<AgentState>('none')
   const agentProcessRef = useRef<string | null>(null)
   const agentSessionRef = useRef(false)
-  const agentTaskInFlightRef = useRef(false)
   const agentIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const agentProcessPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -427,14 +426,12 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
     const markAgentIdle = (foregroundProcess: string | null = agentProcessRef.current) => {
       clearAgentIdleTimer()
-      agentTaskInFlightRef.current = false
       if (!agentSessionRef.current && !isAgentProcessName(foregroundProcess)) return
       setAgentState('idle', foregroundProcess)
     }
 
     const markAgentRunning = (foregroundProcess: string | null = agentProcessRef.current) => {
       agentSessionRef.current = true
-      agentTaskInFlightRef.current = true
       setAgentState('running', foregroundProcess)
       clearAgentIdleTimer()
       agentIdleTimerRef.current = setTimeout(() => markAgentIdle(foregroundProcess), AGENT_IDLE_DELAY_MS)
@@ -443,7 +440,6 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     const clearAgentSession = (foregroundProcess: string | null = agentProcessRef.current) => {
       clearAgentIdleTimer()
       agentSessionRef.current = false
-      agentTaskInFlightRef.current = false
       setAgentState('none', foregroundProcess)
     }
 
@@ -819,7 +815,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
     const removeDataListener = window.api.onPtyData(session.id, (data) => {
       touchSessionActivity()
-      if (agentTaskInFlightRef.current) {
+      if (agentSessionRef.current) {
         markAgentRunning(agentProcessRef.current)
       }
 
