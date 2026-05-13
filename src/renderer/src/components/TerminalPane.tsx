@@ -9,7 +9,7 @@ import '@xterm/xterm/css/xterm.css'
 import './TerminalPane.css'
 
 const DEFAULT_FONT_SIZE = 13
-const AGENT_IDLE_DELAY_MS = 8_000
+const AGENT_IDLE_CHECK_DELAY_MS = 900
 const AGENT_PROCESS_POLL_MS = 4_000
 
 function isAgentProcessName(processName: string | null): boolean {
@@ -21,14 +21,71 @@ function isAgentProcessName(processName: string | null): boolean {
 function isAgentLaunchCommand(command: string): boolean {
   const normalized = command.trim().toLowerCase()
   if (!normalized) return false
-  return /(^|[\s;&|])(claude|codex)([\s;&|]|$)/.test(normalized) ||
-    /(^|[\s;&|])(npx|npm exec|bunx|pnpm dlx|yarn dlx)\s+([@\w./-]*claude[-\w./]*|[@\w./-]*codex[-\w./]*)/.test(normalized)
+  return /(^|[;&|]\s*)(claude|codex)([\s;&|]|$)/.test(normalized) ||
+    /(^|[;&|]\s*)(npx|npm exec|bunx|pnpm dlx|yarn dlx)\s+([@\w./-]*claude[-\w./]*|[@\w./-]*codex[-\w./]*)/.test(normalized)
 }
 
 function isShellProcessName(processName: string | null): boolean {
   if (!processName) return false
   const normalized = processName.toLowerCase().replace(/\\/g, '/').split('/').pop() ?? ''
   return ['zsh', 'bash', 'fish', 'sh', 'dash', 'ksh', 'tcsh', '-zsh', '-bash', '-fish', '-sh'].includes(normalized)
+}
+
+function getTerminalTailText(terminal: Terminal, maxLines = 14): string {
+  const buffer = terminal.buffer.active
+  const endLine = buffer.baseY + buffer.cursorY
+  const startLine = Math.max(0, endLine - maxLines + 1)
+  const lines: string[] = []
+
+  for (let line = startLine; line <= endLine; line++) {
+    const bufferLine = buffer.getLine(line)
+    if (bufferLine) lines.push(bufferLine.translateToString(true).trimEnd())
+  }
+
+  return lines.join('\n')
+}
+
+function looksLikeAgentIdlePrompt(text: string): boolean {
+  const lines = text
+    .split('\n')
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+  const tailLines = lines.slice(-8).map((line) => line.toLowerCase())
+  if (tailLines.length === 0) return false
+
+  const activeMarkers = [
+    /\besc(?:ape)? to interrupt\b/,
+    /\bctrl-c to interrupt\b/,
+    /\bthinking\b/,
+    /\bworking\b/,
+    /\brunning\b/,
+    /\bexecuting\b/,
+    /\bcalling\b/,
+    /\bsearching\b/,
+    /\btool\b.*\b(use|call|running|executing)\b/
+  ]
+
+  const idleMarkers = [
+    /^[│┃]\s*[>›](?:\s|$).*$/,
+    /^[>›](?:\s|$).*$/,
+    /\bmessage (codex|claude)\b/,
+    /\bask (codex|claude)\b/,
+    /\btype .*message\b/,
+    /\benter\b.*\bsend\b/,
+    /\? for shortcuts\b/
+  ]
+
+  let lastIdleLine = -1
+  for (let i = tailLines.length - 1; i >= 0; i--) {
+    if (idleMarkers.some((pattern) => pattern.test(tailLines[i]))) {
+      lastIdleLine = i
+      break
+    }
+  }
+  if (lastIdleLine === -1) return false
+
+  const afterIdlePrompt = tailLines.slice(lastIdleLine).join('\n')
+  return !activeMarkers.some((pattern) => pattern.test(afterIdlePrompt))
 }
 
 // Strip ANSI escape sequences — used only for the one-line outputPreview capture.
@@ -160,6 +217,8 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   const agentStateRef = useRef<AgentState>('none')
   const agentProcessRef = useRef<string | null>(null)
   const agentSessionRef = useRef(false)
+  const agentTaskInFlightRef = useRef(false)
+  const agentTaskStartedAtRef = useRef(0)
   const agentIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const agentProcessPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -426,21 +485,38 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
     const markAgentIdle = (foregroundProcess: string | null = agentProcessRef.current) => {
       clearAgentIdleTimer()
+      agentTaskInFlightRef.current = false
+      agentTaskStartedAtRef.current = 0
       if (!agentSessionRef.current && !isAgentProcessName(foregroundProcess)) return
       setAgentState('idle', foregroundProcess)
     }
 
     const markAgentRunning = (foregroundProcess: string | null = agentProcessRef.current) => {
       agentSessionRef.current = true
+      agentTaskInFlightRef.current = true
+      agentTaskStartedAtRef.current = Date.now()
       setAgentState('running', foregroundProcess)
       clearAgentIdleTimer()
-      agentIdleTimerRef.current = setTimeout(() => markAgentIdle(foregroundProcess), AGENT_IDLE_DELAY_MS)
     }
 
     const clearAgentSession = (foregroundProcess: string | null = agentProcessRef.current) => {
       clearAgentIdleTimer()
       agentSessionRef.current = false
+      agentTaskInFlightRef.current = false
+      agentTaskStartedAtRef.current = 0
       setAgentState('none', foregroundProcess)
+    }
+
+    const scheduleAgentIdleCheck = () => {
+      if (!agentTaskInFlightRef.current) return
+      clearAgentIdleTimer()
+      agentIdleTimerRef.current = setTimeout(() => {
+        agentIdleTimerRef.current = null
+        if (!agentTaskInFlightRef.current) return
+        if (looksLikeAgentIdlePrompt(getTerminalTailText(terminal))) {
+          markAgentIdle(agentProcessRef.current)
+        }
+      }, AGENT_IDLE_CHECK_DELAY_MS)
     }
 
     const refreshAgentProcess = async () => {
@@ -458,7 +534,11 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         } else if (previousProcess !== proc) {
           setAgentState(agentStateRef.current, proc)
         }
-      } else if (isShellProcessName(proc) && agentStateRef.current !== 'running') {
+      } else if (isShellProcessName(proc) && (
+        agentStateRef.current !== 'running' ||
+        isAgentProcessName(previousProcess) ||
+        Date.now() - agentTaskStartedAtRef.current > AGENT_PROCESS_POLL_MS
+      )) {
         clearAgentSession(proc)
       } else if (!agentSessionRef.current && agentStateRef.current !== 'none') {
         clearAgentSession(proc)
@@ -815,11 +895,8 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
     const removeDataListener = window.api.onPtyData(session.id, (data) => {
       touchSessionActivity()
-      if (agentSessionRef.current) {
-        markAgentRunning(agentProcessRef.current)
-      }
-
       terminal.write(data)
+      scheduleAgentIdleCheck()
 
       // Capture first line of output as a quick preview for the Command Log entry
       if (waitingForPreviewRef.current) {
