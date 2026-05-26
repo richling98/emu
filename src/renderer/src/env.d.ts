@@ -43,6 +43,7 @@ interface Window {
     openExternal: (url: string) => Promise<void>
     openPath: (path: string) => Promise<string>
     ptyGetProcess: (sessionId: string) => Promise<string | null>
+    imageSaveTemp: (dataUrl: string, suggestedName?: string) => Promise<string>
     optimizerGetSettings: () => Promise<PublicOptimizerSettings>
     optimizerSaveSettings: (input: OptimizerSettingsInput) => Promise<PublicOptimizerSettings>
     optimizerClearSettings: () => Promise<PublicOptimizerSettings>

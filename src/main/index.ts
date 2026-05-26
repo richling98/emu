@@ -202,6 +202,23 @@ function clearOptimizerSettings(): void {
   }
 }
 
+function saveTempImage(dataUrl: string, suggestedName?: string): string {
+  const match = /^data:image\/(png|jpeg|jpg|gif|webp);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl)
+  if (!match) throw new Error('Unsupported image data.')
+
+  const ext = match[1] === 'jpeg' ? 'jpg' : match[1]
+  const safeStem = String(suggestedName ?? 'image')
+    .replace(/\.[^.]+$/, '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48) || 'image'
+  const dir = join(app.getPath('temp'), 'emu-rich-input-images')
+  fs.mkdirSync(dir, { recursive: true })
+  const filePath = join(dir, `${safeStem}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`)
+  fs.writeFileSync(filePath, Buffer.from(match[2], 'base64'))
+  return filePath
+}
+
 function validateOptimizerSettingsForUse(input?: Partial<OptimizerSettingsInput>): { ok: true } | { ok: false; error: string } {
   try {
     resolveOptimizerConfig(input)
@@ -647,6 +664,10 @@ app.whenReady().then(() => {
   // Open file paths in Finder / default app — must be a real absolute path
   ipcMain.handle('shell:openPath', (_, path: string) => {
     if (isSafeOpenPath(path)) return shell.openPath(path)
+  })
+
+  ipcMain.handle('image:saveTemp', (_, dataUrl: string, suggestedName?: string) => {
+    return saveTempImage(dataUrl, suggestedName)
   })
 
   ipcMain.handle('optimizer:getSettings', () => {

@@ -38,6 +38,8 @@ contextBridge.exposeInMainWorld('api', {
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   // Open a file path in Finder / default app
   openPath: (path: string) => ipcRenderer.invoke('shell:openPath', path),
+  // Save pasted clipboard image data to a temporary file and return its path
+  imageSaveTemp: (dataUrl: string, suggestedName?: string) => ipcRenderer.invoke('image:saveTemp', dataUrl, suggestedName),
   // Prompt Optimizer settings and calls
   optimizerGetSettings: () => ipcRenderer.invoke('optimizer:getSettings'),
   optimizerSaveSettings: (input: unknown) => ipcRenderer.invoke('optimizer:saveSettings', input),
