@@ -1,6 +1,6 @@
 {
   "name": "emu",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "The world's best terminal emulator",
   "main": "./out/main/index.js",
   "scripts": {
