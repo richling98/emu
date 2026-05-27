@@ -566,7 +566,17 @@ function createWindow(): void {
     }
   })
 
+  const resetPageZoom = () => {
+    // Electron/Chromium can persist page zoom per origin across app launches.
+    // Keep global page zoom pinned at 100% so Cmd+/Cmd- only changes xterm's
+    // font size in the terminal area and never scales the sidebar/layout chrome.
+    mainWindow.webContents.setZoomLevel(0)
+    mainWindow.webContents.setZoomFactor(1)
+    mainWindow.webContents.setVisualZoomLevelLimits(1, 1)
+  }
+
   mainWindow.on('ready-to-show', () => {
+    resetPageZoom()
     mainWindow.show()
   })
 
@@ -585,8 +595,15 @@ function createWindow(): void {
 
     if (zoomDelta !== null) {
       event.preventDefault()
+      resetPageZoom()
       mainWindow.webContents.send('font:zoom', zoomDelta)
     }
+  })
+
+  mainWindow.webContents.on('dom-ready', resetPageZoom)
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    resetPageZoom()
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
