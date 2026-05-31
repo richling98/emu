@@ -233,12 +233,26 @@ function normalizedSelectionText(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
 }
 
-function buildComposerCommitBody(text: string): string {
-  const normalized = text.replace(/\r\n?/g, '\n')
+function normalizeComposerCommitText(text: string): string {
+  const lines = text
+    .replace(/\r\n?/g, '\n')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[\u200b-\u200d\ufeff]/g, '')
+    .split('\n')
+
+  while (lines.length > 0 && lines[0].trim() === '') lines.shift()
+  while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop()
+
+  return lines.join('\n').trim()
+}
+
+function buildComposerCommitWrites(text: string): string[] {
+  const normalized = normalizeComposerCommitText(text)
+  if (!normalized) return []
   if (normalized.includes('\n')) {
-    return `\x1b[200~${normalized.replace(/\n/g, '\r')}\x1b[201~`
+    return [`\x1b[200~${normalized.replace(/\n/g, '\r')}\x1b[201~`, '\r']
   }
-  return normalized
+  return [normalized, '\r']
 }
 
 function shellEscape(path: string): string {
@@ -358,6 +372,8 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   const rawTuiExitingUntilRef = useRef(0)
   const rawTuiShellPollCountRef = useRef(0)
   const commitComposerRef = useRef<(text: string) => void>(() => {})
+  const pendingComposerSubmitRef = useRef(false)
+  const pendingComposerSubmitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Keep isVisibleRef in sync so the key handler can check it
   useEffect(() => { isVisibleRef.current = isVisible }, [isVisible])
@@ -634,6 +650,16 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       }
     }
 
+    const submitPendingComposerInput = () => {
+      if (!pendingComposerSubmitRef.current) return
+      pendingComposerSubmitRef.current = false
+      if (pendingComposerSubmitTimerRef.current) {
+        clearTimeout(pendingComposerSubmitTimerRef.current)
+        pendingComposerSubmitTimerRef.current = null
+      }
+      window.api.ptyWrite(session.id, '\r')
+    }
+
     const setAgentState = (state: AgentState, foregroundProcess: string | null = agentProcessRef.current) => {
       agentStateRef.current = state
       agentProcessRef.current = foregroundProcess
@@ -757,9 +783,11 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
     commitComposerRef.current = (text: string) => {
       const imagePaths = composerImagesRef.current.map((image) => shellEscape(image.path)).join(' ')
-      const commandText = [text.trim(), imagePaths].filter(Boolean).join(' ')
+      const commandText = [normalizeComposerCommitText(text), imagePaths].filter(Boolean).join(' ')
       const command = commandText.trim()
       if (!command) return
+      const commitWrites = buildComposerCommitWrites(commandText)
+      if (commitWrites.length === 0) return
       touchSessionActivity()
       recordCommittedCommand(commandText)
       currentInputRef.current = ''
@@ -768,13 +796,15 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         current.forEach((image) => URL.revokeObjectURL(image.previewUrl))
         return []
       })
-      // Send the edited prompt and the Enter key as two distinct PTY writes.
+      // Send the edited prompt and Enter as distinct PTY writes.
       // Claude/Codex-style TUIs can treat a combined "text + CR" write as paste/input
       // without submitting; a separate CR mirrors a real keypress more reliably.
-      window.api.ptyWrite(session.id, buildComposerCommitBody(commandText))
-      window.setTimeout(() => {
-        window.api.ptyWrite(session.id, '\r')
-      }, 16)
+      pendingComposerSubmitRef.current = Boolean(commitWrites[1])
+      if (pendingComposerSubmitTimerRef.current) clearTimeout(pendingComposerSubmitTimerRef.current)
+      pendingComposerSubmitTimerRef.current = pendingComposerSubmitRef.current
+        ? setTimeout(submitPendingComposerInput, 120)
+        : null
+      window.api.ptyWrite(session.id, commitWrites[0])
     }
 
     const scheduleAgentIdleCheck = () => {
@@ -1172,6 +1202,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     const removeDataListener = window.api.onPtyData(session.id, (data) => {
       touchSessionActivity()
       terminal.write(data)
+      submitPendingComposerInput()
       scheduleAgentIdleCheck()
 
       if (rawTuiModeRef.current && !isAltScreenRef.current) {
@@ -1552,6 +1583,11 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       if (agentProcessPollRef.current) {
         clearInterval(agentProcessPollRef.current)
         agentProcessPollRef.current = null
+      }
+      pendingComposerSubmitRef.current = false
+      if (pendingComposerSubmitTimerRef.current) {
+        clearTimeout(pendingComposerSubmitTimerRef.current)
+        pendingComposerSubmitTimerRef.current = null
       }
       if (outputFlushTimerRef.current) clearTimeout(outputFlushTimerRef.current)
       if (resizeDebounce) clearTimeout(resizeDebounce)
