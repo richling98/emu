@@ -150,6 +150,15 @@ function stripAnsi(str: string): string {
     .replace(/\r/g, '')                            // bare CR
 }
 
+function extractEmuCwd(data: string): string | null {
+  let latest: string | null = null
+  const cwdPattern = /\x1b\]633;EmuCwd=([^\x07\x1b]*)(?:\x07|\x1b\\)/g
+  for (const match of data.matchAll(cwdPattern)) {
+    if (match[1]?.startsWith('/')) latest = match[1]
+  }
+  return latest
+}
+
 // Remove TUI chrome from copied output:
 //   • Trailing separator lines (lines made entirely of box-drawing chars like ────)
 //   • Leading TUI bullet indicator (⏺ ● • ◆ ❯ etc.) on the first content line
@@ -295,6 +304,9 @@ interface Props {
   onOpenSettings?: () => void
   onSessionTouched?: () => void
   onAgentStateChange?: (state: AgentState, foregroundProcess?: string | null) => void
+  onOpenMarkdown?: (result: MarkdownOpenResult) => void
+  focusSignal?: number
+  layoutSignal?: string
   xtermTheme?: ITheme
 }
 
@@ -304,7 +316,7 @@ interface PromptSelection {
   anchor: { x: number; y: number; placement: 'above' | 'below' }
 }
 
-export default function TerminalPane({ session, isVisible, slot = 'full', isActive = true, onActivate, onSessionEnd, openDrawer, onDrawerClose, onClosePane, onOpenSettings, onSessionTouched, onAgentStateChange, xtermTheme }: Props) {
+export default function TerminalPane({ session, isVisible, slot = 'full', isActive = true, onActivate, onSessionEnd, openDrawer, onDrawerClose, onClosePane, onOpenSettings, onSessionTouched, onAgentStateChange, onOpenMarkdown, focusSignal = 0, layoutSignal = '', xtermTheme }: Props) {
   const paneRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const composerDropRef = useRef<HTMLDivElement>(null)
@@ -315,6 +327,8 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   const isActiveRef = useRef(isActive)
   const onSessionTouchedRef = useRef(onSessionTouched)
   const onAgentStateChangeRef = useRef(onAgentStateChange)
+  const onOpenMarkdownRef = useRef(onOpenMarkdown)
+  const currentWorkingDirectoryRef = useRef<string | null>(null)
   const agentStateRef = useRef<AgentState>('none')
   const agentProcessRef = useRef<string | null>(null)
   const agentSessionRef = useRef(false)
@@ -380,6 +394,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   useEffect(() => { isActiveRef.current = isActive }, [isActive])
   useEffect(() => { onSessionTouchedRef.current = onSessionTouched }, [onSessionTouched])
   useEffect(() => { onAgentStateChangeRef.current = onAgentStateChange }, [onAgentStateChange])
+  useEffect(() => { onOpenMarkdownRef.current = onOpenMarkdown }, [onOpenMarkdown])
 
   useEffect(() => { promptSelectionRef.current = promptSelection }, [promptSelection])
   useEffect(() => { composerImagesRef.current = composerImages }, [composerImages])
@@ -605,7 +620,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       letterSpacing: 0,
       fontWeight: '400',
       fontWeightBold: '600',
-      cursorBlink: true,
+      cursorBlink: isVisible && isActive,
       cursorStyle: 'bar',
       scrollback: 5000
     })
@@ -1050,6 +1065,21 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     // ── End scroll wheel override ─────────────────────────────────────────────
 
     // ── Clickable links ──────────────────────────────────────────────────────
+    const openClickedFile = async (rawPath: string) => {
+      const result = await window.api.markdownOpen({
+        rawPath,
+        cwd: currentWorkingDirectoryRef.current
+      })
+      if (result.ok) {
+        onOpenMarkdownRef.current?.(result)
+        return
+      }
+      if (result.reason === 'not-markdown' && result.path) {
+        await window.api.openPath(result.path)
+        return
+      }
+      onOpenMarkdownRef.current?.(result)
+    }
 
     // 1. Clickable URLs — WebLinksAddon handles detection + edge cases
     const webLinks = new WebLinksAddon((_, url) => window.api.openExternal(url))
@@ -1096,8 +1126,8 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       }
     })
 
-    // 2b. Clickable file paths — /absolute and ./relative, stops at shell terminators
-    const FILE_PATH_RE = /(?:^|[\s"'`(])((?:\/|\.{1,2}\/)[^\s"'`)\]>]+)/g
+    // 2b. Clickable file paths — /absolute, ./relative, file://, and bare Markdown filenames
+    const FILE_PATH_RE = /(?:^|[\s"'`(])((?:file:\/\/|~\/|\/|\.{1,2}\/)[^\s"'`)\]>]+|(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.(?:md|markdown|mdown|mkd)(?::\d+(?::\d+)?)?)/gi
     terminal.registerLinkProvider({
       provideLinks(lineY, callback) {
         // lineY is 1-based per xterm.js ILinkProvider contract (see OscLinkProvider.ts)
@@ -1116,7 +1146,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
               end: { x: startX + path.length, y: lineY }
             },
             decorations: { underline: true, pointerCursor: true },
-            activate: () => window.api.openPath(path),
+            activate: () => { void openClickedFile(path) },
           })
         }
         callback(links)
@@ -1201,6 +1231,8 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
     const removeDataListener = window.api.onPtyData(session.id, (data) => {
       touchSessionActivity()
+      const cwd = extractEmuCwd(data)
+      if (cwd) currentWorkingDirectoryRef.current = cwd
       terminal.write(data)
       submitPendingComposerInput()
       scheduleAgentIdleCheck()
@@ -1632,13 +1664,28 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   }, [])
 
   useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.options.cursorBlink = isVisible && isActive
+    }
     if (isVisible && fitAddonRef.current && terminalRef.current) {
       setTimeout(() => {
         fitAndResizeRef.current?.()
-        if (!richInputActiveRef.current) terminalRef.current?.focus()
+        if (!richInputActiveRef.current && isActiveRef.current) terminalRef.current?.focus()
       }, 10)
     }
-  }, [isVisible])
+  }, [isVisible, isActive])
+
+  useEffect(() => {
+    if (isVisible && isActive && !richInputActiveRef.current) {
+      terminalRef.current?.focus()
+    }
+  }, [focusSignal, isVisible, isActive])
+
+  useEffect(() => {
+    if (!isVisible || !fitAddonRef.current || !terminalRef.current) return
+    requestAnimationFrame(() => fitAndResizeRef.current?.(true))
+    setTimeout(() => fitAndResizeRef.current?.(true), 80)
+  }, [layoutSignal, isVisible])
 
   // Apply xterm theme whenever the app theme changes
   useEffect(() => {
@@ -1677,13 +1724,6 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         onChange={setComposerText}
         onCommit={handleComposerCommit}
         onActivate={selectComposerInput}
-        onCancel={() => {
-          setComposerText('')
-          setComposerImages((current) => {
-            current.forEach((image) => URL.revokeObjectURL(image.previewUrl))
-            return []
-          })
-        }}
         onInterrupt={handleComposerInterrupt}
         onTerminalHotkey={handleComposerTerminalHotkey}
         onPasteImages={addComposerImageFiles}

@@ -30,6 +30,39 @@ interface OptimizePromptResult {
   warnings?: string[]
 }
 
+interface MarkdownOpenInput {
+  rawPath: string
+  cwd?: string | null
+}
+
+interface MarkdownDocument {
+  ok: true
+  path: string
+  name: string
+  directory: string
+  markdown: string
+  size: number
+  mtimeMs: number
+}
+
+interface MarkdownOpenFailure {
+  ok: false
+  reason: 'invalid-path' | 'not-markdown' | 'not-found' | 'not-file' | 'too-large' | 'read-error'
+  error: string
+  path?: string
+}
+
+type MarkdownOpenResult = MarkdownDocument | MarkdownOpenFailure
+
+type MarkdownImageResult = {
+  ok: true
+  dataUrl: string
+  path: string
+} | {
+  ok: false
+  error: string
+}
+
 interface Window {
   api: {
     ptyCreate: (sessionId: string) => Promise<{ pid: number }>
@@ -42,6 +75,8 @@ interface Window {
     getFilePath: (file: File) => string
     openExternal: (url: string) => Promise<void>
     openPath: (path: string) => Promise<string>
+    markdownOpen: (input: MarkdownOpenInput) => Promise<MarkdownOpenResult>
+    markdownImage: (input: MarkdownOpenInput) => Promise<MarkdownImageResult>
     ptyGetProcess: (sessionId: string) => Promise<string | null>
     imageSaveTemp: (dataUrl: string, suggestedName?: string) => Promise<string>
     optimizerGetSettings: () => Promise<PublicOptimizerSettings>

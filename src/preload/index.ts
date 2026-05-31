@@ -38,6 +38,10 @@ contextBridge.exposeInMainWorld('api', {
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   // Open a file path in Finder / default app
   openPath: (path: string) => ipcRenderer.invoke('shell:openPath', path),
+  // Read a local Markdown file through the main process
+  markdownOpen: (input: unknown) => ipcRenderer.invoke('markdown:open', input),
+  // Read a local Markdown image asset through the main process
+  markdownImage: (input: unknown) => ipcRenderer.invoke('markdown:image', input),
   // Save pasted clipboard image data to a temporary file and return its path
   imageSaveTemp: (dataUrl: string, suggestedName?: string) => ipcRenderer.invoke('image:saveTemp', dataUrl, suggestedName),
   // Prompt Optimizer settings and calls

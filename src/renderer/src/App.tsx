@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import Sidebar from './components/Sidebar'
 import TerminalPane from './components/TerminalPane'
 import SettingsModal from './components/SettingsModal'
+import MarkdownPopout from './components/MarkdownPopout'
 import { getTheme, applyTheme, DEFAULT_THEME_ID } from './themes'
 import './App.css'
 
@@ -17,6 +18,12 @@ export interface Session {
 }
 
 export type AgentState = 'none' | 'running' | 'idle'
+type MarkdownViewMode = 'preview' | 'source'
+
+const DEFAULT_MARKDOWN_WIDTH = 520
+const MIN_MARKDOWN_WIDTH = 360
+const MAX_MARKDOWN_WIDTH = 760
+const MIN_TERMINAL_WIDTH = 320
 
 function createSession(): Session {
   const now = new Date()
@@ -38,6 +45,8 @@ export default function App() {
   const [sessions, setSessions] = useState<Session[]>([initialSession])
   const sessionsRef = useRef(sessions)
   sessionsRef.current = sessions
+  const terminalAreaRef = useRef<HTMLDivElement>(null)
+  const lastTouchAtBySessionRef = useRef(new Map<string, number>())
   const [selectedId, setSelectedId] = useState<string>(initialSession.id)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [openHistoryFor, setOpenHistoryFor] = useState<string | null>(null)
@@ -46,9 +55,29 @@ export default function App() {
   const [splitRatio, setSplitRatio] = useState(0.5)
   const [themeId, setThemeId] = useState(() => localStorage.getItem('emmy-theme-id') ?? DEFAULT_THEME_ID)
   const [showSettings, setShowSettings] = useState(false)
+  const [markdownDocument, setMarkdownDocument] = useState<MarkdownOpenResult | null>(null)
+  const [markdownCollapsed, setMarkdownCollapsed] = useState(false)
+  const [markdownViewMode, setMarkdownViewMode] = useState<MarkdownViewMode>('preview')
+  const [markdownWidth, setMarkdownWidth] = useState(DEFAULT_MARKDOWN_WIDTH)
+  const [terminalFocusSignal, setTerminalFocusSignal] = useState(0)
+  const markdownLayoutMode = markdownDocument
+    ? (markdownCollapsed ? 'collapsed' : 'expanded')
+    : 'closed'
+  const terminalLayoutSignal = `${layoutMode}:${splitRatio}:${markdownLayoutMode}:${markdownWidth}`
+
+  const clampMarkdownWidth = useCallback((width: number) => {
+    const areaWidth = terminalAreaRef.current?.getBoundingClientRect().width ?? window.innerWidth
+    const maxByArea = Math.max(MIN_MARKDOWN_WIDTH, areaWidth - MIN_TERMINAL_WIDTH)
+    const maxWidth = Math.min(MAX_MARKDOWN_WIDTH, maxByArea)
+    return Math.min(Math.max(width, MIN_MARKDOWN_WIDTH), maxWidth)
+  }, [])
 
   const touchSession = useCallback((id: string) => {
-    const now = new Date()
+    const nowMs = Date.now()
+    const lastTouchAt = lastTouchAtBySessionRef.current.get(id) ?? 0
+    if (nowMs - lastTouchAt < 1_000) return
+    lastTouchAtBySessionRef.current.set(id, nowMs)
+    const now = new Date(nowMs)
     setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, lastActiveAt: now } : s)))
   }, [])
 
@@ -119,6 +148,50 @@ export default function App() {
     setSelectedId(id)
     setOpenHistoryFor(id)
   }, [touchSession])
+
+  const restoreActiveTerminalFocus = useCallback(() => {
+    setTerminalFocusSignal((value) => value + 1)
+  }, [])
+
+  const handleOpenMarkdown = useCallback((result: MarkdownOpenResult) => {
+    setMarkdownDocument((current) => {
+      if (!current || !current.ok || !result.ok || current.path !== result.path) {
+        setMarkdownViewMode('preview')
+      }
+      return result
+    })
+    setMarkdownCollapsed(false)
+  }, [])
+
+  const handleMarkdownResizeStart = useCallback((clientX: number) => {
+    const startX = clientX
+    const startWidth = markdownWidth
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+
+    const onPointerMove = (event: PointerEvent) => {
+      setMarkdownWidth(clampMarkdownWidth(startWidth + startX - event.clientX))
+    }
+
+    const onPointerUp = () => {
+      document.removeEventListener('pointermove', onPointerMove)
+      document.removeEventListener('pointerup', onPointerUp)
+      document.removeEventListener('pointercancel', onPointerUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      setMarkdownWidth((width) => clampMarkdownWidth(width))
+    }
+
+    document.addEventListener('pointermove', onPointerMove)
+    document.addEventListener('pointerup', onPointerUp)
+    document.addEventListener('pointercancel', onPointerUp)
+  }, [clampMarkdownWidth, markdownWidth])
+
+  useEffect(() => {
+    const onResize = () => setMarkdownWidth((width) => clampMarkdownWidth(width))
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [clampMarkdownWidth])
 
   const handleDeleteSession = useCallback((id: string) => {
     const current = sessionsRef.current
@@ -255,15 +328,19 @@ export default function App() {
           onOpenHistory={handleOpenHistory}
         />
         <div
-          className={`terminal-area terminal-area--${layoutMode}`}
-          style={layoutMode === 'split' ? { '--split-ratio': splitRatio } as React.CSSProperties : undefined}
+          ref={terminalAreaRef}
+          className={`terminal-area terminal-area--${layoutMode} terminal-area--markdown-${markdownLayoutMode}`}
+          style={{
+            ...(layoutMode === 'split' ? { '--split-ratio': splitRatio } : {}),
+            '--markdown-popout-width': `${markdownWidth}px`
+          } as React.CSSProperties}
         >
           {sessions.map((session) => {
             const isLeftSlot = session.id === selectedId
             const isRightSlot = layoutMode === 'split' && session.id === rightPaneSessionId
             const slot = layoutMode === 'split'
               ? (isRightSlot ? 'right' : (isLeftSlot ? 'left' : 'hidden'))
-              : 'full'
+              : (isLeftSlot ? 'full' : 'hidden')
             return (
               <TerminalPane
                 key={session.id}
@@ -282,6 +359,9 @@ export default function App() {
                 onDrawerClose={() => setOpenHistoryFor(null)}
                 onClosePane={isLeftSlot ? handleCloseLeftPane : isRightSlot ? handleCloseRightPane : undefined}
                 onOpenSettings={() => setShowSettings(true)}
+                onOpenMarkdown={handleOpenMarkdown}
+                focusSignal={terminalFocusSignal}
+                layoutSignal={terminalLayoutSignal}
                 xtermTheme={getTheme(themeId).terminal}
               />
             )
@@ -319,6 +399,20 @@ export default function App() {
             >
               Drag a tab here
             </div>
+          )}
+          {markdownDocument && (
+            <MarkdownPopout
+              document={markdownDocument}
+              collapsed={markdownCollapsed}
+              viewMode={markdownViewMode}
+              onViewModeChange={setMarkdownViewMode}
+              onCollapse={() => setMarkdownCollapsed(true)}
+              onExpand={() => setMarkdownCollapsed(false)}
+              onClose={() => setMarkdownDocument(null)}
+              onOpenResult={handleOpenMarkdown}
+              onRestoreFocus={restoreActiveTerminalFocus}
+              onResizeStart={handleMarkdownResizeStart}
+            />
           )}
         </div>
       </div>

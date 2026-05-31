@@ -1,9 +1,10 @@
 import { app, shell, BrowserWindow, ipcMain, nativeImage, safeStorage } from 'electron'
-import { join } from 'path'
+import { basename, dirname, extname, isAbsolute, join, resolve } from 'path'
 import fs from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import * as pty from 'node-pty'
 import os from 'os'
+import { fileURLToPath } from 'url'
 
 // Track active PTY processes by session ID
 const ptyProcesses = new Map<string, pty.IPty>()
@@ -42,6 +43,37 @@ interface OptimizePromptResult {
   optimizedPrompt: string
 }
 
+interface MarkdownOpenInput {
+  rawPath: string
+  cwd?: string | null
+}
+
+interface MarkdownOpenSuccess {
+  ok: true
+  path: string
+  name: string
+  directory: string
+  markdown: string
+  size: number
+  mtimeMs: number
+}
+
+interface MarkdownOpenFailure {
+  ok: false
+  reason: 'invalid-path' | 'not-markdown' | 'not-found' | 'not-file' | 'too-large' | 'read-error'
+  error: string
+  path?: string
+}
+
+type MarkdownImageResult = {
+  ok: true
+  dataUrl: string
+  path: string
+} | {
+  ok: false
+  error: string
+}
+
 interface ResolvedOptimizerConfig {
   provider: OptimizerProvider
   model: string
@@ -50,7 +82,17 @@ interface ResolvedOptimizerConfig {
 
 const DEFAULT_OPTIMIZER_MODEL = 'gpt-5-mini'
 const MAX_OPTIMIZER_SELECTION_CHARS = 20_000
+const MAX_MARKDOWN_BYTES = 5 * 1024 * 1024
+const MAX_MARKDOWN_IMAGE_BYTES = 10 * 1024 * 1024
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses'
+const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown', '.mdown', '.mkd'])
+const MARKDOWN_IMAGE_MIME_BY_EXT = new Map([
+  ['.png', 'image/png'],
+  ['.jpg', 'image/jpeg'],
+  ['.jpeg', 'image/jpeg'],
+  ['.gif', 'image/gif'],
+  ['.webp', 'image/webp']
+])
 
 const OPTIMIZER_SYSTEM_PROMPT = [
   'Role: You are an expert prompt engineer. Your goal is to take a user\'s original prompt and transform it into a high-precision, direct instruction set for an AI coding agent (you are writing the prompt for the agent, so use "you" and direct commands).',
@@ -513,6 +555,92 @@ function isSafeOpenPath(p: string): boolean {
   return typeof p === 'string' && p.startsWith('/') && !p.includes('\0')
 }
 
+function cleanUserPath(rawPath: string): string {
+  const cleaned = String(rawPath ?? '')
+    .trim()
+    .replace(/^['"`]+|['"`]+$/g, '')
+    .replace(/[),.;]+$/g, '')
+  return cleaned.replace(/(\.(?:md|markdown|mdown|mkd)):\d+(?::\d+)?$/i, '$1')
+}
+
+function resolveLocalPath(rawPath: string, cwd?: string | null): { ok: true; path: string } | { ok: false; error: string } {
+  const cleaned = cleanUserPath(rawPath)
+  if (!cleaned || cleaned.includes('\0')) return { ok: false, error: 'Invalid file path.' }
+
+  let candidate = cleaned
+  if (candidate.startsWith('file://')) {
+    try {
+      candidate = fileURLToPath(candidate)
+    } catch {
+      return { ok: false, error: 'Invalid file URL.' }
+    }
+  } else if (candidate.startsWith('~/')) {
+    candidate = join(os.homedir(), candidate.slice(2))
+  } else if (!isAbsolute(candidate)) {
+    const baseDir = cwd && isSafeOpenPath(cwd) ? cwd : os.homedir()
+    candidate = resolve(baseDir, candidate)
+  }
+
+  if (!isSafeOpenPath(candidate)) return { ok: false, error: 'Invalid file path.' }
+  return { ok: true, path: candidate }
+}
+
+function readMarkdownFile(input: MarkdownOpenInput): MarkdownOpenSuccess | MarkdownOpenFailure {
+  const resolved = resolveLocalPath(input.rawPath, input.cwd)
+  if (!resolved.ok) return { ok: false, reason: 'invalid-path', error: resolved.error }
+
+  const filePath = resolved.path
+  const extension = extname(filePath).toLowerCase()
+  if (!MARKDOWN_EXTENSIONS.has(extension)) {
+    return { ok: false, reason: 'not-markdown', error: 'This file is not Markdown.', path: filePath }
+  }
+
+  let stat: fs.Stats
+  try {
+    stat = fs.statSync(filePath)
+  } catch {
+    return { ok: false, reason: 'not-found', error: 'Markdown file was not found.', path: filePath }
+  }
+
+  if (!stat.isFile()) return { ok: false, reason: 'not-file', error: 'This path is not a file.', path: filePath }
+  if (stat.size > MAX_MARKDOWN_BYTES) {
+    return { ok: false, reason: 'too-large', error: 'Markdown file is too large to preview in Emu.', path: filePath }
+  }
+
+  try {
+    return {
+      ok: true,
+      path: filePath,
+      name: basename(filePath),
+      directory: dirname(filePath),
+      markdown: fs.readFileSync(filePath, 'utf8'),
+      size: stat.size,
+      mtimeMs: stat.mtimeMs
+    }
+  } catch {
+    return { ok: false, reason: 'read-error', error: 'Could not read Markdown file.', path: filePath }
+  }
+}
+
+function readMarkdownImage(input: MarkdownOpenInput): MarkdownImageResult {
+  const resolved = resolveLocalPath(input.rawPath, input.cwd)
+  if (!resolved.ok) return { ok: false, error: resolved.error }
+
+  const filePath = resolved.path
+  const mime = MARKDOWN_IMAGE_MIME_BY_EXT.get(extname(filePath).toLowerCase())
+  if (!mime) return { ok: false, error: 'Unsupported image type.' }
+
+  try {
+    const stat = fs.statSync(filePath)
+    if (!stat.isFile()) return { ok: false, error: 'Image path is not a file.' }
+    if (stat.size > MAX_MARKDOWN_IMAGE_BYTES) return { ok: false, error: 'Image is too large to preview in Emu.' }
+    const data = fs.readFileSync(filePath)
+    return { ok: true, path: filePath, dataUrl: `data:${mime};base64,${data.toString('base64')}` }
+  } catch {
+    return { ok: false, error: 'Could not read Markdown image.' }
+  }
+}
+
 // Write zsh wrapper startup files to Emu's app-data dir and return the path.
 // Setting ZDOTDIR to this dir makes zsh read our wrappers instead of ~/.zsh*;
 // each wrapper sources the user's real file then our .zshrc appends the
@@ -536,6 +664,11 @@ function setupShellIntegration(): string {
     '',
     '# Source the user\'s real interactive config',
     '[[ -f "$HOME/.zshrc" ]] && source "$HOME/.zshrc"',
+    '',
+    '# Tell Emu the current directory before each prompt so relative file links resolve correctly',
+    'function _emu_report_cwd() { printf "\\033]633;EmuCwd=%s\\007" "$PWD" }',
+    'autoload -Uz add-zsh-hook 2>/dev/null',
+    'add-zsh-hook precmd _emu_report_cwd 2>/dev/null || precmd_functions+=(_emu_report_cwd)',
   ].join('\n') + '\n')
 
   // .zlogin — sourced for login shells after .zshrc
@@ -676,11 +809,21 @@ app.whenReady().then(() => {
   // Open URLs in default browser — only http/https allowed
   ipcMain.handle('shell:openExternal', (_, url: string) => {
     if (isSafeExternalUrl(url)) return shell.openExternal(url)
+    return null
   })
 
   // Open file paths in Finder / default app — must be a real absolute path
   ipcMain.handle('shell:openPath', (_, path: string) => {
     if (isSafeOpenPath(path)) return shell.openPath(path)
+    return null
+  })
+
+  ipcMain.handle('markdown:open', (_, input: MarkdownOpenInput) => {
+    return readMarkdownFile(input)
+  })
+
+  ipcMain.handle('markdown:image', (_, input: MarkdownOpenInput) => {
+    return readMarkdownImage(input)
   })
 
   ipcMain.handle('image:saveTemp', (_, dataUrl: string, suggestedName?: string) => {

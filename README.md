@@ -17,7 +17,8 @@ Learn more on the website: https://richling98.github.io/emu/
 - **Scroll to Bottom** — A button appears whenever you scroll up in a busy session, letting you jump back to live output in one click.
 - **Prompt Spacing** — A blank line automatically appears between each command's output and the next prompt, making dense output easy to scan.
 - **Clickable URLs & Domains** — Every URL (`https://`) and bare domain (`nvidia.com`, `perplexity.ai`) is `Cmd+click`able and opens in your browser.
-- **Clickable File Paths** — Any `/absolute` or `./relative` path in output is `Cmd+click`able and opens in Finder.
+- **Clickable File Paths** — Any `/absolute`, `./relative`, or `file://` path in output is `Cmd+click`able. Non-Markdown files open through the system.
+- **Native Markdown Viewer** — `Cmd+click` a Markdown file to open it inside Emu in a right-side viewer. Toggle between rendered Preview and raw Markdown source, collapse the viewer to a rail, drag its left edge to resize it, and follow relative Markdown links without leaving Emu.
 - **Multi-Line Paste** — Paste a block of commands and Emu hands them to your shell as a unit, waiting for a single Enter.
 - **Tab Drag & Drop** — Drag any session tab and drop it onto a split pane to reassign it instantly.
 - **Highlight-to-Delete** — Select text, press backspace to delete exactly that many characters.
@@ -71,7 +72,7 @@ npm run build
 | `⌘↑` / `⌘↓` | Jump between prompts in scrollback |
 | `⌘+` / `⌘−` | Increase / decrease font size |
 | `⌘0` | Reset font size |
-| `Cmd+click` | Open URL or file path |
+| `Cmd+click` | Open URL or file path; Markdown files open in Emu's native viewer |
 
 ---
 
@@ -82,6 +83,7 @@ npm run build
 - [React](https://react.dev/) 18
 - [electron-vite](https://electron-vite.org/)
 - [node-pty](https://github.com/microsoft/node-pty)
+- [markdown-it](https://github.com/markdown-it/markdown-it)
 - [Catppuccin Mocha](https://github.com/catppuccin/catppuccin)
 
 ---

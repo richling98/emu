@@ -86,6 +86,9 @@
 }
 
 .terminal-area {
+  --markdown-popout-width: min(520px, 42vw);
+  --markdown-rail-width: 36px;
+  --markdown-reserved-width: 0px;
   flex: 1;
   position: relative;
   background: var(--bg-base);
@@ -93,18 +96,31 @@
   transition: background 0.3s ease;
 }
 
+.terminal-area--markdown-expanded {
+  --markdown-reserved-width: var(--markdown-popout-width);
+}
+
+.terminal-area--markdown-collapsed {
+  --markdown-reserved-width: var(--markdown-rail-width);
+}
+
+.terminal-area--markdown-expanded .terminal-pane--full,
+.terminal-area--markdown-collapsed .terminal-pane--full {
+  right: var(--markdown-reserved-width);
+}
+
 /* Split mode: all positions driven by --split-ratio CSS custom property */
 
 .terminal-area--split .terminal-pane--left {
   position: absolute;
   top: 0; left: 0; bottom: 0;
-  width: calc(var(--split-ratio, 0.5) * 100% - 2px);
+  width: calc(var(--split-ratio, 0.5) * (100% - var(--markdown-reserved-width)) - 2px);
 }
 
 .terminal-area--split .terminal-pane--right {
   position: absolute;
-  top: 0; bottom: 0; right: 0;
-  left: calc(var(--split-ratio, 0.5) * 100% + 2px);
+  top: 0; bottom: 0; right: var(--markdown-reserved-width);
+  left: calc(var(--split-ratio, 0.5) * (100% - var(--markdown-reserved-width)) + 2px);
 }
 
 .terminal-area--split .terminal-pane--hidden {
@@ -116,7 +132,7 @@
 .pane-divider--vertical {
   position: absolute;
   top: 0; bottom: 0;
-  left: calc(var(--split-ratio, 0.5) * 100%);
+  left: calc(var(--split-ratio, 0.5) * (100% - var(--markdown-reserved-width)));
   width: 4px;
   transform: translateX(-50%);
   background: rgba(255, 255, 255, 0.08);
@@ -133,8 +149,8 @@
 /* Empty right pane drop zone */
 .empty-pane {
   position: absolute;
-  top: 0; bottom: 0; right: 0;
-  left: calc(var(--split-ratio, 0.5) * 100% + 2px);
+  top: 0; bottom: 0; right: var(--markdown-reserved-width);
+  left: calc(var(--split-ratio, 0.5) * (100% - var(--markdown-reserved-width)) + 2px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -172,15 +188,21 @@
 
 .pane-drop-overlay--left {
   left: 0;
-  width: calc(var(--split-ratio, 0.5) * 100% - 2px);
+  width: calc(var(--split-ratio, 0.5) * (100% - var(--markdown-reserved-width)) - 2px);
 }
 
 .pane-drop-overlay--right {
-  left: calc(var(--split-ratio, 0.5) * 100% + 2px);
-  right: 0;
+  left: calc(var(--split-ratio, 0.5) * (100% - var(--markdown-reserved-width)) + 2px);
+  right: var(--markdown-reserved-width);
 }
 
 .pane-drop-overlay.drag-over {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+@media (max-width: 900px) {
+  .terminal-area {
+    --markdown-popout-width: min(460px, 72vw);
+  }
 }

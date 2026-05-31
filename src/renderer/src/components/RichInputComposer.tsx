@@ -18,7 +18,6 @@ interface Props {
   onChange: (value: string) => void
   onCommit: (value: string) => void
   onActivate?: () => void
-  onCancel?: () => void
   onInterrupt?: () => void
   onTerminalHotkey?: (data: string) => void
   onPasteImages?: (files: File[]) => void
@@ -48,7 +47,6 @@ export default function RichInputComposer({
   onChange,
   onCommit,
   onActivate,
-  onCancel,
   onInterrupt,
   onTerminalHotkey,
   onPasteImages,
