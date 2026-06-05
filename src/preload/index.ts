@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 contextBridge.exposeInMainWorld('api', {
   // Create a new PTY session
-  ptyCreate: (sessionId: string) => ipcRenderer.invoke('pty:create', sessionId),
+  ptyCreate: (sessionId: string, options?: { cwd?: string | null }) => ipcRenderer.invoke('pty:create', sessionId, options),
   // Send input to PTY
   ptyWrite: (sessionId: string, data: string) => ipcRenderer.send('pty:write', sessionId, data),
   // Resize PTY

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Terminal, type IBufferRange, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
-import type { AgentState, Session } from '../App'
+import type { AgentState, TerminalTab } from '../App'
 import CommandHistoryDrawer, { type HistoryEntry } from './CommandHistoryDrawer'
 import PromptOptimizerDrawer from './PromptOptimizerDrawer'
 import RichInputComposer, { type ComposerImageAttachment } from './RichInputComposer'
@@ -292,7 +292,7 @@ async function filesToShellEscapedPaths(files: File[]): Promise<string> {
 }
 
 interface Props {
-  session: Session
+  session: TerminalTab
   isVisible: boolean
   slot?: 'full' | 'left' | 'right' | 'hidden'
   isActive?: boolean
@@ -304,6 +304,7 @@ interface Props {
   onOpenSettings?: () => void
   onSessionTouched?: () => void
   onAgentStateChange?: (state: AgentState, foregroundProcess?: string | null) => void
+  onCurrentCwdChange?: (cwd: string) => void
   onOpenMarkdown?: (result: MarkdownOpenResult) => void
   focusSignal?: number
   layoutSignal?: string
@@ -316,7 +317,7 @@ interface PromptSelection {
   anchor: { x: number; y: number; placement: 'above' | 'below' }
 }
 
-export default function TerminalPane({ session, isVisible, slot = 'full', isActive = true, onActivate, onSessionEnd, openDrawer, onDrawerClose, onClosePane, onOpenSettings, onSessionTouched, onAgentStateChange, onOpenMarkdown, focusSignal = 0, layoutSignal = '', xtermTheme }: Props) {
+export default function TerminalPane({ session, isVisible, slot = 'full', isActive = true, onActivate, onSessionEnd, openDrawer, onDrawerClose, onClosePane, onOpenSettings, onSessionTouched, onAgentStateChange, onCurrentCwdChange, onOpenMarkdown, focusSignal = 0, layoutSignal = '', xtermTheme }: Props) {
   const paneRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const composerDropRef = useRef<HTMLDivElement>(null)
@@ -327,6 +328,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   const isActiveRef = useRef(isActive)
   const onSessionTouchedRef = useRef(onSessionTouched)
   const onAgentStateChangeRef = useRef(onAgentStateChange)
+  const onCurrentCwdChangeRef = useRef(onCurrentCwdChange)
   const onOpenMarkdownRef = useRef(onOpenMarkdown)
   const currentWorkingDirectoryRef = useRef<string | null>(null)
   const agentStateRef = useRef<AgentState>('none')
@@ -394,6 +396,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   useEffect(() => { isActiveRef.current = isActive }, [isActive])
   useEffect(() => { onSessionTouchedRef.current = onSessionTouched }, [onSessionTouched])
   useEffect(() => { onAgentStateChangeRef.current = onAgentStateChange }, [onAgentStateChange])
+  useEffect(() => { onCurrentCwdChangeRef.current = onCurrentCwdChange }, [onCurrentCwdChange])
   useEffect(() => { onOpenMarkdownRef.current = onOpenMarkdown }, [onOpenMarkdown])
 
   useEffect(() => { promptSelectionRef.current = promptSelection }, [promptSelection])
@@ -1155,7 +1158,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
     // ── End clickable links ──────────────────────────────────────────────────
 
-    window.api.ptyCreate(session.id).then(() => {
+    window.api.ptyCreate(session.id, { cwd: session.initialCwd }).then(() => {
       if (disposed) return
       refreshAgentProcess()
       agentProcessPollRef.current = setInterval(refreshAgentProcess, AGENT_PROCESS_POLL_MS)
@@ -1175,7 +1178,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         "A new tab just opened — and so did a new possibility.",
         "Ready when you are. Let's do something remarkable.",
         "Hey there, genius. Time to build.",
-        "New session, new possibilities. Let's go.",
+        "New idea, new possibilities. Let's go.",
         "The world won't change itself — good thing you're here.",
         "Welcome to your workspace. Make it count.",
         "Hey! Every great product started exactly like this.",
@@ -1232,7 +1235,10 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     const removeDataListener = window.api.onPtyData(session.id, (data) => {
       touchSessionActivity()
       const cwd = extractEmuCwd(data)
-      if (cwd) currentWorkingDirectoryRef.current = cwd
+      if (cwd) {
+        currentWorkingDirectoryRef.current = cwd
+        onCurrentCwdChangeRef.current?.(cwd)
+      }
       terminal.write(data)
       submitPendingComposerInput()
       scheduleAgentIdleCheck()

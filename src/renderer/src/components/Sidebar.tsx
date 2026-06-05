@@ -144,7 +144,7 @@ export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSe
             <img src={emuLogo} alt="Emu" className="sidebar-logo" />
           </div>
           <div className="sidebar-collapsed-actions">
-            <button className="new-session-btn" onClick={onNew} title="New session">+</button>
+            <button className="new-session-btn" onClick={onNew} title="New project">+</button>
             <button className="collapse-btn" onClick={onToggleCollapse} title="Expand sidebar">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="9 18 15 12 9 6" />
@@ -167,7 +167,7 @@ export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSe
           <span className="sidebar-title">Emu</span>
         </div>
         <div className="sidebar-header-actions">
-          <button className="new-session-btn" onClick={onNew} title="New session">+</button>
+          <button className="new-session-btn" onClick={onNew} title="New project">+</button>
           <button className="collapse-btn" onClick={onToggleCollapse} title="Collapse sidebar">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="15 18 9 12 15 6" />

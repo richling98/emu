@@ -65,7 +65,7 @@ type MarkdownImageResult = {
 
 interface Window {
   api: {
-    ptyCreate: (sessionId: string) => Promise<{ pid: number }>
+    ptyCreate: (sessionId: string, options?: { cwd?: string | null }) => Promise<{ pid: number }>
     ptyWrite: (sessionId: string, data: string) => void
     ptyResize: (sessionId: string, cols: number, rows: number) => void
     ptyClose: (sessionId: string) => void

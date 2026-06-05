@@ -39,6 +39,10 @@ interface OptimizePromptInput {
   terminalContext?: string
 }
 
+interface PtyCreateOptions {
+  cwd?: string | null
+}
+
 interface OptimizePromptResult {
   optimizedPrompt: string
 }
@@ -555,6 +559,16 @@ function isSafeOpenPath(p: string): boolean {
   return typeof p === 'string' && p.startsWith('/') && !p.includes('\0')
 }
 
+function normalizeSafeCwd(cwd?: string | null): string | null {
+  if (typeof cwd !== 'string' || !cwd.trim() || !isSafeOpenPath(cwd)) return null
+  try {
+    const stat = fs.statSync(cwd)
+    return stat.isDirectory() ? cwd : null
+  } catch {
+    return null
+  }
+}
+
 function cleanUserPath(rawPath: string): string {
   const cleaned = String(rawPath ?? '')
     .trim()
@@ -759,7 +773,7 @@ app.whenReady().then(() => {
   })
 
   // Create a new PTY session
-  ipcMain.handle('pty:create', (event, sessionId: string) => {
+  ipcMain.handle('pty:create', (event, sessionId: string, options?: PtyCreateOptions) => {
     const shell = os.platform() === 'win32' ? 'powershell.exe' : (process.env.SHELL || '/bin/zsh')
 
     const env: Record<string, string> = {
@@ -776,7 +790,7 @@ app.whenReady().then(() => {
       name: 'xterm-256color',
       cols: 80,
       rows: 24,
-      cwd: os.homedir(),
+      cwd: normalizeSafeCwd(options?.cwd) ?? os.homedir(),
       env,
     })
 

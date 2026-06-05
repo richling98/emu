@@ -18,7 +18,7 @@ const HOTKEY_SECTIONS = [
       { keys: ['⌘', '='], label: 'Zoom in' },
       { keys: ['⌘', '−'], label: 'Zoom out' },
       { keys: ['⌘', '0'], label: 'Reset zoom' },
-      { keys: ['⌘', 'N'], label: 'New session' },
+      { keys: ['⌘', 'N'], label: 'New project' },
       { keys: ['⌘', '⇧', 'L'], label: 'Command log' },
       { keys: ['⌘', '↑'], label: 'Jump to previous prompt' },
       { keys: ['⌘', '↓'], label: 'Jump to next prompt' },

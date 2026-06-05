@@ -1,6 +1,6 @@
 .markdown-popout {
   position: absolute;
-  top: 0;
+  top: var(--top-tabbar-height, 0px);
   right: 0;
   bottom: 0;
   z-index: 80;
