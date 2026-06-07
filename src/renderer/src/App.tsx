@@ -25,6 +25,7 @@ export interface TerminalTab {
 export interface Session {
   id: string
   name: string
+  autoRenameFromCwd: boolean
   createdAt: Date
   lastActiveAt: Date
   userSelectedAt: Date
@@ -33,7 +34,7 @@ export interface Session {
   foregroundProcess: string | null
   tabs: TerminalTab[]
   selectedTabId: string
-  nextIdeaNumber: number
+  nextTopProjectNumber: number
 }
 
 type MarkdownViewMode = 'preview' | 'source'
@@ -61,10 +62,11 @@ function createTerminalTab(name: string, initialCwd: string | null = null): Term
 
 function createSession(projectNumber: number): Session {
   const now = new Date()
-  const firstTab = createTerminalTab('Idea 1')
+  const firstTab = createTerminalTab('Project 1')
   return {
     id: crypto.randomUUID(),
     name: `Project ${projectNumber}`,
+    autoRenameFromCwd: true,
     createdAt: now,
     lastActiveAt: now,
     userSelectedAt: now,
@@ -73,12 +75,21 @@ function createSession(projectNumber: number): Session {
     foregroundProcess: null,
     tabs: [firstTab],
     selectedTabId: firstTab.id,
-    nextIdeaNumber: 2
+    nextTopProjectNumber: 2
   }
 }
 
 function getMostRecentTab(tabs: TerminalTab[]): TerminalTab | null {
   return [...tabs].sort((a, b) => b.lastActiveAt.getTime() - a.lastActiveAt.getTime())[0] ?? null
+}
+
+function folderNameFromCwd(cwd: string): string | null {
+  const trimmed = cwd.trim()
+  if (!trimmed) return null
+  const withoutTrailingSlashes = trimmed.replace(/\/+$/, '')
+  if (!withoutTrailingSlashes) return null
+  const folderName = withoutTrailingSlashes.split('/').filter(Boolean).at(-1)
+  return folderName || null
 }
 
 function summarizeSession(session: Session): Session {
@@ -244,13 +255,13 @@ export default function App() {
     const activeTab = workspace.tabs.find((tab) => tab.id === workspace.selectedTabId) ?? workspace.tabs[0]
     const firstTab = workspace.tabs[0]
     const initialCwd = firstTab?.currentCwd ?? activeTab?.currentCwd ?? firstTab?.initialCwd ?? null
-    const tab = createTerminalTab(`Idea ${workspace.nextIdeaNumber}`, initialCwd)
+    const tab = createTerminalTab(`Project ${workspace.nextTopProjectNumber}`, initialCwd)
     setSessions((prev) => prev.map((session) => (
       session.id === workspace.id
         ? {
             ...session,
             selectedTabId: tab.id,
-            nextIdeaNumber: session.nextIdeaNumber + 1,
+            nextTopProjectNumber: session.nextTopProjectNumber + 1,
             lastActiveAt: tab.lastActiveAt,
             userSelectedAt: tab.userSelectedAt,
             tabs: [...session.tabs, tab]
@@ -261,7 +272,9 @@ export default function App() {
   }, [selectedSession])
 
   const handleRename = useCallback((id: string, name: string) => {
-    setSessions((prev) => prev.map((session) => (session.id === id ? { ...session, name } : session)))
+    setSessions((prev) => prev.map((session) => (
+      session.id === id ? { ...session, name, autoRenameFromCwd: false } : session
+    )))
   }, [])
 
   const handleRenameTopTab = useCallback((id: string, name: string) => {
@@ -301,16 +314,22 @@ export default function App() {
   }, [])
 
   const handleCurrentCwdChange = useCallback((id: string, currentCwd: string) => {
-    setSessions((prev) => prev.map((session) => (
-      session.tabs.some((tab) => tab.id === id)
-        ? {
-            ...session,
-            tabs: session.tabs.map((tab) => (
-              tab.id === id && tab.currentCwd !== currentCwd ? { ...tab, currentCwd } : tab
-            ))
-          }
-        : session
-    )))
+    setSessions((prev) => prev.map((session) => {
+      if (!session.tabs.some((tab) => tab.id === id)) return session
+
+      let tabChanged = false
+      const tabs = session.tabs.map((tab) => {
+        if (tab.id !== id || tab.currentCwd === currentCwd) return tab
+        tabChanged = true
+        return { ...tab, currentCwd }
+      })
+      const nextName = session.autoRenameFromCwd
+        ? (folderNameFromCwd(currentCwd) ?? session.name)
+        : session.name
+
+      if (!tabChanged && nextName === session.name) return session
+      return { ...session, name: nextName, tabs }
+    }))
   }, [])
 
   const handleOpenHistory = useCallback((workspaceId: string) => {
@@ -592,7 +611,7 @@ export default function App() {
               onDragOver={(e) => { e.preventDefault(); setIsDragging(true); setDragOverRight(true) }}
               onDrop={handleDropRight}
             >
-              Drag an idea tab here
+              Drag a project tab here
             </div>
           )}
           {markdownDocument && (

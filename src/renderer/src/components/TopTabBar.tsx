@@ -70,7 +70,7 @@ export default function TopTabBar({ tabs, selectedTabId, onSelect, onNew, onRena
                   <button
                     className="top-tab-action top-tab-rename"
                     onClick={(event) => startEdit(event, tab)}
-                    title="Rename idea"
+                    title="Rename project"
                   >
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
@@ -81,7 +81,7 @@ export default function TopTabBar({ tabs, selectedTabId, onSelect, onNew, onRena
                     <button
                       className="top-tab-action top-tab-delete"
                       onClick={(event) => { event.stopPropagation(); onDelete(tab.id) }}
-                      title="Delete idea"
+                      title="Delete project"
                     >
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <line x1="18" y1="6" x2="6" y2="18" />
@@ -95,7 +95,7 @@ export default function TopTabBar({ tabs, selectedTabId, onSelect, onNew, onRena
           )
         })}
       </div>
-      <button className="top-tab-new" onClick={onNew} title="New idea">+</button>
+      <button className="top-tab-new" onClick={onNew} title="New project">+</button>
     </div>
   )
 }
