@@ -43,6 +43,18 @@ interface PtyCreateOptions {
   cwd?: string | null
 }
 
+interface PtyWriteChunk {
+  data: string
+  delayAfterMs?: number
+}
+
+type PtyWriteSequenceResult = {
+  ok: true
+} | {
+  ok: false
+  reason: 'not-found' | 'invalid-input'
+}
+
 interface OptimizePromptResult {
   optimizedPrompt: string
 }
@@ -881,6 +893,27 @@ app.whenReady().then(() => {
   // Write input to PTY
   ipcMain.on('pty:write', (_, sessionId: string, data: string) => {
     ptyProcesses.get(sessionId)?.write(data)
+  })
+
+  ipcMain.handle('pty:writeSequence', async (_, sessionId: string, writes: PtyWriteChunk[]): Promise<PtyWriteSequenceResult> => {
+    const ptyProcess = ptyProcesses.get(sessionId)
+    if (!ptyProcess) return { ok: false, reason: 'not-found' }
+    if (!Array.isArray(writes) || writes.length === 0 || writes.length > 8) {
+      return { ok: false, reason: 'invalid-input' }
+    }
+
+    for (const write of writes) {
+      if (!write || typeof write.data !== 'string') return { ok: false, reason: 'invalid-input' }
+      ptyProcess.write(write.data)
+      const delayAfterMs = typeof write.delayAfterMs === 'number'
+        ? Math.max(0, Math.min(2_000, write.delayAfterMs))
+        : 0
+      if (delayAfterMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delayAfterMs))
+      }
+    }
+
+    return { ok: true }
   })
 
   // Resize PTY

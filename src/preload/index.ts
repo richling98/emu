@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('api', {
   ptyCreate: (sessionId: string, options?: { cwd?: string | null }) => ipcRenderer.invoke('pty:create', sessionId, options),
   // Send input to PTY
   ptyWrite: (sessionId: string, data: string) => ipcRenderer.send('pty:write', sessionId, data),
+  ptyWriteSequence: (sessionId: string, writes: Array<{ data: string; delayAfterMs?: number }>) =>
+    ipcRenderer.invoke('pty:writeSequence', sessionId, writes),
   // Resize PTY
   ptyResize: (sessionId: string, cols: number, rows: number) =>
     ipcRenderer.send('pty:resize', sessionId, cols, rows),

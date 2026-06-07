@@ -63,10 +63,23 @@ type MarkdownImageResult = {
   error: string
 }
 
+interface PtyWriteChunk {
+  data: string
+  delayAfterMs?: number
+}
+
+type PtyWriteSequenceResult = {
+  ok: true
+} | {
+  ok: false
+  reason: 'not-found' | 'invalid-input'
+}
+
 interface Window {
   api: {
     ptyCreate: (sessionId: string, options?: { cwd?: string | null }) => Promise<{ pid: number }>
     ptyWrite: (sessionId: string, data: string) => void
+    ptyWriteSequence: (sessionId: string, writes: PtyWriteChunk[]) => Promise<PtyWriteSequenceResult>
     ptyResize: (sessionId: string, cols: number, rows: number) => void
     ptyClose: (sessionId: string) => void
     onPtyData: (sessionId: string, callback: (data: string) => void) => () => void

@@ -12,6 +12,9 @@ import './TerminalPane.css'
 const DEFAULT_FONT_SIZE = 13
 const AGENT_IDLE_CHECK_DELAY_MS = 900
 const AGENT_PROCESS_POLL_MS = 4_000
+const AGENT_SUBMIT_ECHO_POLL_MS = 40
+const AGENT_SUBMIT_MAX_WAIT_MS = 320
+const AGENT_SUBMIT_RETRY_WAIT_MS = 220
 
 function isAgentProcessName(processName: string | null): boolean {
   if (!processName) return false
@@ -53,6 +56,22 @@ interface DropHighlightRect {
   top: number
   width: number
   height: number
+}
+
+interface ComposerCommitPayload {
+  commandText: string
+  bodyWrite: string
+  fingerprint: string
+}
+
+interface ComposerSubmitTransaction {
+  id: string
+  fingerprint: string
+  agentTarget: boolean
+  startedAt: number
+  sentEnterAt: number | null
+  retriedEnterAt: number | null
+  tailAtEnter: string
 }
 
 function getRawTuiModeForCommand(command: string): RawTuiMode | null {
@@ -136,6 +155,26 @@ function looksLikeAgentIdlePrompt(text: string): boolean {
 
   const afterIdlePrompt = tailLines.slice(lastIdleLine).join('\n')
   return !activeMarkers.some((pattern) => pattern.test(afterIdlePrompt))
+}
+
+function looksLikeAgentActiveTail(text: string): boolean {
+  const normalized = text
+    .split('\n')
+    .slice(-8)
+    .map((line) => line.replace(/\s+/g, ' ').trim().toLowerCase())
+    .join('\n')
+
+  return [
+    /\besc(?:ape)? to interrupt\b/,
+    /\bctrl-c to interrupt\b/,
+    /\bthinking\b/,
+    /\bworking\b/,
+    /\brunning\b/,
+    /\bexecuting\b/,
+    /\bcalling\b/,
+    /\bsearching\b/,
+    /\btool\b.*\b(use|call|running|executing)\b/
+  ].some((pattern) => pattern.test(normalized))
 }
 
 // Strip ANSI escape sequences — used only for the one-line outputPreview capture.
@@ -255,13 +294,33 @@ function normalizeComposerCommitText(text: string): string {
   return lines.join('\n').trim()
 }
 
-function buildComposerCommitWrites(text: string): string[] {
-  const normalized = normalizeComposerCommitText(text)
-  if (!normalized) return []
-  if (normalized.includes('\n')) {
-    return [`\x1b[200~${normalized.replace(/\n/g, '\r')}\x1b[201~`, '\r']
+function normalizeSubmitText(text: string): string {
+  return text.replace(/\s+/g, ' ').trim()
+}
+
+function normalizeSubmitFingerprint(text: string): string {
+  return normalizeSubmitText(text).slice(-180)
+}
+
+function buildComposerCommitPayload(text: string, imagePaths: string): ComposerCommitPayload | null {
+  const commandText = [normalizeComposerCommitText(text), imagePaths].filter(Boolean).join(' ').trim()
+  if (!commandText) return null
+
+  const usesBracketedPaste = commandText.includes('\n')
+  const bodyWrite = usesBracketedPaste
+    ? `\x1b[200~${commandText.replace(/\n/g, '\r')}\x1b[201~`
+    : commandText
+
+  return {
+    commandText,
+    bodyWrite,
+    fingerprint: normalizeSubmitFingerprint(commandText)
   }
-  return [normalized, '\r']
+}
+
+function terminalTailContainsSubmitFingerprint(tail: string, fingerprint: string): boolean {
+  if (fingerprint.length < 2) return false
+  return normalizeSubmitText(tail).includes(fingerprint)
 }
 
 function shellEscape(path: string): string {
@@ -388,8 +447,9 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   const rawTuiExitingUntilRef = useRef(0)
   const rawTuiShellPollCountRef = useRef(0)
   const commitComposerRef = useRef<(text: string) => void>(() => {})
-  const pendingComposerSubmitRef = useRef(false)
-  const pendingComposerSubmitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const composerSubmitRef = useRef<ComposerSubmitTransaction | null>(null)
+  const composerSubmitEnterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const composerSubmitRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Keep isVisibleRef in sync so the key handler can check it
   useEffect(() => { isVisibleRef.current = isVisible }, [isVisible])
@@ -668,14 +728,75 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       }
     }
 
-    const submitPendingComposerInput = () => {
-      if (!pendingComposerSubmitRef.current) return
-      pendingComposerSubmitRef.current = false
-      if (pendingComposerSubmitTimerRef.current) {
-        clearTimeout(pendingComposerSubmitTimerRef.current)
-        pendingComposerSubmitTimerRef.current = null
+    const clearComposerSubmitTimers = () => {
+      if (composerSubmitEnterTimerRef.current) {
+        clearTimeout(composerSubmitEnterTimerRef.current)
+        composerSubmitEnterTimerRef.current = null
       }
+      if (composerSubmitRetryTimerRef.current) {
+        clearTimeout(composerSubmitRetryTimerRef.current)
+        composerSubmitRetryTimerRef.current = null
+      }
+    }
+
+    const finishComposerSubmitTransaction = (id: string) => {
+      if (composerSubmitRef.current?.id !== id) return
+      clearComposerSubmitTimers()
+      composerSubmitRef.current = null
+    }
+
+    const maybeRetryComposerSubmit = (id: string) => {
+      const transaction = composerSubmitRef.current
+      if (!transaction || transaction.id !== id || !transaction.agentTarget) return
+      if (!transaction.sentEnterAt || transaction.retriedEnterAt) return
+
+      const currentTail = getTerminalTailText(terminal, 16)
+      const tailLooksActive = looksLikeAgentActiveTail(currentTail)
+
+      if (!tailLooksActive) {
+        transaction.retriedEnterAt = Date.now()
+        window.api.ptyWrite(session.id, '\r')
+      }
+
+      finishComposerSubmitTransaction(id)
+    }
+
+    const sendComposerSubmitEnter = (id: string) => {
+      const transaction = composerSubmitRef.current
+      if (!transaction || transaction.id !== id || transaction.sentEnterAt) return
+
+      transaction.sentEnterAt = Date.now()
+      transaction.tailAtEnter = getTerminalTailText(terminal, 16)
       window.api.ptyWrite(session.id, '\r')
+
+      if (transaction.agentTarget) {
+        composerSubmitRetryTimerRef.current = setTimeout(() => {
+          composerSubmitRetryTimerRef.current = null
+          maybeRetryComposerSubmit(id)
+        }, AGENT_SUBMIT_RETRY_WAIT_MS)
+      } else {
+        finishComposerSubmitTransaction(id)
+      }
+    }
+
+    const scheduleAgentSubmitEnter = (id: string) => {
+      const transaction = composerSubmitRef.current
+      if (!transaction || transaction.id !== id) return
+
+      const elapsedMs = Date.now() - transaction.startedAt
+      const tail = getTerminalTailText(terminal, 16)
+      if (
+        terminalTailContainsSubmitFingerprint(tail, transaction.fingerprint) ||
+        elapsedMs >= AGENT_SUBMIT_MAX_WAIT_MS
+      ) {
+        sendComposerSubmitEnter(id)
+        return
+      }
+
+      composerSubmitEnterTimerRef.current = setTimeout(() => {
+        composerSubmitEnterTimerRef.current = null
+        scheduleAgentSubmitEnter(id)
+      }, AGENT_SUBMIT_ECHO_POLL_MS)
     }
 
     const setAgentState = (state: AgentState, foregroundProcess: string | null = agentProcessRef.current) => {
@@ -801,28 +922,58 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
     commitComposerRef.current = (text: string) => {
       const imagePaths = composerImagesRef.current.map((image) => shellEscape(image.path)).join(' ')
-      const commandText = [normalizeComposerCommitText(text), imagePaths].filter(Boolean).join(' ')
-      const command = commandText.trim()
-      if (!command) return
-      const commitWrites = buildComposerCommitWrites(commandText)
-      if (commitWrites.length === 0) return
+      const payload = buildComposerCommitPayload(text, imagePaths)
+      if (!payload) return
+      const agentTarget =
+        agentSessionRef.current ||
+        agentStateRef.current !== 'none' ||
+        isAgentProcessName(agentProcessRef.current) ||
+        looksLikeAgentIdlePrompt(getTerminalTailText(terminal, 16))
+      const submitId = crypto.randomUUID()
       touchSessionActivity()
-      recordCommittedCommand(commandText)
+      recordCommittedCommand(payload.commandText)
       currentInputRef.current = ''
       setComposerText('')
       setComposerImages((current) => {
         current.forEach((image) => URL.revokeObjectURL(image.previewUrl))
         return []
       })
-      // Send the edited prompt and Enter as distinct PTY writes.
-      // Claude/Codex-style TUIs can treat a combined "text + CR" write as paste/input
-      // without submitting; a separate CR mirrors a real keypress more reliably.
-      pendingComposerSubmitRef.current = Boolean(commitWrites[1])
-      if (pendingComposerSubmitTimerRef.current) clearTimeout(pendingComposerSubmitTimerRef.current)
-      pendingComposerSubmitTimerRef.current = pendingComposerSubmitRef.current
-        ? setTimeout(submitPendingComposerInput, 120)
-        : null
-      window.api.ptyWrite(session.id, commitWrites[0])
+      clearComposerSubmitTimers()
+      composerSubmitRef.current = {
+        id: submitId,
+        fingerprint: payload.fingerprint,
+        agentTarget,
+        startedAt: Date.now(),
+        sentEnterAt: null,
+        retriedEnterAt: null,
+        tailAtEnter: ''
+      }
+
+      if (agentTarget) {
+        window.api.ptyWriteSequence(session.id, [{ data: payload.bodyWrite }]).then((result) => {
+          if (!result.ok || composerSubmitRef.current?.id !== submitId) {
+            finishComposerSubmitTransaction(submitId)
+            return
+          }
+          scheduleAgentSubmitEnter(submitId)
+        }).catch(() => {
+          finishComposerSubmitTransaction(submitId)
+        })
+        return
+      }
+
+      window.api.ptyWriteSequence(session.id, [
+        { data: payload.bodyWrite, delayAfterMs: 40 },
+        { data: '\r' }
+      ]).then((result) => {
+        if (!result.ok) {
+          finishComposerSubmitTransaction(submitId)
+          return
+        }
+        finishComposerSubmitTransaction(submitId)
+      }).catch(() => {
+        finishComposerSubmitTransaction(submitId)
+      })
     }
 
     const scheduleAgentIdleCheck = () => {
@@ -1240,7 +1391,6 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         onCurrentCwdChangeRef.current?.(cwd)
       }
       terminal.write(data)
-      submitPendingComposerInput()
       scheduleAgentIdleCheck()
 
       if (rawTuiModeRef.current && !isAltScreenRef.current) {
@@ -1622,11 +1772,8 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         clearInterval(agentProcessPollRef.current)
         agentProcessPollRef.current = null
       }
-      pendingComposerSubmitRef.current = false
-      if (pendingComposerSubmitTimerRef.current) {
-        clearTimeout(pendingComposerSubmitTimerRef.current)
-        pendingComposerSubmitTimerRef.current = null
-      }
+      composerSubmitRef.current = null
+      clearComposerSubmitTimers()
       if (outputFlushTimerRef.current) clearTimeout(outputFlushTimerRef.current)
       if (resizeDebounce) clearTimeout(resizeDebounce)
       if (resizeFrame !== null) cancelAnimationFrame(resizeFrame)
