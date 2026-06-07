@@ -8,6 +8,8 @@ import { fileURLToPath } from 'url'
 
 // Track active PTY processes by session ID
 const ptyProcesses = new Map<string, pty.IPty>()
+const ptyPerfStats = new Map<string, PtyPerfStats>()
+const ptyOutputBatches = new Map<string, PtyOutputBatch>()
 
 type OptimizerProvider = 'openai'
 
@@ -46,6 +48,40 @@ interface PtyCreateOptions {
 interface PtyWriteChunk {
   data: string
   delayAfterMs?: number
+}
+
+interface PtyPerfStats {
+  sessionId: string
+  pid: number
+  createdAt: number
+  dataEvents: number
+  dataBytes: number
+  ipcMessages: number
+  ipcBytes: number
+  ptyWriteEvents: number
+  ptyWriteBytes: number
+  resizeEvents: number
+  processPolls: number
+  lastDataAt: number | null
+}
+
+interface PtyOutputBatch {
+  chunks: string[]
+  bytes: number
+  sender: Electron.WebContents
+  timer: ReturnType<typeof setTimeout> | null
+}
+
+interface PerfStatsSnapshot {
+  capturedAt: number
+  process: {
+    cpuPercent: number | null
+    idleWakeupsPerSecond: number | null
+    memory?: Record<string, number>
+  }
+  appMetrics: Electron.ProcessMetric[]
+  totals: Omit<PtyPerfStats, 'sessionId' | 'pid' | 'createdAt' | 'lastDataAt'>
+  sessions: PtyPerfStats[]
 }
 
 type PtyWriteSequenceResult = {
@@ -100,6 +136,8 @@ const DEFAULT_OPTIMIZER_MODEL = 'gpt-5-mini'
 const MAX_OPTIMIZER_SELECTION_CHARS = 20_000
 const MAX_MARKDOWN_BYTES = 5 * 1024 * 1024
 const MAX_MARKDOWN_IMAGE_BYTES = 10 * 1024 * 1024
+const PTY_OUTPUT_BATCH_MS = 12
+const PTY_OUTPUT_BATCH_MAX_BYTES = 256 * 1024
 const OPENAI_RESPONSES_URL = 'https://api.openai.com/v1/responses'
 const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown', '.mdown', '.mkd'])
 const MARKDOWN_IMAGE_MIME_BY_EXT = new Map([
@@ -109,6 +147,123 @@ const MARKDOWN_IMAGE_MIME_BY_EXT = new Map([
   ['.gif', 'image/gif'],
   ['.webp', 'image/webp']
 ])
+
+function createPtyPerfStats(sessionId: string, pid: number): PtyPerfStats {
+  return {
+    sessionId,
+    pid,
+    createdAt: Date.now(),
+    dataEvents: 0,
+    dataBytes: 0,
+    ipcMessages: 0,
+    ipcBytes: 0,
+    ptyWriteEvents: 0,
+    ptyWriteBytes: 0,
+    resizeEvents: 0,
+    processPolls: 0,
+    lastDataAt: null
+  }
+}
+
+function byteLength(data: string): number {
+  return Buffer.byteLength(data, 'utf8')
+}
+
+function flushPtyOutputBatch(sessionId: string): void {
+  const batch = ptyOutputBatches.get(sessionId)
+  if (!batch) return
+  if (batch.timer) {
+    clearTimeout(batch.timer)
+    batch.timer = null
+  }
+  ptyOutputBatches.delete(sessionId)
+
+  if (batch.chunks.length === 0 || batch.sender.isDestroyed()) return
+  const data = batch.chunks.length === 1 ? batch.chunks[0] : batch.chunks.join('')
+  batch.sender.send(`pty:data:${sessionId}`, data)
+
+  const stats = ptyPerfStats.get(sessionId)
+  if (stats) {
+    stats.ipcMessages += 1
+    stats.ipcBytes += batch.bytes
+  }
+}
+
+function queuePtyOutput(sessionId: string, sender: Electron.WebContents, data: string, bytes: number): void {
+  if (sender.isDestroyed()) return
+
+  let batch = ptyOutputBatches.get(sessionId)
+  if (!batch) {
+    batch = {
+      chunks: [],
+      bytes: 0,
+      sender,
+      timer: null
+    }
+    ptyOutputBatches.set(sessionId, batch)
+  }
+
+  batch.chunks.push(data)
+  batch.bytes += bytes
+  batch.sender = sender
+
+  if (batch.bytes >= PTY_OUTPUT_BATCH_MAX_BYTES) {
+    flushPtyOutputBatch(sessionId)
+    return
+  }
+
+  if (!batch.timer) {
+    batch.timer = setTimeout(() => flushPtyOutputBatch(sessionId), PTY_OUTPUT_BATCH_MS)
+  }
+}
+
+async function getPerfStatsSnapshot(): Promise<PerfStatsSnapshot> {
+  const sessions = Array.from(ptyPerfStats.values()).map((stats) => ({ ...stats }))
+  const totals = sessions.reduce<PerfStatsSnapshot['totals']>((acc, stats) => {
+    acc.dataEvents += stats.dataEvents
+    acc.dataBytes += stats.dataBytes
+    acc.ipcMessages += stats.ipcMessages
+    acc.ipcBytes += stats.ipcBytes
+    acc.ptyWriteEvents += stats.ptyWriteEvents
+    acc.ptyWriteBytes += stats.ptyWriteBytes
+    acc.resizeEvents += stats.resizeEvents
+    acc.processPolls += stats.processPolls
+    return acc
+  }, {
+    dataEvents: 0,
+    dataBytes: 0,
+    ipcMessages: 0,
+    ipcBytes: 0,
+    ptyWriteEvents: 0,
+    ptyWriteBytes: 0,
+    resizeEvents: 0,
+    processPolls: 0
+  })
+
+  const electronProcess = process as NodeJS.Process & {
+    getCPUUsage?: () => { percentCPUUsage?: number; idleWakeupsPerSecond?: number }
+    getProcessMemoryInfo?: () => Promise<Record<string, number>>
+  }
+  const cpu = electronProcess.getCPUUsage?.()
+  let memory: Record<string, number> | undefined
+  try {
+    memory = await electronProcess.getProcessMemoryInfo?.()
+  } catch {
+    memory = undefined
+  }
+
+  return {
+    capturedAt: Date.now(),
+    process: {
+      cpuPercent: typeof cpu?.percentCPUUsage === 'number' ? cpu.percentCPUUsage : null,
+      idleWakeupsPerSecond: typeof cpu?.idleWakeupsPerSecond === 'number' ? cpu.idleWakeupsPerSecond : null,
+      memory
+    },
+    appMetrics: app.getAppMetrics(),
+    totals,
+    sessions
+  }
+}
 
 const OPTIMIZER_SYSTEM_PROMPT = [
   'Role: You are an expert prompt engineer. Your goal is to take a user\'s original prompt and transform it into a high-precision, direct instruction set for an AI coding agent (you are writing the prompt for the agent, so use "you" and direct commands).',
@@ -708,20 +863,26 @@ function createWindow(): void {
   const iconPath = join(__dirname, '../../build/icon.icns')
   const appIcon = nativeImage.createFromPath(iconPath)
   if (!appIcon.isEmpty()) app.dock?.setIcon(appIcon)
+  const enableWebgl = process.env.EMU_ENABLE_WEBGL === '1'
+  const disableVibrancy = process.env.EMU_DISABLE_VIBRANCY === '1'
 
   const mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     show: false,
     autoHideMenuBar: true,
-    transparent: true,
-    vibrancy: 'sidebar',
+    transparent: !disableVibrancy,
+    ...(disableVibrancy ? { backgroundColor: '#1e1e2e' } : { vibrancy: 'sidebar' as const }),
     titleBarStyle: 'hiddenInset',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: true,
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      additionalArguments: [
+        `--emu-enable-webgl=${enableWebgl ? '1' : '0'}`,
+        `--emu-disable-vibrancy=${disableVibrancy ? '1' : '0'}`
+      ]
     }
   })
 
@@ -807,16 +968,24 @@ app.whenReady().then(() => {
     })
 
     ptyProcesses.set(sessionId, ptyProcess)
+    ptyPerfStats.set(sessionId, createPtyPerfStats(sessionId, ptyProcess.pid))
 
     // Forward PTY output to renderer
     ptyProcess.onData((data) => {
-      if (!event.sender.isDestroyed()) {
-        event.sender.send(`pty:data:${sessionId}`, data)
+      const stats = ptyPerfStats.get(sessionId)
+      const bytes = byteLength(data)
+      if (stats) {
+        stats.dataEvents += 1
+        stats.dataBytes += bytes
+        stats.lastDataAt = Date.now()
       }
+      queuePtyOutput(sessionId, event.sender, data, bytes)
     })
 
     ptyProcess.onExit(() => {
+      flushPtyOutputBatch(sessionId)
       ptyProcesses.delete(sessionId)
+      ptyPerfStats.delete(sessionId)
       if (!event.sender.isDestroyed()) {
         event.sender.send(`pty:exit:${sessionId}`)
       }
@@ -829,7 +998,13 @@ app.whenReady().then(() => {
   // Used by the renderer to distinguish real TUI apps (vim, claude) entering
   // alt-screen from accidental entries (e.g. echo outputting \x1b[?1049h]).
   ipcMain.handle('pty:process', (_, sessionId: string) => {
+    const stats = ptyPerfStats.get(sessionId)
+    if (stats) stats.processPolls += 1
     return ptyProcesses.get(sessionId)?.process ?? null
+  })
+
+  ipcMain.handle('perf:getStats', () => {
+    return getPerfStatsSnapshot()
   })
 
   // Open URLs in default browser — only http/https allowed
@@ -892,6 +1067,11 @@ app.whenReady().then(() => {
 
   // Write input to PTY
   ipcMain.on('pty:write', (_, sessionId: string, data: string) => {
+    const stats = ptyPerfStats.get(sessionId)
+    if (stats) {
+      stats.ptyWriteEvents += 1
+      stats.ptyWriteBytes += byteLength(data)
+    }
     ptyProcesses.get(sessionId)?.write(data)
   })
 
@@ -904,6 +1084,11 @@ app.whenReady().then(() => {
 
     for (const write of writes) {
       if (!write || typeof write.data !== 'string') return { ok: false, reason: 'invalid-input' }
+      const stats = ptyPerfStats.get(sessionId)
+      if (stats) {
+        stats.ptyWriteEvents += 1
+        stats.ptyWriteBytes += byteLength(write.data)
+      }
       ptyProcess.write(write.data)
       const delayAfterMs = typeof write.delayAfterMs === 'number'
         ? Math.max(0, Math.min(2_000, write.delayAfterMs))
@@ -918,13 +1103,17 @@ app.whenReady().then(() => {
 
   // Resize PTY
   ipcMain.on('pty:resize', (_, sessionId: string, cols: number, rows: number) => {
+    const stats = ptyPerfStats.get(sessionId)
+    if (stats) stats.resizeEvents += 1
     ptyProcesses.get(sessionId)?.resize(cols, rows)
   })
 
   // Close PTY
   ipcMain.on('pty:close', (_, sessionId: string) => {
+    flushPtyOutputBatch(sessionId)
     ptyProcesses.get(sessionId)?.kill()
     ptyProcesses.delete(sessionId)
+    ptyPerfStats.delete(sessionId)
   })
 
   createWindow()

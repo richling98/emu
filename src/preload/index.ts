@@ -1,6 +1,14 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
+function hasFlagValue(name: string, value: string): boolean {
+  return process.argv.includes(`${name}=${value}`)
+}
+
 contextBridge.exposeInMainWorld('api', {
+  diagnosticsConfig: {
+    webglEnabled: hasFlagValue('--emu-enable-webgl', '1'),
+    vibrancyDisabled: hasFlagValue('--emu-disable-vibrancy', '1')
+  },
   // Create a new PTY session
   ptyCreate: (sessionId: string, options?: { cwd?: string | null }) => ipcRenderer.invoke('pty:create', sessionId, options),
   // Send input to PTY
@@ -46,6 +54,8 @@ contextBridge.exposeInMainWorld('api', {
   markdownImage: (input: unknown) => ipcRenderer.invoke('markdown:image', input),
   // Save pasted clipboard image data to a temporary file and return its path
   imageSaveTemp: (dataUrl: string, suggestedName?: string) => ipcRenderer.invoke('image:saveTemp', dataUrl, suggestedName),
+  // Dev performance diagnostics
+  perfGetStats: () => ipcRenderer.invoke('perf:getStats'),
   // Prompt Optimizer settings and calls
   optimizerGetSettings: () => ipcRenderer.invoke('optimizer:getSettings'),
   optimizerSaveSettings: (input: unknown) => ipcRenderer.invoke('optimizer:saveSettings', input),

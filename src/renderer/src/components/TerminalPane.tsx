@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Terminal, type IBufferRange, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
+import { WebglAddon } from '@xterm/addon-webgl'
 import type { AgentState, TerminalTab } from '../App'
 import CommandHistoryDrawer, { type HistoryEntry } from './CommandHistoryDrawer'
 import PromptOptimizerDrawer from './PromptOptimizerDrawer'
@@ -12,9 +13,19 @@ import './TerminalPane.css'
 const DEFAULT_FONT_SIZE = 13
 const AGENT_IDLE_CHECK_DELAY_MS = 900
 const AGENT_PROCESS_POLL_MS = 4_000
+const HIDDEN_AGENT_PROCESS_POLL_MS = 16_000
 const AGENT_SUBMIT_ECHO_POLL_MS = 40
 const AGENT_SUBMIT_MAX_WAIT_MS = 320
 const AGENT_SUBMIT_RETRY_WAIT_MS = 220
+const MAX_COMMAND_OUTPUT_CHARS = 200_000
+const COMMAND_OUTPUT_HEAD_CHARS = 100_000
+const COMMAND_OUTPUT_TAIL_CHARS = 100_000
+const HIDDEN_OUTPUT_BUFFER_MAX_CHARS = 2 * 1024 * 1024
+const HIDDEN_OUTPUT_REPLAY_CHARS_PER_FRAME = 128 * 1024
+
+function shouldUseWebglRenderer(): boolean {
+  return window.api.diagnosticsConfig.webglEnabled
+}
 
 function isAgentProcessName(processName: string | null): boolean {
   if (!processName) return false
@@ -50,6 +61,31 @@ function isEditorProcessName(processName: string | null): boolean {
 type InputOwner = 'composer' | 'xterm'
 type RawTuiMode = 'pager' | 'editor' | 'generic'
 type DropTarget = 'terminal' | 'composer'
+type TerminalPerfEvent =
+  | 'ptyDataEvents'
+  | 'ptyDataBytes'
+  | 'visiblePtyDataEvents'
+  | 'visiblePtyDataBytes'
+  | 'hiddenPtyDataEvents'
+  | 'hiddenPtyDataBytes'
+  | 'terminalWriteCalls'
+  | 'terminalWriteBytes'
+  | 'processPolls'
+  | 'agentIdleChecks'
+  | 'rawTuiPromptChecks'
+  | 'commandPreviewUpdates'
+  | 'commandFullOutputUpdates'
+  | 'outputFlushes'
+  | 'outputFlushLines'
+  | 'outputFlushMs'
+  | 'webglActivations'
+  | 'webglContextLosses'
+  | 'webglFailures'
+  | 'webglDisabled'
+  | 'hiddenBufferedBytes'
+  | 'hiddenReplayWrites'
+  | 'hiddenReplayBytes'
+  | 'hiddenOmittedBytes'
 
 interface DropHighlightRect {
   left: number
@@ -228,6 +264,18 @@ function cleanCopiedOutput(text: string): string {
   return lines.join('\n').trim()
 }
 
+function capCommandOutput(text: string): string {
+  if (text.length <= MAX_COMMAND_OUTPUT_CHARS) return text
+  const omitted = text.length - COMMAND_OUTPUT_HEAD_CHARS - COMMAND_OUTPUT_TAIL_CHARS
+  return [
+    text.slice(0, COMMAND_OUTPUT_HEAD_CHARS).trimEnd(),
+    '',
+    `[Emu truncated ${omitted.toLocaleString()} characters of command output]`,
+    '',
+    text.slice(-COMMAND_OUTPUT_TAIL_CHARS).trimStart()
+  ].join('\n')
+}
+
 // Build the next currentInput given incoming data
 function applyInput(current: string, data: string): string {
   if (data === '\x7f') return current.slice(0, -1)       // Backspace
@@ -365,6 +413,7 @@ interface Props {
   onAgentStateChange?: (state: AgentState, foregroundProcess?: string | null) => void
   onCurrentCwdChange?: (cwd: string) => void
   onOpenMarkdown?: (result: MarkdownOpenResult) => void
+  onPerfEvent?: (sessionId: string, event: TerminalPerfEvent, value?: number) => void
   focusSignal?: number
   layoutSignal?: string
   xtermTheme?: ITheme
@@ -376,19 +425,21 @@ interface PromptSelection {
   anchor: { x: number; y: number; placement: 'above' | 'below' }
 }
 
-export default function TerminalPane({ session, isVisible, slot = 'full', isActive = true, onActivate, onSessionEnd, openDrawer, onDrawerClose, onClosePane, onOpenSettings, onSessionTouched, onAgentStateChange, onCurrentCwdChange, onOpenMarkdown, focusSignal = 0, layoutSignal = '', xtermTheme }: Props) {
+export default function TerminalPane({ session, isVisible, slot = 'full', isActive = true, onActivate, onSessionEnd, openDrawer, onDrawerClose, onClosePane, onOpenSettings, onSessionTouched, onAgentStateChange, onCurrentCwdChange, onOpenMarkdown, onPerfEvent, focusSignal = 0, layoutSignal = '', xtermTheme }: Props) {
   const paneRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const composerDropRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const fitAndResizeRef = useRef<((forcePtyResize?: boolean) => void) | null>(null)
+  const replayHiddenOutputRef = useRef<(() => void) | null>(null)
   const isVisibleRef = useRef(isVisible)
   const isActiveRef = useRef(isActive)
   const onSessionTouchedRef = useRef(onSessionTouched)
   const onAgentStateChangeRef = useRef(onAgentStateChange)
   const onCurrentCwdChangeRef = useRef(onCurrentCwdChange)
   const onOpenMarkdownRef = useRef(onOpenMarkdown)
+  const onPerfEventRef = useRef(onPerfEvent)
   const currentWorkingDirectoryRef = useRef<string | null>(null)
   const agentStateRef = useRef<AgentState>('none')
   const agentProcessRef = useRef<string | null>(null)
@@ -396,7 +447,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   const agentTaskInFlightRef = useRef(false)
   const agentTaskStartedAtRef = useRef(0)
   const agentIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const agentProcessPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const agentProcessPollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const currentInputRef = useRef('')
   const waitingForPreviewRef = useRef<string | null>(null)
@@ -422,6 +473,10 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   const currentEntryIdRef = useRef<string | null>(null)
   const currentEntryStartLineRef = useRef<number>(-1)
   const outputFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hiddenOutputBufferRef = useRef<string[]>([])
+  const hiddenOutputBufferCharsRef = useRef(0)
+  const hiddenOutputOmittedCharsRef = useRef(0)
+  const hiddenOutputReplayFrameRef = useRef<number | null>(null)
 
   const [commandHistory, setCommandHistory] = useState<HistoryEntry[]>([])
   const commandHistoryRef = useRef<HistoryEntry[]>([])
@@ -451,6 +506,30 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   const composerSubmitEnterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const composerSubmitRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  const recordPerfEvent = useCallback((event: TerminalPerfEvent, value = 1) => {
+    onPerfEventRef.current?.(session.id, event, value)
+  }, [session.id])
+
+  const appendHiddenOutput = useCallback((data: string) => {
+    hiddenOutputBufferRef.current.push(data)
+    hiddenOutputBufferCharsRef.current += data.length
+    recordPerfEvent('hiddenBufferedBytes', data.length)
+
+    while (hiddenOutputBufferCharsRef.current > HIDDEN_OUTPUT_BUFFER_MAX_CHARS && hiddenOutputBufferRef.current.length > 0) {
+      const removed = hiddenOutputBufferRef.current.shift() ?? ''
+      hiddenOutputBufferCharsRef.current -= removed.length
+      hiddenOutputOmittedCharsRef.current += removed.length
+      recordPerfEvent('hiddenOmittedBytes', removed.length)
+    }
+  }, [recordPerfEvent])
+
+  const clearHiddenReplayFrame = useCallback(() => {
+    if (hiddenOutputReplayFrameRef.current !== null) {
+      cancelAnimationFrame(hiddenOutputReplayFrameRef.current)
+      hiddenOutputReplayFrameRef.current = null
+    }
+  }, [])
+
   // Keep isVisibleRef in sync so the key handler can check it
   useEffect(() => { isVisibleRef.current = isVisible }, [isVisible])
   useEffect(() => { isActiveRef.current = isActive }, [isActive])
@@ -458,6 +537,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   useEffect(() => { onAgentStateChangeRef.current = onAgentStateChange }, [onAgentStateChange])
   useEffect(() => { onCurrentCwdChangeRef.current = onCurrentCwdChange }, [onCurrentCwdChange])
   useEffect(() => { onOpenMarkdownRef.current = onOpenMarkdown }, [onOpenMarkdown])
+  useEffect(() => { onPerfEventRef.current = onPerfEvent }, [onPerfEvent])
 
   useEffect(() => { promptSelectionRef.current = promptSelection }, [promptSelection])
   useEffect(() => { composerImagesRef.current = composerImages }, [composerImages])
@@ -691,6 +771,42 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)
     terminal.open(containerRef.current)
+    let webglAddon: WebglAddon | null = null
+    let webglContextLossDisposable: { dispose: () => void } | null = null
+    const loadWebglRenderer = () => {
+      if (disposed) return
+      try {
+        webglContextLossDisposable?.dispose()
+        webglAddon?.dispose()
+        webglAddon = new WebglAddon()
+        webglContextLossDisposable = webglAddon.onContextLoss(() => {
+          if (disposed) return
+          recordPerfEvent('webglContextLosses')
+          try {
+            webglContextLossDisposable?.dispose()
+            webglAddon?.dispose()
+          } catch {
+            // Ignore renderer cleanup errors; xterm will fall back to its default renderer.
+          }
+          webglContextLossDisposable = null
+          webglAddon = null
+          window.setTimeout(() => {
+            if (!disposed) loadWebglRenderer()
+          }, 0)
+        })
+        terminal.loadAddon(webglAddon)
+        recordPerfEvent('webglActivations')
+      } catch {
+        webglContextLossDisposable = null
+        webglAddon = null
+        recordPerfEvent('webglFailures')
+      }
+    }
+    if (shouldUseWebglRenderer()) {
+      loadWebglRenderer()
+    } else {
+      recordPerfEvent('webglDisabled')
+    }
     fitAddon.fit()
 
     terminalRef.current = terminal
@@ -710,6 +826,59 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       terminal.refresh(0, Math.max(0, terminal.rows - 1))
     }
     fitAndResizeRef.current = fitAndResizeTerminal
+
+    const replayHiddenOutput = () => {
+      if (disposed || !isVisibleRef.current || hiddenOutputReplayFrameRef.current !== null) return
+
+      const step = () => {
+        hiddenOutputReplayFrameRef.current = null
+        if (disposed || !isVisibleRef.current) return
+
+        if (hiddenOutputOmittedCharsRef.current > 0) {
+          const omitted = hiddenOutputOmittedCharsRef.current
+          hiddenOutputOmittedCharsRef.current = 0
+          const marker = `\r\n\x1b[2m[Emu omitted ${omitted.toLocaleString()} characters of hidden output while this tab was inactive]\x1b[0m\r\n`
+          terminal.write(marker)
+          recordPerfEvent('hiddenReplayWrites')
+          recordPerfEvent('hiddenReplayBytes', marker.length)
+          recordPerfEvent('terminalWriteCalls')
+          recordPerfEvent('terminalWriteBytes', marker.length)
+        }
+
+        let written = 0
+        while (hiddenOutputBufferRef.current.length > 0 && written < HIDDEN_OUTPUT_REPLAY_CHARS_PER_FRAME) {
+          let chunk = hiddenOutputBufferRef.current[0]
+          const remainingBudget = HIDDEN_OUTPUT_REPLAY_CHARS_PER_FRAME - written
+          if (chunk.length <= remainingBudget) {
+            hiddenOutputBufferRef.current.shift()
+            hiddenOutputBufferCharsRef.current -= chunk.length
+          } else {
+            hiddenOutputBufferRef.current[0] = chunk.slice(remainingBudget)
+            chunk = chunk.slice(0, remainingBudget)
+            hiddenOutputBufferCharsRef.current -= chunk.length
+          }
+          terminal.write(chunk)
+          written += chunk.length
+        }
+
+        if (written > 0) {
+          recordPerfEvent('hiddenReplayWrites')
+          recordPerfEvent('hiddenReplayBytes', written)
+          recordPerfEvent('terminalWriteCalls')
+          recordPerfEvent('terminalWriteBytes', written)
+        }
+
+        if (hiddenOutputBufferRef.current.length > 0 || hiddenOutputOmittedCharsRef.current > 0) {
+          hiddenOutputReplayFrameRef.current = requestAnimationFrame(step)
+        } else if (currentEntryIdRef.current) {
+          if (outputFlushTimerRef.current) clearTimeout(outputFlushTimerRef.current)
+          outputFlushTimerRef.current = setTimeout(flushOutputBuffer, 600)
+        }
+      }
+
+      hiddenOutputReplayFrameRef.current = requestAnimationFrame(step)
+    }
+    replayHiddenOutputRef.current = replayHiddenOutput
 
     const clearPromptSelection = () => {
       if (promptSelectionRef.current) setPromptSelection(null)
@@ -982,6 +1151,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       agentIdleTimerRef.current = setTimeout(() => {
         agentIdleTimerRef.current = null
         if (!agentTaskInFlightRef.current) return
+        recordPerfEvent('agentIdleChecks')
         if (looksLikeAgentIdlePrompt(getTerminalTailText(terminal))) {
           markAgentIdle(agentProcessRef.current)
         }
@@ -989,6 +1159,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     }
 
     const refreshAgentProcess = async () => {
+      recordPerfEvent('processPolls')
       const proc = await window.api.ptyGetProcess(session.id)
       if (disposed) return
 
@@ -1025,6 +1196,21 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       } else if (previousProcess !== proc && agentStateRef.current !== 'none') {
         setAgentState(agentStateRef.current, proc)
       }
+    }
+
+    const getAgentProcessPollDelay = () => {
+      if (isVisibleRef.current || rawTuiModeRef.current || agentStateRef.current === 'running') {
+        return AGENT_PROCESS_POLL_MS
+      }
+      return HIDDEN_AGENT_PROCESS_POLL_MS
+    }
+
+    const scheduleAgentProcessPoll = () => {
+      if (disposed || agentProcessPollRef.current) return
+      agentProcessPollRef.current = setTimeout(() => {
+        agentProcessPollRef.current = null
+        refreshAgentProcess().finally(scheduleAgentProcessPoll)
+      }, getAgentProcessPollDelay())
     }
 
     const getSelectionAnchor = (position: IBufferRange): PromptSelection['anchor'] | null => {
@@ -1311,8 +1497,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
     window.api.ptyCreate(session.id, { cwd: session.initialCwd }).then(() => {
       if (disposed) return
-      refreshAgentProcess()
-      agentProcessPollRef.current = setInterval(refreshAgentProcess, AGENT_PROCESS_POLL_MS)
+      void refreshAgentProcess().finally(scheduleAgentProcessPoll)
 
       // Rotating greeting banners — picks a fresh one each time
       const GREETINGS = [
@@ -1320,7 +1505,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         "Hey! The terminal is yours. Go make magic.",
         "Welcome back — ready to ship something amazing?",
         "Good to see you. What are we creating today?",
-        "Another tab, another idea waiting to happen.",
+        "Another tab, another project waiting to happen.",
         "Hey there, world-builder. Let's get to it.",
         "Fresh tab, fresh start. You've got this.",
         "Hello! Great things start with a single command.",
@@ -1329,12 +1514,12 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         "A new tab just opened — and so did a new possibility.",
         "Ready when you are. Let's do something remarkable.",
         "Hey there, genius. Time to build.",
-        "New idea, new possibilities. Let's go.",
+        "New project, new possibilities. Let's go.",
         "The world won't change itself — good thing you're here.",
         "Welcome to your workspace. Make it count.",
         "Hey! Every great product started exactly like this.",
         "You showed up. That's already half the battle.",
-        "Clean slate, big ideas. What's first?",
+        "Clean slate, big plans. What's first?",
         "Hi! The only limit today is your imagination.",
       ]
       const greeting = GREETINGS[Math.floor(Math.random() * GREETINGS.length)]
@@ -1350,6 +1535,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     // updates, cursor movements, and sync-output animation frames — we just read the
     // final screen state, exactly as the user sees it.
     const flushOutputBuffer = () => {
+      const flushStartedAt = performance.now()
       if (outputFlushTimerRef.current) {
         clearTimeout(outputFlushTimerRef.current)
         outputFlushTimerRef.current = null
@@ -1371,30 +1557,53 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         const bufLine = buf.getLine(ln)
         if (bufLine) lines.push(bufLine.translateToString(true).trimEnd())
       }
+      recordPerfEvent('outputFlushes')
+      recordPerfEvent('outputFlushLines', lines.length)
+      recordPerfEvent('outputFlushMs', performance.now() - flushStartedAt)
 
       // Drop trailing blank lines
       while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop()
 
-      const outputFull = cleanCopiedOutput(lines.join('\n'))
+      const outputFull = capCommandOutput(cleanCopiedOutput(lines.join('\n')))
       if (!outputFull) return
 
       setCommandHistory(prev =>
         prev.map(e => e.id === id ? { ...e, outputFull } : e)
       )
+      recordPerfEvent('commandFullOutputUpdates')
     }
 
     const removeDataListener = window.api.onPtyData(session.id, (data) => {
+      // Lightweight renderer-side throughput proxy. Main-process stats keep exact UTF-8 bytes.
+      const bytes = data.length
+      recordPerfEvent('ptyDataEvents')
+      recordPerfEvent('ptyDataBytes', bytes)
+      if (isVisibleRef.current) {
+        recordPerfEvent('visiblePtyDataEvents')
+        recordPerfEvent('visiblePtyDataBytes', bytes)
+      } else {
+        recordPerfEvent('hiddenPtyDataEvents')
+        recordPerfEvent('hiddenPtyDataBytes', bytes)
+      }
       touchSessionActivity()
       const cwd = extractEmuCwd(data)
       if (cwd) {
         currentWorkingDirectoryRef.current = cwd
         onCurrentCwdChangeRef.current?.(cwd)
       }
-      terminal.write(data)
+      const shouldWriteImmediately = isVisibleRef.current || isAltScreenRef.current || Boolean(rawTuiModeRef.current)
+      if (shouldWriteImmediately) {
+        terminal.write(data)
+        recordPerfEvent('terminalWriteCalls')
+        recordPerfEvent('terminalWriteBytes', bytes)
+      } else {
+        appendHiddenOutput(data)
+      }
       scheduleAgentIdleCheck()
 
       if (rawTuiModeRef.current && !isAltScreenRef.current) {
         window.setTimeout(() => {
+          recordPerfEvent('rawTuiPromptChecks')
           if (rawTuiModeRef.current && !isAltScreenRef.current && looksLikeShellPrompt(getTerminalTailText(terminal, 6))) {
             endRawTuiMode()
           }
@@ -1410,11 +1619,13 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
           setCommandHistory(prev =>
             prev.map(e => e.id === entryId ? { ...e, outputPreview: stripped.slice(0, 80) } : e)
           )
+          recordPerfEvent('commandPreviewUpdates')
         }
       }
 
-      // Arm/re-arm idle timer — when PTY goes quiet for 600ms, read the rendered buffer
-      if (currentEntryIdRef.current) {
+      // Arm/re-arm idle timer — when PTY goes quiet for 600ms, read the rendered buffer.
+      // Hidden normal-screen output is buffered, so there is no rendered buffer to capture yet.
+      if (currentEntryIdRef.current && shouldWriteImmediately) {
         if (outputFlushTimerRef.current) clearTimeout(outputFlushTimerRef.current)
         outputFlushTimerRef.current = setTimeout(flushOutputBuffer, 600)
       }
@@ -1769,7 +1980,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       disposed = true
       clearAgentIdleTimer()
       if (agentProcessPollRef.current) {
-        clearInterval(agentProcessPollRef.current)
+        clearTimeout(agentProcessPollRef.current)
         agentProcessPollRef.current = null
       }
       composerSubmitRef.current = null
@@ -1779,6 +1990,14 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       if (resizeFrame !== null) cancelAnimationFrame(resizeFrame)
       if (zoomFitFrame !== null) cancelAnimationFrame(zoomFitFrame)
       if (zoomFitTimer) clearTimeout(zoomFitTimer)
+      clearHiddenReplayFrame()
+      replayHiddenOutputRef.current = null
+      hiddenOutputBufferRef.current = []
+      hiddenOutputBufferCharsRef.current = 0
+      hiddenOutputOmittedCharsRef.current = 0
+      const webglContextLossDisposableToDispose = webglContextLossDisposable
+      webglContextLossDisposable = null
+      webglAddon = null
       fitAndResizeRef.current = null
       selectionChangeDisposable.dispose()
       viewportEl?.removeEventListener('scroll', updateScrollState)
@@ -1797,7 +2016,10 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       // commit can interact with Electron's compositor on a transparent window and
       // blank the entire frame. The PTY is already closed above so no output will
       // arrive in the meantime.
-      setTimeout(() => { try { terminal.dispose() } catch { /* swallow disposal errors */ } }, 0)
+      setTimeout(() => {
+        try { webglContextLossDisposableToDispose?.dispose() } catch { /* swallow disposal errors */ }
+        try { terminal.dispose() } catch { /* swallow disposal errors */ }
+      }, 0)
     }
   }, [])
 
@@ -1821,6 +2043,10 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       terminalRef.current.options.cursorBlink = isVisible && isActive
     }
     if (isVisible && fitAddonRef.current && terminalRef.current) {
+      if (hiddenOutputBufferRef.current.length > 0 || hiddenOutputOmittedCharsRef.current > 0) {
+        terminalRef.current.scrollToBottom()
+      }
+      replayHiddenOutputRef.current?.()
       setTimeout(() => {
         fitAndResizeRef.current?.()
         if (!richInputActiveRef.current && isActiveRef.current) terminalRef.current?.focus()

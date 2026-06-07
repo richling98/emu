@@ -4,6 +4,7 @@ import TerminalPane from './components/TerminalPane'
 import TopTabBar from './components/TopTabBar'
 import SettingsModal from './components/SettingsModal'
 import MarkdownPopout from './components/MarkdownPopout'
+import PerformanceOverlay, { type PerfOverlayModel, type PerfRow } from './components/PerformanceOverlay'
 import { getTheme, applyTheme, DEFAULT_THEME_ID } from './themes'
 import './App.css'
 
@@ -43,6 +44,76 @@ const DEFAULT_MARKDOWN_WIDTH = 520
 const MIN_MARKDOWN_WIDTH = 360
 const MAX_MARKDOWN_WIDTH = 760
 const MIN_TERMINAL_WIDTH = 320
+const PERF_POLL_MS = 1_000
+const RENDERER_PERF_KEYS = [
+  'ptyDataEvents',
+  'ptyDataBytes',
+  'visiblePtyDataEvents',
+  'visiblePtyDataBytes',
+  'hiddenPtyDataEvents',
+  'hiddenPtyDataBytes',
+  'terminalWriteCalls',
+  'terminalWriteBytes',
+  'processPolls',
+  'agentIdleChecks',
+  'rawTuiPromptChecks',
+  'commandPreviewUpdates',
+  'commandFullOutputUpdates',
+  'outputFlushes',
+  'outputFlushLines',
+  'outputFlushMs',
+  'webglActivations',
+  'webglContextLosses',
+  'webglFailures',
+  'webglDisabled',
+  'hiddenBufferedBytes',
+  'hiddenReplayWrites',
+  'hiddenReplayBytes',
+  'hiddenOmittedBytes'
+] as const
+
+type RendererPerfKey = typeof RENDERER_PERF_KEYS[number]
+type RendererPerfCounters = Record<RendererPerfKey, number>
+
+interface RendererPerfSnapshot {
+  capturedAt: number
+  sessions: Record<string, RendererPerfCounters>
+}
+
+interface PerfPreviousSnapshot {
+  main: PerfStatsSnapshot
+  renderer: RendererPerfSnapshot
+}
+
+function createRendererPerfCounters(): RendererPerfCounters {
+  return RENDERER_PERF_KEYS.reduce((acc, key) => {
+    acc[key] = 0
+    return acc
+  }, {} as RendererPerfCounters)
+}
+
+function cloneRendererPerfCounters(counters: RendererPerfCounters): RendererPerfCounters {
+  return { ...counters }
+}
+
+function getRendererCounter(
+  snapshot: RendererPerfSnapshot | null | undefined,
+  sessionId: string,
+  key: RendererPerfKey
+): number {
+  return snapshot?.sessions[sessionId]?.[key] ?? 0
+}
+
+function rate(current: number, previous: number, seconds: number): number {
+  if (seconds <= 0) return 0
+  return Math.max(0, (current - previous) / seconds)
+}
+
+function memoryMb(memory: Record<string, number> | undefined): number | null {
+  if (!memory) return null
+  const value = memory.privateBytes ?? memory.workingSetSize ?? memory.residentSet
+  return typeof value === 'number' ? value / 1024 : null
+}
 
 function createTerminalTab(name: string, initialCwd: string | null = null): TerminalTab {
   const now = new Date()
@@ -92,6 +163,20 @@ function folderNameFromCwd(cwd: string): string | null {
   return folderName || null
 }
 
+function isEditableShortcutTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  if (target.closest('.xterm')) return false
+  if (target.closest('.rich-input-composer__editor')) return false
+
+  const tagName = target.tagName
+  return (
+    tagName === 'INPUT' ||
+    tagName === 'TEXTAREA' ||
+    tagName === 'SELECT' ||
+    target.isContentEditable
+  )
+}
+
 function summarizeSession(session: Session): Session {
   const runningTab = session.tabs.find((tab) => tab.agentState === 'running')
   const selectedTab = session.tabs.find((tab) => tab.id === session.selectedTabId) ?? getMostRecentTab(session.tabs)
@@ -114,6 +199,8 @@ export default function App() {
   const nextProjectNumberRef = useRef(2)
   const terminalAreaRef = useRef<HTMLDivElement>(null)
   const lastTouchAtByTabRef = useRef(new Map<string, number>())
+  const terminalPerfRef = useRef(new Map<string, RendererPerfCounters>())
+  const perfPreviousSnapshotRef = useRef<PerfPreviousSnapshot | null>(null)
   const [selectedId, setSelectedId] = useState<string>(initialSession.id)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [openHistoryFor, setOpenHistoryFor] = useState<string | null>(null)
@@ -127,6 +214,11 @@ export default function App() {
   const [markdownViewMode, setMarkdownViewMode] = useState<MarkdownViewMode>('preview')
   const [markdownWidth, setMarkdownWidth] = useState(DEFAULT_MARKDOWN_WIDTH)
   const [terminalFocusSignal, setTerminalFocusSignal] = useState(0)
+  const [showPerfOverlay, setShowPerfOverlay] = useState(() =>
+    import.meta.env.DEV || localStorage.getItem('emu-perf-overlay') === '1'
+  )
+  const [perfOverlayModel, setPerfOverlayModel] = useState<PerfOverlayModel | null>(null)
+  const [perfOverlayError, setPerfOverlayError] = useState<string | null>(null)
   const markdownLayoutMode = markdownDocument
     ? (markdownCollapsed ? 'collapsed' : 'expanded')
     : 'closed'
@@ -146,6 +238,169 @@ export default function App() {
     if (!rightPaneTabId) return null
     return allTabs.find((entry) => entry.tab.id === rightPaneTabId)?.workspaceId ?? null
   }, [allTabs, rightPaneTabId])
+
+  const recordTerminalPerfEvent = useCallback((tabId: string, event: string, value = 1) => {
+    if (!RENDERER_PERF_KEYS.includes(event as RendererPerfKey)) return
+    let counters = terminalPerfRef.current.get(tabId)
+    if (!counters) {
+      counters = createRendererPerfCounters()
+      terminalPerfRef.current.set(tabId, counters)
+    }
+    counters[event as RendererPerfKey] += value
+  }, [])
+
+  useEffect(() => {
+    const handlePerfToggle = (event: KeyboardEvent) => {
+      if (!event.metaKey || !event.shiftKey || event.key.toLowerCase() !== 'p') return
+      if (isEditableShortcutTarget(event.target)) return
+      event.preventDefault()
+      setShowPerfOverlay((current) => {
+        const next = !current
+        localStorage.setItem('emu-perf-overlay', next ? '1' : '0')
+        return next
+      })
+    }
+
+    window.addEventListener('keydown', handlePerfToggle, true)
+    return () => window.removeEventListener('keydown', handlePerfToggle, true)
+  }, [])
+
+  useEffect(() => {
+    if (!showPerfOverlay) return
+    let disposed = false
+
+    const captureRendererSnapshot = (): RendererPerfSnapshot => {
+      const sessions: RendererPerfSnapshot['sessions'] = {}
+      for (const [sessionId, counters] of terminalPerfRef.current.entries()) {
+        sessions[sessionId] = cloneRendererPerfCounters(counters)
+      }
+      return { capturedAt: Date.now(), sessions }
+    }
+
+    const buildOverlayModel = (main: PerfStatsSnapshot, renderer: RendererPerfSnapshot): PerfOverlayModel => {
+      const previous = perfPreviousSnapshotRef.current
+      const seconds = previous
+        ? Math.max(0.001, (main.capturedAt - previous.main.capturedAt) / 1000)
+        : PERF_POLL_MS / 1000
+      const mainBySession = new Map(main.sessions.map((session) => [session.sessionId, session]))
+      const rows: PerfRow[] = allTabs.map(({ tab }) => {
+        const mainSession = mainBySession.get(tab.id)
+        const previousMainSession = previous?.main.sessions.find((session) => session.sessionId === tab.id)
+        const previousRenderer = previous?.renderer
+        const visible = tab.id === selectedTabId || (layoutMode === 'split' && tab.id === rightPaneTabId)
+
+        return {
+          id: tab.id,
+          name: tab.name,
+          visible,
+          mainBytesPerSec: rate(mainSession?.dataBytes ?? 0, previousMainSession?.dataBytes ?? 0, seconds),
+          mainEventsPerSec: rate(mainSession?.dataEvents ?? 0, previousMainSession?.dataEvents ?? 0, seconds),
+          ipcPerSec: rate(mainSession?.ipcMessages ?? 0, previousMainSession?.ipcMessages ?? 0, seconds),
+          rendererBytesPerSec: rate(
+            getRendererCounter(renderer, tab.id, 'ptyDataBytes'),
+            getRendererCounter(previousRenderer, tab.id, 'ptyDataBytes'),
+            seconds
+          ),
+          hiddenBytesPerSec: rate(
+            getRendererCounter(renderer, tab.id, 'hiddenPtyDataBytes'),
+            getRendererCounter(previousRenderer, tab.id, 'hiddenPtyDataBytes'),
+            seconds
+          ),
+          terminalWritesPerSec: rate(
+            getRendererCounter(renderer, tab.id, 'terminalWriteCalls'),
+            getRendererCounter(previousRenderer, tab.id, 'terminalWriteCalls'),
+            seconds
+          ),
+          processPollsPerSec: rate(
+            (mainSession?.processPolls ?? 0) + getRendererCounter(renderer, tab.id, 'processPolls'),
+            (previousMainSession?.processPolls ?? 0) + getRendererCounter(previousRenderer, tab.id, 'processPolls'),
+            seconds
+          ),
+          outputFlushesPerSec: rate(
+            getRendererCounter(renderer, tab.id, 'outputFlushes'),
+            getRendererCounter(previousRenderer, tab.id, 'outputFlushes'),
+            seconds
+          ),
+          totalMainBytes: mainSession?.dataBytes ?? 0,
+          totalRendererBytes: getRendererCounter(renderer, tab.id, 'ptyDataBytes')
+        }
+      }).sort((a, b) => (
+        b.rendererBytesPerSec + b.mainBytesPerSec + b.terminalWritesPerSec -
+        (a.rendererBytesPerSec + a.mainBytesPerSec + a.terminalWritesPerSec)
+      ))
+
+      const previousMain = previous?.main
+      const previousRenderer = previous?.renderer
+      const rendererTotal = (key: RendererPerfKey) =>
+        Object.keys(renderer.sessions).reduce((sum, sessionId) => sum + getRendererCounter(renderer, sessionId, key), 0)
+      const previousRendererTotal = (key: RendererPerfKey) =>
+        previousRenderer ? Object.keys(previousRenderer.sessions).reduce((sum, sessionId) => sum + getRendererCounter(previousRenderer, sessionId, key), 0) : 0
+      const webglActivations = rendererTotal('webglActivations')
+      const webglFailures = rendererTotal('webglFailures')
+      const webglContextLosses = rendererTotal('webglContextLosses')
+      const webglDisabled = rendererTotal('webglDisabled')
+      const webglStatus =
+        webglActivations > 0 ? 'on' :
+          webglFailures > 0 ? 'failed' :
+            webglDisabled > 0 ? 'off' :
+              'pending'
+
+      return {
+        capturedAt: main.capturedAt,
+        mainCpuPercent: main.process.cpuPercent,
+        mainMemoryMb: memoryMb(main.process.memory),
+        webglStatus,
+        webglActivations,
+        webglFailures,
+        webglContextLosses,
+        webglDisabled,
+        vibrancyDisabled: window.api.diagnosticsConfig.vibrancyDisabled,
+        activePtys: main.sessions.length,
+        totalMainBytesPerSec: rate(main.totals.dataBytes, previousMain?.totals.dataBytes ?? 0, seconds),
+        totalMainEventsPerSec: rate(main.totals.dataEvents, previousMain?.totals.dataEvents ?? 0, seconds),
+        totalIpcPerSec: rate(main.totals.ipcMessages, previousMain?.totals.ipcMessages ?? 0, seconds),
+        totalRendererBytesPerSec: rate(rendererTotal('ptyDataBytes'), previousRendererTotal('ptyDataBytes'), seconds),
+        totalHiddenBytesPerSec: rate(rendererTotal('hiddenPtyDataBytes'), previousRendererTotal('hiddenPtyDataBytes'), seconds),
+        totalTerminalWritesPerSec: rate(rendererTotal('terminalWriteCalls'), previousRendererTotal('terminalWriteCalls'), seconds),
+        totalProcessPollsPerSec: rate(
+          main.totals.processPolls + rendererTotal('processPolls'),
+          (previousMain?.totals.processPolls ?? 0) + previousRendererTotal('processPolls'),
+          seconds
+        ),
+        totalOutputFlushesPerSec: rate(rendererTotal('outputFlushes'), previousRendererTotal('outputFlushes'), seconds),
+        rows
+      }
+    }
+
+    const poll = async () => {
+      try {
+        if (typeof window.api.perfGetStats !== 'function') {
+          throw new Error('Performance diagnostics are missing from the preload API. Restart Emu so the updated main/preload process is running.')
+        }
+        const [main, renderer] = await Promise.all([
+          window.api.perfGetStats(),
+          Promise.resolve(captureRendererSnapshot())
+        ])
+        if (disposed) return
+        const model = buildOverlayModel(main, renderer)
+        setPerfOverlayModel(model)
+        setPerfOverlayError(null)
+        perfPreviousSnapshotRef.current = { main, renderer }
+      } catch (err) {
+        if (!disposed) {
+          setPerfOverlayModel(null)
+          setPerfOverlayError(err instanceof Error ? err.message : 'Performance diagnostics failed.')
+        }
+      }
+    }
+
+    void poll()
+    const interval = window.setInterval(() => { void poll() }, PERF_POLL_MS)
+    return () => {
+      disposed = true
+      window.clearInterval(interval)
+    }
+  }, [allTabs, layoutMode, rightPaneTabId, selectedTabId, showPerfOverlay])
 
   const clampMarkdownWidth = useCallback((width: number) => {
     const areaWidth = terminalAreaRef.current?.getBoundingClientRect().width ?? window.innerWidth
@@ -196,6 +451,30 @@ export default function App() {
     setSelectedId(workspace.id)
     setActivePaneId(tabId)
   }, [])
+
+  useEffect(() => {
+    const handleTopTabShortcut = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || event.metaKey || event.altKey || event.key !== 'Tab') return
+      if (isEditableShortcutTarget(event.target)) return
+
+      const tabs = selectedSession?.tabs ?? []
+      if (tabs.length <= 1) return
+
+      event.preventDefault()
+      event.stopPropagation()
+
+      const selectedIndex = selectedTabId
+        ? tabs.findIndex((tab) => tab.id === selectedTabId)
+        : -1
+      const currentIndex = selectedIndex >= 0 ? selectedIndex : 0
+      const direction = event.shiftKey ? -1 : 1
+      const nextIndex = (currentIndex + direction + tabs.length) % tabs.length
+      selectTopTab(tabs[nextIndex].id)
+    }
+
+    window.addEventListener('keydown', handleTopTabShortcut, true)
+    return () => window.removeEventListener('keydown', handleTopTabShortcut, true)
+  }, [selectedSession, selectedTabId, selectTopTab])
 
   const getSelectedTabIdForWorkspace = useCallback((workspaceId: string): string | null => {
     const workspace = sessionsRef.current.find((session) => session.id === workspaceId)
@@ -399,6 +678,7 @@ export default function App() {
           }
         : session
     )))
+    terminalPerfRef.current.delete(id)
     setActivePaneId((current) => (current === id ? nextTab.id : current))
     setRightPaneTabId((current) => (current === id ? null : current))
     setOpenHistoryFor((current) => (current === id ? null : current))
@@ -411,6 +691,7 @@ export default function App() {
     const deletedTabIds = new Set(deleted?.tabs.map((tab) => tab.id) ?? [])
     const remaining = current.filter((session) => session.id !== id)
     const next = [...remaining].sort((a, b) => b.lastActiveAt.getTime() - a.lastActiveAt.getTime())[0]
+    deletedTabIds.forEach((tabId) => terminalPerfRef.current.delete(tabId))
     setSessions(remaining)
     setSelectedId((cur) => (cur === id ? (next?.id ?? cur) : cur))
     setActivePaneId((cur) => (deletedTabIds.has(cur) ? (next?.selectedTabId ?? cur) : cur))
@@ -577,6 +858,7 @@ export default function App() {
                 onClosePane={isLeftSlot ? handleCloseLeftPane : isRightSlot ? handleCloseRightPane : undefined}
                 onOpenSettings={() => setShowSettings(true)}
                 onOpenMarkdown={handleOpenMarkdown}
+                onPerfEvent={recordTerminalPerfEvent}
                 focusSignal={terminalFocusSignal}
                 layoutSignal={terminalLayoutSignal}
                 xtermTheme={getTheme(themeId).terminal}
@@ -635,6 +917,16 @@ export default function App() {
           activeThemeId={themeId}
           onSelectTheme={handleSelectTheme}
           onClose={() => setShowSettings(false)}
+        />
+      )}
+      {showPerfOverlay && (
+        <PerformanceOverlay
+          model={perfOverlayModel}
+          error={perfOverlayError}
+          onClose={() => {
+            localStorage.setItem('emu-perf-overlay', '0')
+            setShowPerfOverlay(false)
+          }}
         />
       )}
     </div>

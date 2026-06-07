@@ -75,8 +75,41 @@ type PtyWriteSequenceResult = {
   reason: 'not-found' | 'invalid-input'
 }
 
+interface PtyPerfStats {
+  sessionId: string
+  pid: number
+  createdAt: number
+  dataEvents: number
+  dataBytes: number
+  ipcMessages: number
+  ipcBytes: number
+  ptyWriteEvents: number
+  ptyWriteBytes: number
+  resizeEvents: number
+  processPolls: number
+  lastDataAt: number | null
+}
+
+interface PerfStatsSnapshot {
+  capturedAt: number
+  process: {
+    cpuPercent: number | null
+    idleWakeupsPerSecond: number | null
+    memory?: Record<string, number>
+  }
+  appMetrics: unknown[]
+  totals: Omit<PtyPerfStats, 'sessionId' | 'pid' | 'createdAt' | 'lastDataAt'>
+  sessions: PtyPerfStats[]
+}
+
+interface DiagnosticsConfig {
+  webglEnabled: boolean
+  vibrancyDisabled: boolean
+}
+
 interface Window {
   api: {
+    diagnosticsConfig: DiagnosticsConfig
     ptyCreate: (sessionId: string, options?: { cwd?: string | null }) => Promise<{ pid: number }>
     ptyWrite: (sessionId: string, data: string) => void
     ptyWriteSequence: (sessionId: string, writes: PtyWriteChunk[]) => Promise<PtyWriteSequenceResult>
@@ -92,6 +125,7 @@ interface Window {
     markdownImage: (input: MarkdownOpenInput) => Promise<MarkdownImageResult>
     ptyGetProcess: (sessionId: string) => Promise<string | null>
     imageSaveTemp: (dataUrl: string, suggestedName?: string) => Promise<string>
+    perfGetStats: () => Promise<PerfStatsSnapshot>
     optimizerGetSettings: () => Promise<PublicOptimizerSettings>
     optimizerSaveSettings: (input: OptimizerSettingsInput) => Promise<PublicOptimizerSettings>
     optimizerClearSettings: () => Promise<PublicOptimizerSettings>

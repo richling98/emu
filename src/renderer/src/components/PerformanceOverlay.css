@@ -1,0 +1,186 @@
+.perf-overlay {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  width: min(760px, calc(100vw - 28px));
+  max-height: min(520px, calc(100vh - 64px));
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(12, 14, 20, 0.94);
+  color: rgba(245, 247, 255, 0.9);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
+  font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  -webkit-app-region: no-drag;
+}
+
+.perf-overlay__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.perf-overlay__title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.perf-overlay__title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.perf-overlay__badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.perf-overlay__badge--on {
+  background: rgba(166, 227, 161, 0.16);
+  color: #a6e3a1;
+}
+
+.perf-overlay__badge--failed {
+  background: rgba(243, 139, 168, 0.16);
+  color: #f38ba8;
+}
+
+.perf-overlay__badge--pending {
+  background: rgba(245, 247, 255, 0.11);
+  color: rgba(245, 247, 255, 0.62);
+}
+
+.perf-overlay__badge--off {
+  background: rgba(250, 179, 135, 0.14);
+  color: #fab387;
+}
+
+.perf-overlay__subtitle {
+  margin-top: 2px;
+  color: rgba(245, 247, 255, 0.5);
+}
+
+.perf-overlay__close {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(245, 247, 255, 0.7);
+  cursor: pointer;
+  font: inherit;
+}
+
+.perf-overlay__close:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
+.perf-overlay__summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.perf-overlay__summary > div {
+  min-width: 0;
+  padding: 8px 10px;
+  background: rgba(20, 24, 34, 0.96);
+}
+
+.perf-overlay__summary span {
+  display: block;
+  color: rgba(245, 247, 255, 0.48);
+  white-space: nowrap;
+}
+
+.perf-overlay__summary strong {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  color: #ffffff;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.perf-overlay__error {
+  padding: 9px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(243, 139, 168, 0.12);
+  color: #ffd6df;
+}
+
+.perf-overlay__table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: auto;
+}
+
+.perf-overlay__table th,
+.perf-overlay__table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.perf-overlay__table th:first-child,
+.perf-overlay__table td:first-child {
+  max-width: 220px;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+}
+
+.perf-overlay__table th {
+  color: rgba(245, 247, 255, 0.54);
+  font-weight: 600;
+}
+
+.perf-overlay__table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.perf-overlay__dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: rgba(245, 247, 255, 0.28);
+  vertical-align: middle;
+}
+
+.perf-overlay__dot.is-visible {
+  background: #a6e3a1;
+}
+
+.perf-overlay__empty {
+  color: rgba(245, 247, 255, 0.48);
+  text-align: center !important;
+}
+
+@media (max-width: 720px) {
+  .perf-overlay__summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
