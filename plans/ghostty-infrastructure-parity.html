@@ -478,6 +478,61 @@
     rearchitecture question we'll need to answer if we want true parity.
   </div>
 
+  <h2>How We Solve Memory Overhead</h2>
+  <div class="callout warn">
+    <strong>Electron memory can be reduced, but not eliminated.</strong> The ~200–400 MB number is
+    mostly Chromium, V8, GPU process, and renderer baseline. The realistic plan is to reduce
+    incremental memory per terminal now, then remove the Chromium baseline with Tauri or the
+    native Swift rebuild.
+  </div>
+  <div class="card">
+    <div class="card-title">Phase 1 memory pass: budget, cap, dispose, lazy-load</div>
+    <table>
+      <thead><tr><th>Action</th><th>Why it helps</th><th>Target</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Track memory with <code>app.getAppMetrics()</code> and <code>process.getProcessMemoryInfo()</code></td>
+          <td>Turns memory into a regression budget instead of a vague complaint</td>
+          <td>Cold app, 1 terminal, 10 terminals, and flood-output scenarios</td>
+        </tr>
+        <tr>
+          <td>Keep tabs/splits inside one renderer process</td>
+          <td>Avoids paying a Chromium renderer baseline for every terminal surface</td>
+          <td>Extra terminal panes should add tens of MB, not another full app</td>
+        </tr>
+        <tr>
+          <td>Make scrollback and output capture adaptive</td>
+          <td>xterm.js buffer rows, command-output previews, and captured history are the memory that grows with usage</td>
+          <td>Default 5k rows, lower under pressure, optional disk-backed history later</td>
+        </tr>
+        <tr>
+          <td>Dispose closed terminals aggressively; compact hidden ones</td>
+          <td>Releases xterm buffers, WebGL glyph atlases, listeners, resize observers, and PTY references</td>
+          <td>No retained terminal object or GPU context after close; no lost session for hidden tabs</td>
+        </tr>
+        <tr>
+          <td>Lazy-load AI drawers, settings, theme UI, and history views</td>
+          <td>Keeps startup and idle memory focused on the active terminal path</td>
+          <td>Load secondary UI only when opened</td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="margin-top:10px">
+      Success criteria: ship a memory smoke test that opens many tabs, writes large output, closes
+      them, and verifies memory returns near baseline. This will not make Electron as small as
+      Ghostty, but it should make Emu feel predictable instead of leaky.
+    </p>
+  </div>
+  <div class="card">
+    <div class="card-title">Architecture escape hatch: remove Chromium when memory becomes the priority</div>
+    <p>
+      If memory overhead becomes the top complaint, the next step is not more Electron tuning.
+      Tauri cuts the baseline by replacing bundled Chromium with macOS WKWebView while preserving
+      most React code. The full Swift + Metal rebuild is the final answer: it removes the web
+      runtime entirely and is the path to Ghostty-class ~50–80 MB memory.
+    </p>
+  </div>
+
   <!-- ── PHASE 1 ── -->
   <div class="phase-header">
     <div class="phase-label p1">Phase 1</div>
@@ -863,44 +918,51 @@ ptyProcess.onData((data) => {
       </tr>
       <tr>
         <td>5</td>
+        <td>Memory budget + renderer cleanup pass</td>
+        <td><span class="badge badge-yellow">2–3 days</span></td>
+        <td><span class="badge badge-yellow">Medium</span></td>
+        <td><span class="badge badge-green">1</span></td>
+      </tr>
+      <tr>
+        <td>6</td>
         <td>xterm.js performance option tuning</td>
         <td><span class="badge badge-green">Hours</span></td>
         <td><span class="badge badge-yellow">Medium</span></td>
         <td><span class="badge badge-green">1</span></td>
       </tr>
       <tr>
-        <td>6</td>
+        <td>7</td>
         <td>Synchronized rendering (DEC 2026)</td>
         <td><span class="badge badge-green">Hours</span></td>
         <td><span class="badge badge-yellow">Medium</span></td>
         <td><span class="badge badge-blue">2</span></td>
       </tr>
       <tr>
-        <td>7</td>
+        <td>8</td>
         <td>Kitty keyboard protocol</td>
         <td><span class="badge badge-yellow">1 week</span></td>
         <td><span class="badge badge-yellow">Medium</span></td>
         <td><span class="badge badge-blue">2</span></td>
       </tr>
       <tr>
-        <td>8</td>
+        <td>9</td>
         <td>SharedArrayBuffer PTY bridge</td>
         <td><span class="badge badge-orange">2 weeks</span></td>
         <td><span class="badge badge-green">High</span></td>
         <td><span class="badge badge-orange">3</span></td>
       </tr>
       <tr>
-        <td>9</td>
+        <td>10</td>
         <td>libghostty-vt native addon (N-API)</td>
         <td><span class="badge badge-red">4–8 weeks</span></td>
         <td><span class="badge badge-purple">Highest</span></td>
         <td><span class="badge badge-orange">3</span></td>
       </tr>
       <tr>
-        <td>10</td>
-        <td>Tauri migration (if needed after Phase 3)</td>
+        <td>11</td>
+        <td>Tauri migration (memory overhead escape hatch)</td>
         <td><span class="badge badge-red">2–4 weeks</span></td>
-        <td><span class="badge badge-purple">Native perf</span></td>
+        <td><span class="badge badge-purple">Memory</span></td>
         <td><span class="badge badge-purple">4</span></td>
       </tr>
     </tbody>
@@ -942,7 +1004,8 @@ ptyProcess.onData((data) => {
   <div class="card" style="border-color: #a6e3a140;">
     <div class="card-title" style="color:#a6e3a1;">Now: Phase 1 quick wins — ~3 days</div>
     <p>
-      WebGL lock, PTY batching, xterm.js tuning, and enabling the Electron sandbox.
+      WebGL lock, PTY batching, xterm.js tuning, enabling the Electron sandbox, and the
+      memory budget/reclamation pass.
       Zero architectural risk. Ship as a "performance &amp; reliability" release.
       These buy goodwill with users while the native rebuild is planned.
     </p>

@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Plan: Native Markdown Viewer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #101115;
+      color: #e8e8e8;
+      line-height: 1.58;
+      padding: 38px 24px;
+    }
+    .container { max-width: 980px; margin: 0 auto; }
+    h1 {
+      font-size: 1.8rem;
+      line-height: 1.15;
+      font-weight: 720;
+      color: #f2f5ff;
+      margin-bottom: 6px;
+      letter-spacing: 0;
+    }
+    .subtitle { color: #8e98a8; font-size: 0.9rem; margin-bottom: 30px; }
+    h2 {
+      margin: 34px 0 13px;
+      font-size: 0.98rem;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #8bd3dd;
+    }
+    h3 {
+      margin: 18px 0 8px;
+      font-size: 1rem;
+      color: #f2f5ff;
+    }
+    p { color: #c4cbd6; margin-bottom: 10px; font-size: 0.93rem; }
+    ul { margin: 8px 0 14px 20px; color: #c4cbd6; font-size: 0.92rem; }
+    li { margin: 6px 0; }
+    code {
+      font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+      font-size: 0.82rem;
+      background: #20242c;
+      color: #ffcc8f;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    pre {
+      background: #151922;
+      border: 1px solid #2b3340;
+      border-radius: 8px;
+      padding: 14px 16px;
+      overflow-x: auto;
+      color: #d8dee9;
+      font-family: "JetBrains Mono", "SF Mono", Menlo, monospace;
+      font-size: 0.82rem;
+      line-height: 1.55;
+      margin: 12px 0 18px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.87rem;
+      margin: 12px 0 18px;
+    }
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      padding: 9px 10px;
+      border-bottom: 1px solid #262c36;
+    }
+    th { color: #8bd3dd; font-weight: 650; }
+    td { color: #c4cbd6; }
+    .card {
+      background: #171b23;
+      border: 1px solid #2b3340;
+      border-radius: 8px;
+      padding: 18px 20px;
+      margin: 12px 0 16px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin: 14px 0 18px;
+    }
+    .metric {
+      background: #171b23;
+      border: 1px solid #2b3340;
+      border-radius: 8px;
+      padding: 14px 15px;
+    }
+    .metric strong {
+      display: block;
+      color: #f2f5ff;
+      font-size: 0.9rem;
+      margin-bottom: 5px;
+    }
+    .metric span { color: #aeb8c7; font-size: 0.86rem; }
+    .phase {
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr);
+      gap: 14px;
+      margin: 18px 0;
+    }
+    .num {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: #25343d;
+      color: #8bd3dd;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 750;
+      font-size: 0.82rem;
+    }
+    .phase-body {
+      background: #171b23;
+      border: 1px solid #2b3340;
+      border-radius: 8px;
+      padding: 16px 18px;
+    }
+    .phase-body h3 { margin-top: 0; }
+    .tag {
+      display: inline-block;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #11151b;
+      background: #8bd3dd;
+      border-radius: 999px;
+      padding: 2px 8px;
+      margin-right: 6px;
+      font-weight: 750;
+    }
+    .tag.secondary { background: #f0b67f; }
+    .tag.soft { background: #a7d489; }
+    .note {
+      border-left: 3px solid #f0b67f;
+      padding: 10px 14px;
+      background: rgba(240, 182, 127, 0.08);
+      color: #d7c0aa;
+      margin: 12px 0 16px;
+      font-size: 0.9rem;
+    }
+    .checklist li { list-style: none; margin-left: -18px; }
+    .checklist li::before { content: "[ ] "; color: #8bd3dd; font-family: "JetBrains Mono", monospace; }
+    @media (max-width: 820px) {
+      body { padding: 26px 16px; }
+      .grid { grid-template-columns: 1fr; }
+      .phase { grid-template-columns: 1fr; }
+      .num { display: none; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>Native Markdown Viewer Implementation Plan</h1>
+  <p class="subtitle">Emu feature plan - click a Markdown path in terminal output and render it in a collapsible right-side pop-out.</p>
+
+  <div class="card">
+    <p><strong>Goal:</strong> When a user Cmd-clicks a local Markdown file link in Emu, Emu should open a native, read-only Markdown viewer in a right-hand pop-out pane instead of sending the file to Finder or the system default app.</p>
+    <p><strong>Core assumption:</strong> "Markdown file link" means a local path visible in terminal output, including absolute paths, relative paths, and <code>file://</code> links that point to <code>.md</code>-style files. Web URLs should continue opening in the browser.</p>
+  </div>
+
+  <h2>Current Codebase Facts</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Area</th>
+        <th>What exists today</th>
+        <th>Implication</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>TerminalPane.tsx</code></td>
+        <td>Registers xterm link providers for web URLs, bare domains, and local-looking file paths.</td>
+        <td>The click interception point already exists. We should extend it rather than adding a separate global click layer.</td>
+      </tr>
+      <tr>
+        <td><code>preload/index.ts</code></td>
+        <td>Exposes safe IPC methods such as <code>openExternal</code> and <code>openPath</code>.</td>
+        <td>Markdown file reads must be added here because the renderer is sandboxed and has no Node filesystem access.</td>
+      </tr>
+      <tr>
+        <td><code>main/index.ts</code></td>
+        <td>Validates external URLs and absolute paths before delegating to Electron shell APIs.</td>
+        <td>File validation belongs in the main process. The renderer should never decide that a local file is safe to read.</td>
+      </tr>
+      <tr>
+        <td><code>App.tsx</code></td>
+        <td>Owns terminal sessions, split panes, active pane state, and settings overlays.</td>
+        <td>The Markdown pop-out should be owned here so it can sit on the right edge of the app without becoming a terminal session or changing split-screen state.</td>
+      </tr>
+      <tr>
+        <td><code>package.json</code></td>
+        <td>No Markdown renderer dependency is installed.</td>
+        <td>Add a small renderer dependency such as <code>markdown-it</code>, configured with raw HTML disabled.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Product Shape</h2>
+  <div class="grid">
+    <div class="metric">
+      <strong>Open behavior</strong>
+      <span>Cmd-click <code>README.md</code>, <code>./docs/foo.md</code>, <code>/abs/file.md</code>, or <code>file:///abs/file.md</code> opens the Markdown in a right-hand pop-out.</span>
+    </div>
+    <div class="metric">
+      <strong>Viewer surface</strong>
+      <span>A right-side pop-out overlays the terminal area, keeps terminals alive, and has Preview / Markdown, Collapse, Close, filename, refresh, and open externally controls.</span>
+    </div>
+    <div class="metric">
+      <strong>Markdown links</strong>
+      <span>Links inside rendered Markdown keep web URLs external, open local Markdown internally, and use the existing path opener for other local files.</span>
+    </div>
+    <div class="metric">
+      <strong>View modes</strong>
+      <span>Preview mode renders rich text by default. Markdown mode shows the raw source in a monospaced, selectable, scrollable code view.</span>
+    </div>
+  </div>
+
+  <div class="note">
+    The most important technical gap is current working directory tracking. Existing relative path detection advertises <code>./relative</code> links, but <code>shell:openPath</code> only accepts absolute paths. Native Markdown support should fix that properly rather than guessing from the app launch directory.
+  </div>
+
+  <h2>Pop-Out Behavior</h2>
+  <div class="card">
+    <p>The Markdown viewer should behave like a right-hand document drawer, not like a terminal tab. Opening Markdown should not create a new PTY session, rename a tab, or force split-screen mode.</p>
+    <ul>
+      <li><strong>Expanded:</strong> The pop-out is anchored to the right edge of <code>.terminal-area</code>, overlays the terminal surface, and uses a fixed responsive width such as <code>min(520px, 42vw)</code>.</li>
+      <li><strong>Collapsed:</strong> Pressing Collapse shrinks it to a narrow right-edge rail that shows a document icon, filename tooltip, and expand button. Terminal interaction should be available across the remaining space.</li>
+      <li><strong>Closed:</strong> Pressing Close removes the Markdown document from view entirely. Re-clicking any Markdown link opens the latest document expanded again.</li>
+      <li><strong>Split-screen:</strong> The pop-out still anchors to the far right of the app. It overlays whichever terminal content is on the right side without reassigning the right split pane.</li>
+      <li><strong>Focus:</strong> Opening the pop-out moves keyboard focus into the document. Closing or collapsing returns focus to the active terminal pane.</li>
+    </ul>
+  </div>
+
+  <h2>Preview And Markdown Modes</h2>
+  <div class="card">
+    <p>The pop-out should match standard Markdown file viewers: users can toggle between a rendered Preview mode and a raw Markdown source mode.</p>
+    <ul>
+      <li><strong>Preview mode:</strong> Default mode. Render headings, paragraphs, lists, tables, links, code blocks, blockquotes, and images using <code>markdown-it</code> with raw HTML disabled.</li>
+      <li><strong>Markdown mode:</strong> Show the exact file text from disk in a read-only monospaced source view. Preserve whitespace, indentation, fenced code blocks, and line wrapping. The source should be selectable and copyable.</li>
+      <li><strong>Toggle control:</strong> Add a segmented control in the toolbar labeled <code>Preview</code> and <code>Markdown</code>. The active segment should be visually clear and keyboard reachable.</li>
+      <li><strong>Scroll behavior:</strong> Preserve independent scroll positions for Preview and Markdown modes while the same document is open.</li>
+      <li><strong>Collapse behavior:</strong> Collapsing and expanding the pop-out should preserve the selected mode.</li>
+    </ul>
+  </div>
+
+  <h2>Architecture</h2>
+  <pre>Terminal output
+  -> xterm link provider in TerminalPane
+  -> resolve clicked path using pane cwd
+  -> main-process validation and Markdown read IPC
+  -> App-level Markdown pop-out opens on the right side
+  -> MarkdownPopout toggles between preview render and raw source
+  -> internal link clicks recurse through the same resolver</pre>
+
+  <h2>Files To Touch</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>File</th>
+        <th>Responsibility</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>package.json</code>, <code>package-lock.json</code></td>
+        <td>Add <code>markdown-it</code> and its type package if TypeScript needs it.</td>
+      </tr>
+      <tr>
+        <td><code>src/main/index.ts</code></td>
+        <td>Add safe Markdown file resolution/read IPC and optional local asset read IPC for images.</td>
+      </tr>
+      <tr>
+        <td><code>src/preload/index.ts</code></td>
+        <td>Expose <code>markdownOpen</code>, <code>markdownResolveLink</code>, and any image asset helper.</td>
+      </tr>
+      <tr>
+        <td><code>src/renderer/src/env.d.ts</code></td>
+        <td>Type the new IPC methods and result payloads.</td>
+      </tr>
+      <tr>
+        <td><code>src/renderer/src/components/TerminalPane.tsx</code></td>
+        <td>Route Markdown file clicks to an <code>onOpenMarkdown</code> callback, maintain pane cwd, and keep non-Markdown paths on the existing path-opening behavior.</td>
+      </tr>
+      <tr>
+        <td><code>src/renderer/src/App.tsx</code></td>
+        <td>Own app-level Markdown document state and render the right-hand pop-out without changing terminal tab or split-pane state.</td>
+      </tr>
+      <tr>
+        <td><code>src/renderer/src/components/MarkdownPopout.tsx</code></td>
+        <td>New read-only Markdown pop-out component with toolbar, Preview / Markdown mode state, rendered content, raw source content, loading state, error state, collapse state, and internal link handling.</td>
+      </tr>
+      <tr>
+        <td><code>src/renderer/src/components/MarkdownPopout.css</code></td>
+        <td>Right-hand pop-out layout, collapsed rail, mode segmented control, raw source view, transitions, and Markdown typography using existing theme variables.</td>
+      </tr>
+      <tr>
+        <td><code>README.md</code></td>
+        <td>Update the clickable file paths feature description after implementation.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Implementation Phases</h2>
+
+  <div class="phase">
+    <div class="num">1</div>
+    <div class="phase-body">
+      <h3><span class="tag">Foundation</span> Add current-directory tracking</h3>
+      <p>Add a small Emu-specific shell integration sequence that announces the session cwd before each prompt. Store it in <code>TerminalPane</code> as <code>currentWorkingDirectoryRef</code>.</p>
+      <ul>
+        <li>In <code>setupShellIntegration()</code>, append a zsh <code>precmd</code> hook that emits a private OSC sequence such as <code>ESC ] 633;EmuCwd=/absolute/path BEL</code>.</li>
+        <li>In <code>TerminalPane.tsx</code>, parse incoming PTY data for that OSC marker before <code>terminal.write(data)</code>.</li>
+        <li>Default cwd to the PTY spawn directory for sessions that have not emitted the marker yet.</li>
+        <li>Do not expose cwd in UI; it is only used to resolve relative links.</li>
+      </ul>
+      <pre>type PaneCwdState = {
+  cwd: string
+  updatedAt: number
+}</pre>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="num">2</div>
+    <div class="phase-body">
+      <h3><span class="tag">Safety</span> Add main-process Markdown file IPC</h3>
+      <p>Create validation helpers in <code>main/index.ts</code> so the renderer can ask for Markdown content without direct filesystem access.</p>
+      <ul>
+        <li>Accept only absolute resolved file paths after combining raw link text with the pane cwd.</li>
+        <li>Allow extensions <code>.md</code>, <code>.markdown</code>, <code>.mdown</code>, and <code>.mkd</code>.</li>
+        <li>Reject null bytes, directories, missing files, huge files, and non-UTF-8 read failures with user-readable errors.</li>
+        <li>Return metadata: normalized path, basename, parent directory, file size, mtime, and Markdown text.</li>
+      </ul>
+      <pre>interface MarkdownOpenResult {
+  ok: true
+  path: string
+  name: string
+  directory: string
+  markdown: string
+  size: number
+  mtimeMs: number
+}</pre>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="num">3</div>
+    <div class="phase-body">
+      <h3><span class="tag">Routing</span> Change file link activation</h3>
+      <p>Replace the current <code>activate: () =&gt; window.api.openPath(path)</code> behavior with a resolver that branches by file type and notifies <code>App.tsx</code> when Markdown should open.</p>
+      <ul>
+        <li>If the clicked path resolves to Markdown, call the new Markdown IPC and invoke <code>onOpenMarkdown(result)</code>.</li>
+        <li>If the clicked path is not Markdown, keep using <code>openPath</code>.</li>
+        <li>Add support for <code>file://</code> Markdown URLs in a custom link provider because safe external URLs intentionally exclude local file URLs.</li>
+        <li>Keep web URLs and bare domains unchanged.</li>
+      </ul>
+      <pre>async function openClickedFile(rawPath: string) {
+  const result = await window.api.markdownOpen({ rawPath, cwd: currentWorkingDirectoryRef.current })
+  if (result.ok) {
+    onOpenMarkdown(result)
+    return
+  }
+  if (result.reason === 'not-markdown') {
+    await window.api.openPath(result.path)
+  }
+}</pre>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="num">4</div>
+    <div class="phase-body">
+      <h3><span class="tag secondary">Viewer</span> Build the right-hand Markdown pop-out</h3>
+      <p>Add <code>MarkdownPopout.tsx</code> and render it from <code>App.tsx</code> as a right-edge overlay inside <code>.terminal-area</code>. Terminal components stay mounted, preserving PTY output, scrollback, agent state, and split-pane behavior.</p>
+      <ul>
+        <li>Toolbar: Preview / Markdown segmented control, Collapse, Close, filename, truncated full path, refresh, and open externally.</li>
+        <li>Expanded layout: right-anchored drawer with <code>min(520px, 42vw)</code> width and full height below the titlebar.</li>
+        <li>Collapsed layout: right-edge rail with an expand button and filename tooltip; document state remains loaded.</li>
+        <li>Preview content: Markdown rendered with <code>markdown-it</code>, <code>html: false</code>, and link handling through React click interception.</li>
+        <li>Markdown content: Raw file text rendered in a read-only <code>&lt;pre&gt;</code> / <code>&lt;code&gt;</code> source view with monospaced font, selectable text, and preserved whitespace.</li>
+        <li>Mode state: Store <code>markdownViewMode</code> as <code>'preview' | 'source'</code>. Default to <code>'preview'</code> whenever a new document opens, and preserve the mode across collapse/expand for the current document.</li>
+        <li>Scroll state: Keep separate preview and source scroll offsets so toggling does not feel like losing place.</li>
+        <li>States: loading, loaded, failed read, unsupported file, file changed on disk.</li>
+        <li>Keyboard: Escape collapses when expanded; Escape closes when already collapsed; focus returns to the active terminal pane.</li>
+      </ul>
+      <pre>&lt;MarkdownPopout
+  document={markdownDocument}
+  collapsed={markdownCollapsed}
+  viewMode={markdownViewMode}
+  onViewModeChange={setMarkdownViewMode}
+  onCollapse={() =&gt; setMarkdownCollapsed(true)}
+  onExpand={() =&gt; setMarkdownCollapsed(false)}
+  onClose={() =&gt; setMarkdownDocument(null)}
+  onRefresh={() =&gt; reopenMarkdown(markdownDocument.path)}
+  onOpenLink={(href) =&gt; openMarkdownRelativeLink(href, markdownDocument.directory)}
+/&gt;</pre>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="num">5</div>
+    <div class="phase-body">
+      <h3><span class="tag secondary">Links</span> Make rendered Markdown links feel native</h3>
+      <p>Intercept clicks inside the rendered Markdown document instead of allowing Chromium navigation.</p>
+      <ul>
+        <li><code>https://</code> and <code>http://</code> links call <code>openExternal</code>.</li>
+        <li>Relative Markdown links resolve against the current document directory and replace the viewer content.</li>
+        <li>Relative non-Markdown file links resolve and call <code>openPath</code>.</li>
+        <li>Anchor-only links such as <code>#usage</code> scroll within the viewer.</li>
+        <li>Link interception only applies in Preview mode. Markdown mode displays raw source as text, so Markdown syntax should not become clickable there.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="num">6</div>
+    <div class="phase-body">
+      <h3><span class="tag secondary">Assets</span> Support local images after text rendering works</h3>
+      <p>For seamless Markdown, local images should render instead of showing broken <code>file://</code> references.</p>
+      <ul>
+        <li>Add a main-process helper that reads allowed local image extensions and returns a data URL with a size cap.</li>
+        <li>Rewrite relative Markdown image URLs before rendering or post-process <code>img</code> tags after render.</li>
+        <li>Allow only common image extensions: <code>.png</code>, <code>.jpg</code>, <code>.jpeg</code>, <code>.gif</code>, <code>.webp</code>, <code>.svg</code> if SVG sanitization is explicitly handled; otherwise defer SVG.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="num">7</div>
+    <div class="phase-body">
+      <h3><span class="tag soft">Polish</span> Update docs and manual QA coverage</h3>
+      <p>Once behavior is implemented, update the user-facing feature list and run a focused verification pass.</p>
+      <ul>
+        <li>Update <code>README.md</code>: Markdown paths open in Emu; other file paths still open through the system.</li>
+        <li>Run <code>npm run build</code> to verify TypeScript and bundling.</li>
+        <li>Run the app and manually test absolute paths, relative paths after <code>cd</code>, split panes, <code>file://</code> Markdown URLs, broken files, large files, and links inside rendered Markdown.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Security Rules</h2>
+  <ul>
+    <li>Keep <code>nodeIntegration: false</code>, <code>contextIsolation: true</code>, and renderer sandboxing unchanged.</li>
+    <li>Never let rendered Markdown execute raw HTML or scripts. Configure the Markdown renderer with raw HTML disabled.</li>
+    <li>Never navigate the Electron window to clicked Markdown links. Route all link clicks through explicit IPC helpers.</li>
+    <li>Read files only through main-process IPC with extension, type, size, and path validation.</li>
+    <li>Keep <code>openExternal</code> limited to <code>http:</code> and <code>https:</code>.</li>
+  </ul>
+
+  <h2>Manual Test Matrix</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Scenario</th>
+        <th>Expected result</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>echo /Users/.../README.md</code>, Cmd-click path</td>
+        <td>Markdown pop-out opens expanded on the right-hand side.</td>
+      </tr>
+      <tr>
+        <td><code>cd docs</code>, <code>echo ./ghostty-feature-gaps.md</code>, Cmd-click path</td>
+        <td>Relative path resolves from the current shell cwd and opens in Emu.</td>
+      </tr>
+      <tr>
+        <td>Cmd-click <code>./package.json</code></td>
+        <td>Existing non-Markdown file behavior remains external/system open.</td>
+      </tr>
+      <tr>
+        <td>Rendered Markdown contains <code>[Other](./other.md)</code></td>
+        <td>Viewer navigates to the other Markdown file without leaving Emu.</td>
+      </tr>
+      <tr>
+        <td>Rendered Markdown contains <code>[Web](https://example.com)</code></td>
+        <td>Browser opens externally; Emu window does not navigate.</td>
+      </tr>
+      <tr>
+        <td>Split screen: click Markdown link in right pane</td>
+        <td>The pop-out anchors to the app's far right and does not reassign or replace the right terminal pane.</td>
+      </tr>
+      <tr>
+        <td>Press Collapse in the Markdown toolbar</td>
+        <td>The document shrinks to a narrow right-edge rail and terminal interaction remains available.</td>
+      </tr>
+      <tr>
+        <td>Press Expand from the collapsed rail</td>
+        <td>The same Markdown document expands without rereading unless the user presses Refresh.</td>
+      </tr>
+      <tr>
+        <td>Open a Markdown file for the first time</td>
+        <td>The pop-out opens in Preview mode with rich rendered Markdown.</td>
+      </tr>
+      <tr>
+        <td>Switch from Preview to Markdown mode</td>
+        <td>The pop-out shows the raw Markdown source with preserved whitespace, selectable text, and monospaced styling.</td>
+      </tr>
+      <tr>
+        <td>Switch from Markdown mode back to Preview</td>
+        <td>The rendered preview returns without rereading the file, and Preview links work again.</td>
+      </tr>
+      <tr>
+        <td>Collapse while Markdown mode is active, then expand</td>
+        <td>The pop-out remains in Markdown mode for the current document.</td>
+      </tr>
+      <tr>
+        <td>Press Close in the Markdown toolbar</td>
+        <td>The pop-out disappears and focus returns to the active terminal pane.</td>
+      </tr>
+      <tr>
+        <td>Markdown read fails or file is too large</td>
+        <td>Pane shows a concise error with Back to terminal and Open externally actions.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Implementation Checklist</h2>
+  <ul class="checklist">
+    <li>Add Markdown renderer dependency.</li>
+    <li>Add cwd OSC emission in shell integration and cwd tracking in <code>TerminalPane</code>.</li>
+    <li>Add main-process Markdown path resolution and file read IPC.</li>
+    <li>Expose and type the new preload APIs.</li>
+    <li>Change file-path link activation to route Markdown internally.</li>
+    <li>Add app-level Markdown document, collapsed state, and <code>markdownViewMode</code> state in <code>App.tsx</code>.</li>
+    <li>Create <code>MarkdownPopout.tsx</code> and <code>MarkdownPopout.css</code>.</li>
+    <li>Add Preview / Markdown segmented toggle with Preview as the default for newly opened documents.</li>
+    <li>Add raw Markdown source view with selectable monospaced text and preserved whitespace.</li>
+    <li>Intercept rendered Markdown links and route them safely.</li>
+    <li>Add Collapse, Expand, and Close behavior with focus restoration to the active terminal.</li>
+    <li>Add local image support or explicitly ship it as the first follow-up if time is constrained.</li>
+    <li>Update README.</li>
+    <li>Run <code>npm run build</code> and complete the manual test matrix.</li>
+  </ul>
+
+  <h2>Recommended First Cut</h2>
+  <div class="card">
+    <p>Build phases 1 through 5 first. That delivers the central user promise: local Markdown links open in a right-hand Emu pop-out, Preview mode renders rich Markdown, Markdown mode shows raw source, relative links work, Markdown-to-Markdown navigation stays native, and the user can collapse the document when they need more terminal space. Then add local images in phase 6 before calling the feature polished.</p>
+    <p>This keeps the first implementation surgical: one new pop-out component, one CSS file, focused IPC additions, app-level viewer and mode state, and a targeted change to the existing terminal link provider.</p>
+  </div>
+</div>
+</body>
+</html>

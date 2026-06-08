@@ -2,7 +2,7 @@
 
 ## Implementation Progress
 
-- [x] Plan captured and updated with `Project N` sidebar naming plus `Idea N` top-tab naming.
+- [x] Plan captured and updated with cwd-based sidebar naming plus `Project N` top-tab naming.
 - [x] Introduce workspace/top-tab data model in `App.tsx`.
 - [x] Add `TopTabBar` UI with hover pencil rename behavior.
 - [x] Rewire terminal rendering and split panes to use top-tab IDs.
@@ -18,15 +18,15 @@ You want Emu to add a second tab layer across the main terminal area, directly b
 
 The left sidebar tabs should represent the folder or broader workspace the user is working in. Inside whichever left sidebar item is selected, the new top navbar should show project or feature tabs for that same folder:
 
-- The left sidebar should default new workspace names to `Project 1`, `Project 2`, and so on, based on creation order. This replaces the current date/time-based default naming.
-- The first top tab should be named `Idea 1` by default.
-- The user can rename `Idea 1` to something meaningful, such as `Auth refactor`, `Bug fix`, or `Release prep`.
-- The user can create additional top tabs named `Idea 2`, `Idea 3`, and so on.
+- The left sidebar should show the folder name from the workspace cwd once the terminal reports it, such as `Emu-dev` for `/Users/rling/Documents/Vibing/Emu-dev`.
+- The first top tab should be named `Project 1` by default.
+- The user can rename `Project 1` to something meaningful, such as `Auth refactor`, `Bug fix`, or `Release prep`.
+- The user can create additional top tabs named `Project 2`, `Project 3`, and so on.
 - Each top tab should show a pencil icon on hover, matching the left sidebar rename affordance, so users can click the pencil and rename the tab inline.
 - Each top tab should have its own terminal process and terminal state.
 - When the user creates a new top tab, that terminal should start in the same folder that the first tab for that workspace is already in, so the new tab is immediately scoped to the same project folder.
 
-In short: left sidebar equals workspace or folder, with default names like `Project 1`; top tabs equal parallel efforts inside that workspace or folder, with default names like `Idea 1`.
+In short: left sidebar equals workspace or folder, with names derived from cwd folder names; top tabs equal parallel efforts inside that workspace or folder, with default names like `Project 1`.
 
 ## Current Repo Context
 
@@ -48,7 +48,7 @@ The current app has a single tab/session model:
 - The new top tabs should be scoped per left sidebar item. Selecting a different sidebar workspace shows that workspace's own top tabs.
 - A new top tab should inherit the first top tab's latest known cwd for that workspace. If that cwd is not known yet, it should inherit the active top tab's latest known cwd. If no cwd is known, it should fall back to the app's existing default startup cwd.
 - Renaming top tabs is local UI state for now unless the repo already has persistence added later.
-- Closing the last top tab in a workspace should be disallowed or should immediately recreate a default `Idea 1`; disallowing deletion is the cleaner first implementation.
+- Closing the last top tab in a workspace should be disallowed or should immediately recreate a default `Project 1`; disallowing deletion is the cleaner first implementation.
 - Split-screen should continue to work, but the draggable pane identity should move from sidebar session IDs to terminal tab IDs.
 
 ## Data Model Plan
@@ -157,14 +157,14 @@ Initial startup:
 
 - Create one workspace in the sidebar.
 - Name the first workspace `Project 1`.
-- That workspace contains one top tab named `Idea 1`.
+- That workspace contains one top tab named `Project 1`.
 - Render that tab active.
 - Spawn its PTY using the current default behavior.
 
 Creating a new left sidebar workspace:
 
 - Create a new workspace named `Project N`, where `N` is the next workspace creation ordinal.
-- That workspace starts with one top tab named `Idea 1`.
+- That workspace starts with one top tab named `Project 1`.
 - Select that workspace in single-pane mode, matching current behavior.
 
 Creating a new top tab:
@@ -175,7 +175,7 @@ Creating a new top tab:
   - Else prefer the currently selected top tab's `currentCwd`.
   - Else prefer the first tab `initialCwd`.
   - Else use `null` and allow main process fallback.
-- Create a new terminal tab named `Idea N`, where `N` is the next available idea-tab number in that workspace.
+- Create a new terminal tab named `Project N`, where `N` is the next available top-tab number in that workspace.
 - Select the new top tab.
 - Spawn its PTY with the inherited cwd.
 
@@ -214,14 +214,14 @@ Split-screen:
 
 1. Introduce the top-tab data model in `App.tsx`.
    - Add `TerminalTab` and workspace helper creation functions.
-   - Migrate existing session state initialization to create one `Project 1` workspace with one `Idea 1` top tab.
-   - Replace date/time default sidebar naming with `Project N` naming.
-   - Add `Idea N` naming for top tabs scoped to each workspace.
+   - Migrate existing session state initialization to create one workspace with one `Project 1` top tab.
+   - Replace date/time default sidebar naming with cwd-based folder naming.
+   - Add `Project N` naming for top tabs scoped to each workspace.
    - Add helpers for selecting, touching, renaming, creating, and deleting top tabs.
 
 2. Add `TopTabBar`.
    - Follow the sidebar's inline rename pattern.
-   - Show a pencil icon on hover for each idea tab.
+   - Show a pencil icon on hover for each top project tab.
    - Use simple icon buttons and compact tab styling.
    - Keep stable tab dimensions with ellipsis for long names.
 
@@ -276,13 +276,13 @@ Manual checks in `npm run dev`:
 
 Status: not run in this implementation pass; use this checklist for interactive Electron QA.
 
-- App starts with one sidebar workspace named `Project 1` and one top tab named `Idea 1`.
-- Create another sidebar workspace and confirm it is named `Project 2`.
-- Hover over `Idea 1`, click the pencil icon, rename it, switch away and back, and confirm the name remains.
-- Run `pwd`, `cd` into a repo folder, create `Idea 2`, and confirm `pwd` in `Idea 2` matches the inherited folder.
-- Create `Idea 3` and confirm numbering is stable.
+- App starts with one sidebar workspace that updates to its cwd folder name and one top tab named `Project 1`.
+- Create another sidebar workspace and confirm it also updates to its own cwd folder name.
+- Hover over `Project 1`, click the pencil icon, rename it, switch away and back, and confirm the name remains.
+- Run `pwd`, `cd` into a repo folder, create `Project 2`, and confirm `pwd` in `Project 2` matches the inherited folder.
+- Create `Project 3` and confirm numbering is stable.
 - Switch between top tabs and confirm each terminal keeps independent scrollback, composer text, and running process state.
-- Confirm each sidebar workspace gets its own independent `Idea 1` sequence.
+- Confirm each sidebar workspace gets its own independent `Project 1` sequence.
 - Delete a non-active top tab and confirm its PTY exits without affecting other tabs.
 - Try deleting the only top tab and confirm the UI prevents it.
 - Toggle split-screen and confirm pane sizing, focus, drag/drop, and close-pane behavior still work.
@@ -293,5 +293,5 @@ Status: not run in this implementation pass; use this checklist for interactive 
 
 - The existing term `Session` currently means left sidebar terminal tab. The new feature changes the product meaning of that layer, so the code may be clearer after a later rename pass.
 - Split-screen behavior is the highest-risk part because it currently uses sidebar session IDs. The first implementation should keep split behavior simple and test it manually.
-- The first tab's cwd is only known after shell integration reports it. If a user creates `Idea 2` immediately on app launch, the app may need to fall back to the default cwd.
+- The first tab's cwd is only known after shell integration reports it. If a user creates `Project 2` immediately on app launch, the app may need to fall back to the default cwd.
 - Cwd inheritance should be implemented through PTY spawn cwd, not by sending `cd ...` after startup, so startup is cleaner and avoids command-history pollution.
