@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, nativeImage, safeStorage } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, nativeImage, safeStorage, screen } from 'electron'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'path'
 import fs from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -10,6 +10,7 @@ import { fileURLToPath } from 'url'
 const ptyProcesses = new Map<string, pty.IPty>()
 const ptyPerfStats = new Map<string, PtyPerfStats>()
 const ptyOutputBatches = new Map<string, PtyOutputBatch>()
+const ptyOwnerWindowIds = new Map<string, number>()
 
 type OptimizerProvider = 'openai'
 
@@ -91,6 +92,50 @@ type PtyWriteSequenceResult = {
   reason: 'not-found' | 'invalid-input'
 }
 
+type AgentPermissionProvider = 'claude' | 'codex'
+
+interface AgentPermissionPrompt {
+  id: string
+  sessionId: string
+  provider: AgentPermissionProvider
+  summary: string
+  detail: string
+  rawExcerpt: string
+  fingerprint: string
+  createdAt: number
+  approveAction: PtyWriteChunk[]
+  denyAction: PtyWriteChunk[]
+}
+
+interface PendingAgentPermissionPrompt {
+  prompt: AgentPermissionPrompt
+  status: 'pending' | 'resolved' | 'dismissed'
+  ownerWindowId: number | null
+  createdAt: number
+}
+
+interface AgentPermissionOverlayPrompt {
+  id: string
+  sessionId: string
+  provider: AgentPermissionProvider
+  summary: string
+  detail: string
+  rawExcerpt: string
+  createdAt: number
+}
+
+interface AgentPermissionOverlayState {
+  prompts: AgentPermissionOverlayPrompt[]
+  activePromptId: string | null
+}
+
+type AgentPermissionOverlayAction = {
+  type: 'approve' | 'deny'
+  promptId: string
+} | {
+  type: 'previous' | 'next'
+}
+
 interface OptimizePromptResult {
   optimizedPrompt: string
 }
@@ -147,6 +192,25 @@ const MARKDOWN_IMAGE_MIME_BY_EXT = new Map([
   ['.gif', 'image/gif'],
   ['.webp', 'image/webp']
 ])
+const AGENT_PERMISSION_OVERLAY_WIDTH = 390
+const AGENT_PERMISSION_OVERLAY_HEIGHT = 168
+const AGENT_PERMISSION_OVERLAY_MARGIN = 16
+const AGENT_PERMISSION_RESOLVED_SUPPRESSION_MS = 2_000
+const DEBUG_AGENT_PERMISSION = process.env.EMU_DEBUG_AGENT_PERMISSION === '1' ||
+  process.env.THINKING_DEBUG_AGENT_PERMISSION === '1'
+
+let agentPermissionOverlayWindow: BrowserWindow | null = null
+const pendingAgentPermissionPrompts: PendingAgentPermissionPrompt[] = []
+const recentlyResolvedAgentPermissionPrompts = new Map<string, number>()
+let activeAgentPermissionPromptId: string | null = null
+let agentPermissionOverlayUserMoved = false
+let agentPermissionOverlayProgrammaticMoveUntil = 0
+let agentPermissionOverlayBounds: Electron.Rectangle | null = null
+
+function debugAgentPermission(event: string, details: Record<string, unknown> = {}): void {
+  if (!DEBUG_AGENT_PERMISSION) return
+  console.info('[agent-permission:main]', { event, ...details })
+}
 
 function createPtyPerfStats(sessionId: string, pid: number): PtyPerfStats {
   return {
@@ -215,6 +279,705 @@ function queuePtyOutput(sessionId: string, sender: Electron.WebContents, data: s
   if (!batch.timer) {
     batch.timer = setTimeout(() => flushPtyOutputBatch(sessionId), PTY_OUTPUT_BATCH_MS)
   }
+}
+
+function normalizePtyWriteChunks(input: unknown): PtyWriteChunk[] | null {
+  if (!Array.isArray(input) || input.length === 0 || input.length > 8) return null
+  const writes: PtyWriteChunk[] = []
+  for (const write of input) {
+    if (!write || typeof write !== 'object') return null
+    const data = (write as { data?: unknown }).data
+    const delayAfterMs = (write as { delayAfterMs?: unknown }).delayAfterMs
+    if (typeof data !== 'string' || data.length > 2000) return null
+    writes.push({
+      data,
+      delayAfterMs: typeof delayAfterMs === 'number'
+        ? Math.max(0, Math.min(2_000, delayAfterMs))
+        : undefined
+    })
+  }
+  return writes
+}
+
+async function writePtySequence(sessionId: string, writes: PtyWriteChunk[]): Promise<PtyWriteSequenceResult> {
+  const ptyProcess = ptyProcesses.get(sessionId)
+  if (!ptyProcess) return { ok: false, reason: 'not-found' }
+  if (!Array.isArray(writes) || writes.length === 0 || writes.length > 8) {
+    return { ok: false, reason: 'invalid-input' }
+  }
+
+  for (const write of writes) {
+    if (!write || typeof write.data !== 'string') return { ok: false, reason: 'invalid-input' }
+    const stats = ptyPerfStats.get(sessionId)
+    if (stats) {
+      stats.ptyWriteEvents += 1
+      stats.ptyWriteBytes += byteLength(write.data)
+    }
+    ptyProcess.write(write.data)
+    const delayAfterMs = typeof write.delayAfterMs === 'number'
+      ? Math.max(0, Math.min(2_000, write.delayAfterMs))
+      : 0
+    if (delayAfterMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayAfterMs))
+    }
+  }
+
+  return { ok: true }
+}
+
+function sanitizeAgentPermissionPrompt(input: unknown): AgentPermissionPrompt | null {
+  if (!input || typeof input !== 'object') return null
+  const candidate = input as Partial<AgentPermissionPrompt>
+  if (typeof candidate.id !== 'string' || candidate.id.length > 120) return null
+  if (typeof candidate.sessionId !== 'string' || candidate.sessionId.length > 120) return null
+  if (candidate.provider !== 'claude' && candidate.provider !== 'codex') return null
+  if (typeof candidate.fingerprint !== 'string' || candidate.fingerprint.length > 900) return null
+  if (typeof candidate.summary !== 'string' || !candidate.summary.trim()) return null
+  if (typeof candidate.detail !== 'string') return null
+  if (typeof candidate.rawExcerpt !== 'string') return null
+  const approveAction = normalizePtyWriteChunks(candidate.approveAction)
+  const denyAction = normalizePtyWriteChunks(candidate.denyAction)
+  if (!approveAction || !denyAction) return null
+
+  return {
+    id: candidate.id,
+    sessionId: candidate.sessionId,
+    provider: candidate.provider,
+    summary: candidate.summary.trim().slice(0, 120),
+    detail: candidate.detail.trim().slice(0, 140),
+    rawExcerpt: candidate.rawExcerpt.trim().slice(0, 1200),
+    fingerprint: candidate.fingerprint,
+    createdAt: typeof candidate.createdAt === 'number' ? candidate.createdAt : Date.now(),
+    approveAction,
+    denyAction
+  }
+}
+
+function serializeAgentPermissionState(): AgentPermissionOverlayState {
+  const prompts = pendingAgentPermissionPrompts
+    .filter((entry) => entry.status === 'pending')
+    .map<AgentPermissionOverlayPrompt>((entry) => ({
+      id: entry.prompt.id,
+      sessionId: entry.prompt.sessionId,
+      provider: entry.prompt.provider,
+      summary: entry.prompt.summary,
+      detail: entry.prompt.detail,
+      rawExcerpt: entry.prompt.rawExcerpt,
+      createdAt: entry.prompt.createdAt
+    }))
+  return { prompts, activePromptId: activeAgentPermissionPromptId }
+}
+
+function getActiveAgentPermissionPrompt(): PendingAgentPermissionPrompt | null {
+  if (!activeAgentPermissionPromptId) return null
+  return pendingAgentPermissionPrompts.find((entry) =>
+    entry.status === 'pending' && entry.prompt.id === activeAgentPermissionPromptId
+  ) ?? null
+}
+
+function getAgentPermissionOverlayDisplay(): Electron.Display {
+  const activePrompt = getActiveAgentPermissionPrompt()
+  const ownerWindow = activePrompt?.ownerWindowId !== null && activePrompt?.ownerWindowId !== undefined
+    ? BrowserWindow.fromId(activePrompt.ownerWindowId)
+    : null
+  return ownerWindow && !ownerWindow.isDestroyed() && !ownerWindow.isMinimized()
+    ? screen.getDisplayMatching(ownerWindow.getBounds())
+    : screen.getPrimaryDisplay()
+}
+
+function clampAgentPermissionOverlayBounds(
+  bounds: Electron.Rectangle,
+  display: Electron.Display
+): Electron.Rectangle {
+  const { workArea } = display
+  const width = AGENT_PERMISSION_OVERLAY_WIDTH
+  const height = AGENT_PERMISSION_OVERLAY_HEIGHT
+  const minX = workArea.x + AGENT_PERMISSION_OVERLAY_MARGIN
+  const minY = workArea.y + AGENT_PERMISSION_OVERLAY_MARGIN
+  const maxX = workArea.x + workArea.width - width - AGENT_PERMISSION_OVERLAY_MARGIN
+  const maxY = workArea.y + workArea.height - height - AGENT_PERMISSION_OVERLAY_MARGIN
+
+  return {
+    x: Math.round(Math.max(minX, Math.min(bounds.x, maxX))),
+    y: Math.round(Math.max(minY, Math.min(bounds.y, maxY))),
+    width,
+    height
+  }
+}
+
+function positionAgentPermissionOverlay(): void {
+  if (!agentPermissionOverlayWindow || agentPermissionOverlayWindow.isDestroyed()) return
+  const display = getAgentPermissionOverlayDisplay()
+  const { workArea } = display
+  const defaultBounds = {
+    x: Math.round(workArea.x + workArea.width - AGENT_PERMISSION_OVERLAY_WIDTH - AGENT_PERMISSION_OVERLAY_MARGIN),
+    y: Math.round(workArea.y + AGENT_PERMISSION_OVERLAY_MARGIN),
+    width: AGENT_PERMISSION_OVERLAY_WIDTH,
+    height: AGENT_PERMISSION_OVERLAY_HEIGHT
+  }
+  const nextBounds = agentPermissionOverlayUserMoved && agentPermissionOverlayBounds
+    ? clampAgentPermissionOverlayBounds(agentPermissionOverlayBounds, screen.getDisplayMatching(agentPermissionOverlayBounds))
+    : defaultBounds
+  agentPermissionOverlayBounds = nextBounds
+  agentPermissionOverlayProgrammaticMoveUntil = Date.now() + 250
+  agentPermissionOverlayWindow.setBounds(nextBounds)
+}
+
+function sendAgentPermissionState(): void {
+  if (!agentPermissionOverlayWindow || agentPermissionOverlayWindow.isDestroyed()) return
+  agentPermissionOverlayWindow.webContents.send('agent-permission:state', serializeAgentPermissionState())
+}
+
+function closeAgentPermissionOverlayIfEmpty(): void {
+  const hasPending = pendingAgentPermissionPrompts.some((entry) => entry.status === 'pending')
+  if (hasPending) return
+  activeAgentPermissionPromptId = null
+  if (agentPermissionOverlayWindow && !agentPermissionOverlayWindow.isDestroyed()) {
+    agentPermissionOverlayWindow.close()
+  }
+}
+
+function pruneInactiveAgentPermissionPrompts(): void {
+  for (let index = pendingAgentPermissionPrompts.length - 1; index >= 0; index--) {
+    if (pendingAgentPermissionPrompts[index].status !== 'pending') {
+      pendingAgentPermissionPrompts.splice(index, 1)
+    }
+  }
+}
+
+function buildAgentPermissionOverlayHtml(): string {
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';">
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: transparent;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      user-select: none;
+    }
+    .overlay {
+      width: 100vw;
+      height: 100vh;
+      padding: 11px;
+      color: #f8fafc;
+      background: rgba(29, 29, 31, 0.88);
+      border: 0.5px solid rgba(255, 255, 255, 0.18);
+      border-radius: 12px;
+      box-shadow: 0 14px 38px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+      backdrop-filter: blur(34px) saturate(180%);
+      -webkit-backdrop-filter: blur(34px) saturate(180%);
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      overflow: hidden;
+      -webkit-app-region: drag;
+    }
+    .header {
+      min-height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .title {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+      line-height: 1.2;
+      font-weight: 650;
+      color: rgba(255, 255, 255, 0.96);
+    }
+    .queue {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      -webkit-app-region: no-drag;
+    }
+    .count {
+      font-size: 10.5px;
+      line-height: 1;
+      color: rgba(235, 235, 245, 0.62);
+      white-space: nowrap;
+      padding-right: 2px;
+    }
+    .icon {
+      width: 22px;
+      height: 22px;
+      border: 0.5px solid rgba(255, 255, 255, 0.14);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.09);
+      color: rgba(255, 255, 255, 0.9);
+      font-size: 13px;
+      line-height: 1;
+      cursor: pointer;
+      -webkit-app-region: no-drag;
+    }
+    .icon:hover { background: rgba(255, 255, 255, 0.16); }
+    .summary {
+      flex: 0 1 auto;
+      margin: 0;
+      font-size: 12.5px;
+      line-height: 1.28;
+      font-weight: 520;
+      color: rgba(255, 255, 255, 0.94);
+      overflow: hidden;
+      overflow-wrap: anywhere;
+    }
+    .detail {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: hidden;
+      margin: 0;
+      color: rgba(235, 235, 245, 0.68);
+      font-size: 11.5px;
+      line-height: 1.25;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    .actions {
+      flex: 0 0 auto;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 7px;
+      -webkit-app-region: no-drag;
+    }
+    .button {
+      height: 29px;
+      border: 0.5px solid rgba(255, 255, 255, 0.15);
+      border-radius: 7px;
+      font-size: 12.5px;
+      font-weight: 650;
+      cursor: pointer;
+      -webkit-app-region: no-drag;
+    }
+    .button:disabled {
+      cursor: default;
+      opacity: 0.55;
+    }
+    .deny {
+      background: rgba(255, 255, 255, 0.1);
+      color: rgba(255, 255, 255, 0.92);
+    }
+    .deny:hover:not(:disabled) { background: rgba(255, 255, 255, 0.17); }
+    .approve {
+      background: rgba(52, 199, 89, 0.95);
+      border-color: rgba(52, 199, 89, 0.9);
+      color: #062b12;
+    }
+    .approve:hover:not(:disabled) { background: rgba(62, 214, 104, 0.98); }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <section class="overlay">
+    <div class="header">
+      <div class="title" id="title">Approval needed</div>
+      <div class="queue" id="queue">
+        <span class="count" id="count"></span>
+        <button class="icon" id="previous" type="button" title="Previous approval" aria-label="Previous approval">&lt;</button>
+        <button class="icon" id="next" type="button" title="Next approval" aria-label="Next approval">&gt;</button>
+      </div>
+    </div>
+    <p class="summary" id="summary"></p>
+    <p class="detail" id="detail"></p>
+    <div class="actions">
+      <button class="button deny" id="deny" type="button">Deny</button>
+      <button class="button approve" id="approve" type="button">Approve</button>
+    </div>
+  </section>
+  <script>
+    const title = document.getElementById('title')
+    const queue = document.getElementById('queue')
+    const count = document.getElementById('count')
+    const summary = document.getElementById('summary')
+    const detail = document.getElementById('detail')
+    const previous = document.getElementById('previous')
+    const next = document.getElementById('next')
+    const deny = document.getElementById('deny')
+    const approve = document.getElementById('approve')
+    let state = { prompts: [], activePromptId: null }
+    let busyPromptId = null
+
+    function providerLabel(provider) {
+      return provider === 'claude' ? 'Claude Code' : 'Codex'
+    }
+
+    function activeIndex() {
+      const index = state.prompts.findIndex((prompt) => prompt.id === state.activePromptId)
+      return index >= 0 ? index : 0
+    }
+
+    function activePrompt() {
+      return state.prompts[activeIndex()] || null
+    }
+
+    function compactMiddle(value, maxLength) {
+      const text = String(value || '')
+      if (text.length <= maxLength) return text
+      const sideLength = Math.max(8, Math.floor((maxLength - 3) / 2))
+      return text.slice(0, sideLength) + '...' + text.slice(-sideLength)
+    }
+
+    let audioContext = null
+
+    function getAudioContext() {
+      if (!audioContext) {
+        const AudioContextCtor = window.AudioContext || window.webkitAudioContext
+        audioContext = new AudioContextCtor()
+      }
+      return audioContext
+    }
+
+    function playTone(context, destination, note) {
+      const now = context.currentTime + 0.02
+      const oscillator = context.createOscillator()
+      const gain = context.createGain()
+      const start = now + note.start
+      const end = start + note.duration
+      const attackEnd = start + note.attack
+      const releaseStart = Math.max(attackEnd, end - note.release)
+
+      oscillator.type = 'sine'
+      oscillator.frequency.setValueAtTime(note.freq, start)
+      gain.gain.setValueAtTime(0.0001, start)
+      gain.gain.exponentialRampToValueAtTime(note.gain, attackEnd)
+      gain.gain.setValueAtTime(note.gain, releaseStart)
+      gain.gain.exponentialRampToValueAtTime(0.0001, end)
+
+      oscillator.connect(gain)
+      gain.connect(destination)
+      oscillator.start(start)
+      oscillator.stop(end + 0.04)
+    }
+
+    window.playAgentPermissionChime = async function playAgentPermissionChime() {
+      const context = getAudioContext()
+      if (context.state === 'suspended') await context.resume()
+
+      const master = context.createGain()
+      const compressor = context.createDynamicsCompressor()
+      const filter = context.createBiquadFilter()
+
+      master.gain.value = 0.68
+      compressor.threshold.value = -18
+      compressor.knee.value = 18
+      compressor.ratio.value = 2.5
+      compressor.attack.value = 0.003
+      compressor.release.value = 0.18
+      filter.type = 'lowpass'
+      filter.frequency.value = 5200
+      filter.Q.value = 0.35
+
+      master.connect(filter)
+      filter.connect(compressor)
+      compressor.connect(context.destination)
+
+      playTone(context, master, { freq: 660, start: 0, duration: 0.16, gain: 0.14, attack: 0.008, release: 0.14 })
+      playTone(context, master, { freq: 990, start: 0.08, duration: 0.22, gain: 0.12, attack: 0.006, release: 0.18 })
+
+      window.setTimeout(() => {
+        try {
+          master.disconnect()
+          filter.disconnect()
+          compressor.disconnect()
+        } catch {}
+      }, 700)
+    }
+
+    function setBusy(promptId) {
+      busyPromptId = promptId
+      render()
+    }
+
+    function send(action) {
+      if (action.promptId) setBusy(action.promptId)
+      else setBusy(null)
+      window.api.agentPermissionOverlayAction(action).catch(() => setBusy(null))
+    }
+
+    function render() {
+      const prompt = activePrompt()
+      if (!prompt) {
+        title.textContent = 'Approval needed'
+        summary.textContent = ''
+        detail.textContent = ''
+        queue.classList.add('hidden')
+        deny.disabled = true
+        approve.disabled = true
+        return
+      }
+      const index = activeIndex()
+      const hasMultiple = state.prompts.length > 1
+      title.textContent = providerLabel(prompt.provider) + ' needs approval'
+      summary.textContent = compactMiddle(prompt.summary || 'Approval needed.', 96)
+      detail.textContent = compactMiddle(prompt.detail || '', 112)
+      count.textContent = String(index + 1) + ' of ' + String(state.prompts.length)
+      queue.classList.toggle('hidden', !hasMultiple)
+      deny.disabled = busyPromptId === prompt.id
+      approve.disabled = busyPromptId === prompt.id
+    }
+
+    previous.addEventListener('click', () => send({ type: 'previous' }))
+    next.addEventListener('click', () => send({ type: 'next' }))
+    deny.addEventListener('click', () => {
+      const prompt = activePrompt()
+      if (prompt) send({ type: 'deny', promptId: prompt.id })
+    })
+    approve.addEventListener('click', () => {
+      const prompt = activePrompt()
+      if (prompt) send({ type: 'approve', promptId: prompt.id })
+    })
+
+    window.api.onAgentPermissionOverlayState((nextState) => {
+      state = nextState
+      if (busyPromptId && !state.prompts.some((prompt) => prompt.id === busyPromptId)) {
+        busyPromptId = null
+      }
+      render()
+    })
+  </script>
+</body>
+</html>`
+}
+
+function ensureAgentPermissionOverlayWindow(): BrowserWindow {
+  if (agentPermissionOverlayWindow && !agentPermissionOverlayWindow.isDestroyed()) {
+    return agentPermissionOverlayWindow
+  }
+
+  debugAgentPermission('overlay-created')
+  agentPermissionOverlayWindow = new BrowserWindow({
+    width: AGENT_PERMISSION_OVERLAY_WIDTH,
+    height: AGENT_PERMISSION_OVERLAY_HEIGHT,
+    frame: false,
+    resizable: false,
+    movable: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    show: false,
+    focusable: true,
+    transparent: true,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  })
+
+  agentPermissionOverlayWindow.setAlwaysOnTop(true, 'screen-saver')
+  agentPermissionOverlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  agentPermissionOverlayWindow.on('moved', () => {
+    if (!agentPermissionOverlayWindow || agentPermissionOverlayWindow.isDestroyed()) return
+    if (Date.now() < agentPermissionOverlayProgrammaticMoveUntil) return
+    agentPermissionOverlayUserMoved = true
+    agentPermissionOverlayBounds = {
+      ...agentPermissionOverlayWindow.getBounds(),
+      width: AGENT_PERMISSION_OVERLAY_WIDTH,
+      height: AGENT_PERMISSION_OVERLAY_HEIGHT
+    }
+    debugAgentPermission('overlay-user-moved', { bounds: agentPermissionOverlayBounds })
+  })
+  agentPermissionOverlayWindow.on('closed', () => {
+    agentPermissionOverlayWindow = null
+  })
+  agentPermissionOverlayWindow.webContents.on('did-finish-load', sendAgentPermissionState)
+  agentPermissionOverlayWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  agentPermissionOverlayWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(buildAgentPermissionOverlayHtml())}`)
+
+  return agentPermissionOverlayWindow
+}
+
+function showAgentPermissionOverlay(playChime: boolean): void {
+  const overlay = ensureAgentPermissionOverlayWindow()
+  positionAgentPermissionOverlay()
+  sendAgentPermissionState()
+  if (!overlay.isVisible()) overlay.showInactive()
+  overlay.moveTop()
+  if (playChime) playAgentPermissionChime(overlay)
+  debugAgentPermission('overlay-shown', { playChime, visible: overlay.isVisible() })
+}
+
+function playAgentPermissionChime(overlay: BrowserWindow): void {
+  const play = () => {
+    if (overlay.isDestroyed()) return
+    overlay.webContents
+      .executeJavaScript('window.playAgentPermissionChime?.()', true)
+      .catch(() => shell.beep())
+  }
+
+  if (overlay.webContents.isLoading()) {
+    overlay.webContents.once('did-finish-load', play)
+    return
+  }
+
+  play()
+}
+
+function setActiveAgentPermissionPrompt(promptId: string | null): void {
+  activeAgentPermissionPromptId = promptId
+  positionAgentPermissionOverlay()
+  sendAgentPermissionState()
+}
+
+function agentPermissionFingerprintKey(sessionId: string, fingerprint: string): string {
+  return `${sessionId}\0${fingerprint}`
+}
+
+function pruneRecentlyResolvedAgentPermissionPrompts(now = Date.now()): void {
+  for (const [key, expiresAt] of recentlyResolvedAgentPermissionPrompts) {
+    if (expiresAt <= now) recentlyResolvedAgentPermissionPrompts.delete(key)
+  }
+}
+
+function markAgentPermissionPromptRecentlyResolved(prompt: AgentPermissionPrompt): void {
+  pruneRecentlyResolvedAgentPermissionPrompts()
+  recentlyResolvedAgentPermissionPrompts.set(
+    agentPermissionFingerprintKey(prompt.sessionId, prompt.fingerprint),
+    Date.now() + AGENT_PERMISSION_RESOLVED_SUPPRESSION_MS
+  )
+}
+
+function isAgentPermissionPromptRecentlyResolved(prompt: AgentPermissionPrompt): boolean {
+  const now = Date.now()
+  pruneRecentlyResolvedAgentPermissionPrompts(now)
+  const expiresAt = recentlyResolvedAgentPermissionPrompts.get(
+    agentPermissionFingerprintKey(prompt.sessionId, prompt.fingerprint)
+  )
+  return typeof expiresAt === 'number' && expiresAt > now
+}
+
+function addAgentPermissionPrompt(prompt: AgentPermissionPrompt, ownerWindowId: number | null): void {
+  if (!ptyProcesses.has(prompt.sessionId)) {
+    debugAgentPermission('prompt-rejected-missing-pty', {
+      sessionId: prompt.sessionId,
+      provider: prompt.provider,
+      fingerprint: prompt.fingerprint
+    })
+    return
+  }
+  if (isAgentPermissionPromptRecentlyResolved(prompt)) {
+    debugAgentPermission('prompt-suppressed-recently-resolved', {
+      sessionId: prompt.sessionId,
+      provider: prompt.provider,
+      fingerprint: prompt.fingerprint
+    })
+    return
+  }
+  const duplicate = pendingAgentPermissionPrompts.find((entry) =>
+    entry.status === 'pending' &&
+    entry.prompt.sessionId === prompt.sessionId &&
+    entry.prompt.fingerprint === prompt.fingerprint
+  )
+  if (duplicate) {
+    duplicate.prompt = {
+      ...prompt,
+      id: duplicate.prompt.id,
+      createdAt: duplicate.prompt.createdAt
+    }
+    duplicate.ownerWindowId = ownerWindowId
+    if (!getActiveAgentPermissionPrompt()) activeAgentPermissionPromptId = duplicate.prompt.id
+    showAgentPermissionOverlay(false)
+    sendAgentPermissionState()
+    debugAgentPermission('prompt-deduped', {
+      sessionId: prompt.sessionId,
+      provider: prompt.provider,
+      fingerprint: prompt.fingerprint
+    })
+    return
+  }
+
+  pendingAgentPermissionPrompts.push({
+    prompt,
+    status: 'pending',
+    ownerWindowId,
+    createdAt: Date.now()
+  })
+  if (!activeAgentPermissionPromptId) activeAgentPermissionPromptId = prompt.id
+  debugAgentPermission('prompt-queued', {
+    sessionId: prompt.sessionId,
+    provider: prompt.provider,
+    fingerprint: prompt.fingerprint,
+    pendingCount: pendingAgentPermissionPrompts.filter((entry) => entry.status === 'pending').length
+  })
+  showAgentPermissionOverlay(true)
+}
+
+function dismissAgentPermissionPromptsForSession(sessionId: string): void {
+  let changed = false
+  for (const entry of pendingAgentPermissionPrompts) {
+    if (entry.status === 'pending' && entry.prompt.sessionId === sessionId) {
+      entry.status = 'dismissed'
+      changed = true
+    }
+  }
+  if (!changed) return
+
+  if (activeAgentPermissionPromptId && !getActiveAgentPermissionPrompt()) {
+    const nextPrompt = pendingAgentPermissionPrompts.find((entry) => entry.status === 'pending')
+    activeAgentPermissionPromptId = nextPrompt?.prompt.id ?? null
+  }
+  pruneInactiveAgentPermissionPrompts()
+  closeAgentPermissionOverlayIfEmpty()
+  positionAgentPermissionOverlay()
+  sendAgentPermissionState()
+}
+
+function navigateAgentPermissionPrompt(direction: 'previous' | 'next'): void {
+  const pending = pendingAgentPermissionPrompts.filter((entry) => entry.status === 'pending')
+  if (pending.length === 0) {
+    closeAgentPermissionOverlayIfEmpty()
+    return
+  }
+  const currentIndex = pending.findIndex((entry) => entry.prompt.id === activeAgentPermissionPromptId)
+  const fallbackIndex = currentIndex === -1 ? 0 : currentIndex
+  const nextIndex = direction === 'next'
+    ? (fallbackIndex + 1) % pending.length
+    : (fallbackIndex - 1 + pending.length) % pending.length
+  setActiveAgentPermissionPrompt(pending[nextIndex].prompt.id)
+}
+
+async function resolveAgentPermissionPrompt(promptId: string, decision: 'approve' | 'deny'): Promise<void> {
+  const pending = pendingAgentPermissionPrompts.filter((entry) => entry.status === 'pending')
+  const index = pending.findIndex((entry) => entry.prompt.id === promptId)
+  if (index === -1) return
+
+  const entry = pending[index]
+  debugAgentPermission('overlay-action', {
+    promptId,
+    decision,
+    provider: entry.prompt.provider,
+    fingerprint: entry.prompt.fingerprint
+  })
+  entry.status = 'resolved'
+  markAgentPermissionPromptRecentlyResolved(entry.prompt)
+  const writes = decision === 'approve' ? entry.prompt.approveAction : entry.prompt.denyAction
+  const nextEntry = pending[index + 1] ?? pending[index - 1] ?? null
+  activeAgentPermissionPromptId = nextEntry?.prompt.id ?? null
+  pruneInactiveAgentPermissionPrompts()
+  closeAgentPermissionOverlayIfEmpty()
+  positionAgentPermissionOverlay()
+  sendAgentPermissionState()
+  await writePtySequence(entry.prompt.sessionId, writes)
+}
+
+function isAgentPermissionOverlayAction(input: unknown): input is AgentPermissionOverlayAction {
+  if (!input || typeof input !== 'object') return false
+  const type = (input as { type?: unknown }).type
+  if (type === 'previous' || type === 'next') return true
+  if (type !== 'approve' && type !== 'deny') return false
+  return typeof (input as { promptId?: unknown }).promptId === 'string'
 }
 
 async function getPerfStatsSnapshot(): Promise<PerfStatsSnapshot> {
@@ -863,8 +1626,8 @@ function createWindow(): void {
   const iconPath = join(__dirname, '../../build/icon.icns')
   const appIcon = nativeImage.createFromPath(iconPath)
   if (!appIcon.isEmpty()) app.dock?.setIcon(appIcon)
-  const enableWebgl = process.env.EMU_ENABLE_WEBGL === '1'
-  const disableVibrancy = process.env.EMU_DISABLE_VIBRANCY === '1'
+  const enableWebgl = process.env.EMU_ENABLE_WEBGL === '1' || process.env.THINKING_ENABLE_WEBGL === '1'
+  const disableVibrancy = process.env.EMU_DISABLE_VIBRANCY === '1' || process.env.THINKING_DISABLE_VIBRANCY === '1'
 
   const mainWindow = new BrowserWindow({
     width: 1200,
@@ -969,6 +1732,10 @@ app.whenReady().then(() => {
 
     ptyProcesses.set(sessionId, ptyProcess)
     ptyPerfStats.set(sessionId, createPtyPerfStats(sessionId, ptyProcess.pid))
+    const ownerWindow = BrowserWindow.fromWebContents(event.sender)
+    if (ownerWindow && !ownerWindow.isDestroyed()) {
+      ptyOwnerWindowIds.set(sessionId, ownerWindow.id)
+    }
 
     // Forward PTY output to renderer
     ptyProcess.onData((data) => {
@@ -986,6 +1753,8 @@ app.whenReady().then(() => {
       flushPtyOutputBatch(sessionId)
       ptyProcesses.delete(sessionId)
       ptyPerfStats.delete(sessionId)
+      ptyOwnerWindowIds.delete(sessionId)
+      dismissAgentPermissionPromptsForSession(sessionId)
       if (!event.sender.isDestroyed()) {
         event.sender.send(`pty:exit:${sessionId}`)
       }
@@ -1029,6 +1798,33 @@ app.whenReady().then(() => {
 
   ipcMain.handle('image:saveTemp', (_, dataUrl: string, suggestedName?: string) => {
     return saveTempImage(dataUrl, suggestedName)
+  })
+
+  ipcMain.handle('agent-permission:show', (event, input: unknown) => {
+    debugAgentPermission('ipc-show-received')
+    const prompt = sanitizeAgentPermissionPrompt(input)
+    if (!prompt) {
+      debugAgentPermission('ipc-show-invalid-payload')
+      return
+    }
+    const ownerWindow = BrowserWindow.fromWebContents(event.sender)
+    const ownerWindowId = ownerWindow && !ownerWindow.isDestroyed()
+      ? ownerWindow.id
+      : (ptyOwnerWindowIds.get(prompt.sessionId) ?? null)
+    addAgentPermissionPrompt(prompt, ownerWindowId)
+  })
+
+  ipcMain.handle('agent-permission:dismissSession', (_, sessionId: string) => {
+    if (typeof sessionId === 'string') dismissAgentPermissionPromptsForSession(sessionId)
+  })
+
+  ipcMain.handle('agent-permission:overlayAction', async (_, input: unknown) => {
+    if (!isAgentPermissionOverlayAction(input)) return
+    if (input.type === 'previous' || input.type === 'next') {
+      navigateAgentPermissionPrompt(input.type)
+      return
+    }
+    await resolveAgentPermissionPrompt(input.promptId, input.type)
   })
 
   ipcMain.handle('optimizer:getSettings', () => {
@@ -1076,29 +1872,9 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('pty:writeSequence', async (_, sessionId: string, writes: PtyWriteChunk[]): Promise<PtyWriteSequenceResult> => {
-    const ptyProcess = ptyProcesses.get(sessionId)
-    if (!ptyProcess) return { ok: false, reason: 'not-found' }
-    if (!Array.isArray(writes) || writes.length === 0 || writes.length > 8) {
-      return { ok: false, reason: 'invalid-input' }
-    }
-
-    for (const write of writes) {
-      if (!write || typeof write.data !== 'string') return { ok: false, reason: 'invalid-input' }
-      const stats = ptyPerfStats.get(sessionId)
-      if (stats) {
-        stats.ptyWriteEvents += 1
-        stats.ptyWriteBytes += byteLength(write.data)
-      }
-      ptyProcess.write(write.data)
-      const delayAfterMs = typeof write.delayAfterMs === 'number'
-        ? Math.max(0, Math.min(2_000, write.delayAfterMs))
-        : 0
-      if (delayAfterMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, delayAfterMs))
-      }
-    }
-
-    return { ok: true }
+    const normalizedWrites = normalizePtyWriteChunks(writes)
+    if (!normalizedWrites) return { ok: false, reason: 'invalid-input' }
+    return writePtySequence(sessionId, normalizedWrites)
   })
 
   // Resize PTY
@@ -1114,12 +1890,15 @@ app.whenReady().then(() => {
     ptyProcesses.get(sessionId)?.kill()
     ptyProcesses.delete(sessionId)
     ptyPerfStats.delete(sessionId)
+    ptyOwnerWindowIds.delete(sessionId)
+    dismissAgentPermissionPromptsForSession(sessionId)
   })
 
   createWindow()
 
   app.on('activate', function () {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    const appWindows = BrowserWindow.getAllWindows().filter((window) => window !== agentPermissionOverlayWindow)
+    if (appWindows.length === 0) createWindow()
   })
 })
 

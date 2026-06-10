@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import type { AgentState, TerminalTab } from '../App'
+import { AgentPermissionPromptDetector, type AgentPermissionProvider } from '../agentPermissionPrompts'
 import CommandHistoryDrawer, { type HistoryEntry } from './CommandHistoryDrawer'
 import PromptOptimizerDrawer from './PromptOptimizerDrawer'
 import RichInputComposer, { type ComposerImageAttachment } from './RichInputComposer'
@@ -22,6 +23,11 @@ const COMMAND_OUTPUT_HEAD_CHARS = 100_000
 const COMMAND_OUTPUT_TAIL_CHARS = 100_000
 const HIDDEN_OUTPUT_BUFFER_MAX_CHARS = 2 * 1024 * 1024
 const HIDDEN_OUTPUT_REPLAY_CHARS_PER_FRAME = 128 * 1024
+const DEFAULT_PERMISSION_TAIL_LINES = 28
+const AGENT_PERMISSION_TAIL_LINES = 80
+const CLAUDE_PERMISSION_SCAN_DELAYS_MS = [0, 50, 150, 300] as const
+const AGENT_PERMISSION_WATCHDOG_INTERVAL_MS = 500
+const AGENT_PERMISSION_WATCHDOG_DURATION_MS = 30_000
 
 function shouldUseWebglRenderer(): boolean {
   return window.api.diagnosticsConfig.webglEnabled
@@ -48,6 +54,26 @@ function isShellProcessName(processName: string | null): boolean {
 
 function normalizedProcessBasename(processName: string | null): string {
   return processName?.toLowerCase().replace(/\\/g, '/').split('/').pop()?.replace(/^-/, '') ?? ''
+}
+
+function getAgentProviderFromProcess(processName: string | null): AgentPermissionProvider | null {
+  const normalized = normalizedProcessBasename(processName)
+  if (normalized.includes('claude')) return 'claude'
+  if (normalized.includes('codex')) return 'codex'
+  return null
+}
+
+function getAgentProviderFromCommand(command: string): AgentPermissionProvider | null {
+  const normalized = command.trim().toLowerCase()
+  if (/(^|[;&|]\s*)(claude)([\s;&|]|$)/.test(normalized) ||
+    /(^|[;&|]\s*)(npx|npm exec|bunx|pnpm dlx|yarn dlx)\s+([@\w./-]*claude[-\w./]*)/.test(normalized)) {
+    return 'claude'
+  }
+  if (/(^|[;&|]\s*)(codex)([\s;&|]|$)/.test(normalized) ||
+    /(^|[;&|]\s*)(npx|npm exec|bunx|pnpm dlx|yarn dlx)\s+([@\w./-]*codex[-\w./]*)/.test(normalized)) {
+    return 'codex'
+  }
+  return null
 }
 
 function isPagerProcessName(processName: string | null): boolean {
@@ -150,6 +176,29 @@ function getTerminalTailText(terminal: Terminal, maxLines = 14): string {
   return lines.join('\n')
 }
 
+function getTerminalVisibleText(terminal: Terminal): string {
+  const buffer = terminal.buffer.active
+  const startLine = buffer.baseY
+  const endLine = buffer.baseY + terminal.rows - 1
+  const lines: string[] = []
+
+  for (let line = startLine; line <= endLine; line++) {
+    const bufferLine = buffer.getLine(line)
+    if (bufferLine) lines.push(bufferLine.translateToString(true).trimEnd())
+  }
+
+  return lines.join('\n')
+}
+
+function shouldDebugAgentPermission(): boolean {
+  try {
+    return window.localStorage.getItem('emu.debugAgentPermission') === '1' ||
+      window.localStorage.getItem('thinking.debugAgentPermission') === '1'
+  } catch {
+    return false
+  }
+}
+
 function looksLikeAgentIdlePrompt(text: string): boolean {
   const lines = text
     .split('\n')
@@ -227,7 +276,7 @@ function stripAnsi(str: string): string {
 
 function extractEmuCwd(data: string): string | null {
   let latest: string | null = null
-  const cwdPattern = /\x1b\]633;EmuCwd=([^\x07\x1b]*)(?:\x07|\x1b\\)/g
+  const cwdPattern = /\x1b\]633;(?:EmuCwd|ThinkingCwd)=([^\x07\x1b]*)(?:\x07|\x1b\\)/g
   for (const match of data.matchAll(cwdPattern)) {
     if (match[1]?.startsWith('/')) latest = match[1]
   }
@@ -443,11 +492,15 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   const currentWorkingDirectoryRef = useRef<string | null>(null)
   const agentStateRef = useRef<AgentState>('none')
   const agentProcessRef = useRef<string | null>(null)
+  const agentProviderRef = useRef<AgentPermissionProvider | null>(getAgentProviderFromProcess(session.foregroundProcess))
   const agentSessionRef = useRef(false)
   const agentTaskInFlightRef = useRef(false)
   const agentTaskStartedAtRef = useRef(0)
   const agentIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const agentProcessPollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const agentPermissionDetectorRef = useRef(new AgentPermissionPromptDetector())
+  const agentPermissionWatchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const agentPermissionWatchdogUntilRef = useRef(0)
 
   const currentInputRef = useRef('')
   const waitingForPreviewRef = useRef<string | null>(null)
@@ -1047,6 +1100,9 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       const cmd = rawCommand.trim()
       if (!cmd) return
 
+      const launchedProvider = getAgentProviderFromCommand(cmd)
+      if (launchedProvider) agentProviderRef.current = launchedProvider
+
       const rawTuiMode = getRawTuiModeForCommand(cmd)
       if (rawTuiMode) {
         startRawTuiMode(rawTuiMode)
@@ -1166,6 +1222,8 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       const isAgent = isAgentProcessName(proc)
       const previousProcess = agentProcessRef.current
       agentProcessRef.current = proc
+      const detectedProvider = getAgentProviderFromProcess(proc)
+      if (detectedProvider) agentProviderRef.current = detectedProvider
 
       if (rawTuiModeRef.current && !isAltScreenRef.current && isShellProcessName(proc)) {
         const rawTuiAge = Date.now() - rawTuiStartedAtRef.current
@@ -1314,6 +1372,8 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         // agent CLIs (rich composer) from traditional TUIs like less/vim (raw xterm).
         const proc: string | null = await window.api.ptyGetProcess(session.id)
         agentProcessRef.current = proc
+        const detectedProvider = getAgentProviderFromProcess(proc)
+        if (detectedProvider) agentProviderRef.current = detectedProvider
         updateInputOwner(proc)
         if (isAgentProcessName(proc)) {
           agentSessionRef.current = true
@@ -1573,6 +1633,93 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       recordPerfEvent('commandFullOutputUpdates')
     }
 
+    const permissionContext = () => ({
+      sessionId: session.id,
+      provider: agentProviderRef.current ?? getAgentProviderFromProcess(agentProcessRef.current),
+      agentSession: agentSessionRef.current || isAgentProcessName(agentProcessRef.current)
+    })
+
+    const getPermissionScanText = (tailLines = DEFAULT_PERMISSION_TAIL_LINES) => {
+      return isAltScreenRef.current
+        ? `\n${getTerminalVisibleText(terminal)}`
+        : `\n${getTerminalTailText(terminal, tailLines)}`
+    }
+
+    const detectPermissionPrompt = (
+      text: string,
+      source: 'raw' | 'write-parsed' | 'followup' | 'watchdog'
+    ): boolean => {
+      const context = permissionContext()
+      const permissionPrompt = agentPermissionDetectorRef.current.append(text, {
+        sessionId: context.sessionId,
+        provider: context.provider,
+        agentSession: context.agentSession
+      })
+      if (shouldDebugAgentPermission()) {
+        console.debug('[agent-permission:detect]', {
+          sessionId: session.id,
+          source,
+          provider: context.provider,
+          agentSession: context.agentSession,
+          altScreen: isAltScreenRef.current,
+          rawTuiMode: rawTuiModeRef.current,
+          matched: Boolean(permissionPrompt),
+          summary: permissionPrompt?.summary ?? null,
+          textTail: text.slice(-2_000)
+        })
+      }
+      if (!permissionPrompt) return false
+
+      agentProviderRef.current = permissionPrompt.provider
+      window.api.agentPermissionPromptShow(permissionPrompt).catch(() => {})
+      return true
+    }
+
+    const shouldUseAgentPermissionScan = () => {
+      const context = permissionContext()
+      return context.provider === 'claude' ||
+        context.provider === 'codex' ||
+        context.agentSession ||
+        isAltScreenRef.current ||
+        Boolean(rawTuiModeRef.current)
+    }
+
+    const clearAgentPermissionWatchdog = () => {
+      if (agentPermissionWatchdogTimerRef.current) {
+        clearTimeout(agentPermissionWatchdogTimerRef.current)
+        agentPermissionWatchdogTimerRef.current = null
+      }
+      agentPermissionWatchdogUntilRef.current = 0
+    }
+
+    const runAgentPermissionWatchdog = () => {
+      agentPermissionWatchdogTimerRef.current = null
+      if (disposed) return
+      if (Date.now() > agentPermissionWatchdogUntilRef.current) {
+        clearAgentPermissionWatchdog()
+        return
+      }
+
+      detectPermissionPrompt(getPermissionScanText(AGENT_PERMISSION_TAIL_LINES), 'watchdog')
+
+      if (Date.now() <= agentPermissionWatchdogUntilRef.current) {
+        agentPermissionWatchdogTimerRef.current = window.setTimeout(
+          runAgentPermissionWatchdog,
+          AGENT_PERMISSION_WATCHDOG_INTERVAL_MS
+        )
+      }
+    }
+
+    const armAgentPermissionWatchdog = () => {
+      if (!shouldUseAgentPermissionScan()) return
+      agentPermissionWatchdogUntilRef.current = Date.now() + AGENT_PERMISSION_WATCHDOG_DURATION_MS
+      if (agentPermissionWatchdogTimerRef.current) return
+      agentPermissionWatchdogTimerRef.current = window.setTimeout(
+        runAgentPermissionWatchdog,
+        AGENT_PERMISSION_WATCHDOG_INTERVAL_MS
+      )
+    }
+
     const removeDataListener = window.api.onPtyData(session.id, (data) => {
       // Lightweight renderer-side throughput proxy. Main-process stats keep exact UTF-8 bytes.
       const bytes = data.length
@@ -1591,11 +1738,30 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         currentWorkingDirectoryRef.current = cwd
         onCurrentCwdChangeRef.current?.(cwd)
       }
-      const shouldWriteImmediately = isVisibleRef.current || isAltScreenRef.current || Boolean(rawTuiModeRef.current)
+      detectPermissionPrompt(data, 'raw')
+      const shouldWriteImmediately = isVisibleRef.current ||
+        isAltScreenRef.current ||
+        Boolean(rawTuiModeRef.current) ||
+        shouldUseAgentPermissionScan()
       if (shouldWriteImmediately) {
-        terminal.write(data)
+        const provider = agentProviderRef.current ?? getAgentProviderFromProcess(agentProcessRef.current)
+        const useAgentScan = shouldUseAgentPermissionScan()
+        const scanDelays = provider === 'claude' || useAgentScan ? CLAUDE_PERMISSION_SCAN_DELAYS_MS : [0]
+        const tailLines = useAgentScan ? AGENT_PERMISSION_TAIL_LINES : DEFAULT_PERMISSION_TAIL_LINES
+        terminal.write(data, () => {
+          if (disposed) return
+          detectPermissionPrompt(getPermissionScanText(tailLines), 'write-parsed')
+          for (const delay of scanDelays) {
+            if (delay === 0) continue
+            window.setTimeout(() => {
+              if (disposed) return
+              detectPermissionPrompt(getPermissionScanText(tailLines), 'followup')
+            }, delay)
+          }
+        })
         recordPerfEvent('terminalWriteCalls')
         recordPerfEvent('terminalWriteBytes', bytes)
+        armAgentPermissionWatchdog()
       } else {
         appendHiddenOutput(data)
       }
@@ -1756,6 +1922,8 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
           if (rawTuiMode) startRawTuiMode(rawTuiMode)
 
           if (isAgentLaunchCommand(cmd) || agentSessionRef.current || isAgentProcessName(agentProcessRef.current)) {
+            const launchedProvider = getAgentProviderFromCommand(cmd)
+            if (launchedProvider) agentProviderRef.current = launchedProvider
             markAgentRunning(agentProcessRef.current)
           } else if (agentStateRef.current !== 'running') {
             clearAgentSession(agentProcessRef.current)
@@ -1979,6 +2147,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     return () => {
       disposed = true
       clearAgentIdleTimer()
+      clearAgentPermissionWatchdog()
       if (agentProcessPollRef.current) {
         clearTimeout(agentProcessPollRef.current)
         agentProcessPollRef.current = null

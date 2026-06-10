@@ -75,6 +75,43 @@ type PtyWriteSequenceResult = {
   reason: 'not-found' | 'invalid-input'
 }
 
+type AgentPermissionProvider = 'claude' | 'codex'
+
+interface AgentPermissionPrompt {
+  id: string
+  sessionId: string
+  provider: AgentPermissionProvider
+  summary: string
+  detail: string
+  rawExcerpt: string
+  fingerprint: string
+  createdAt: number
+  approveAction: PtyWriteChunk[]
+  denyAction: PtyWriteChunk[]
+}
+
+interface AgentPermissionOverlayPrompt {
+  id: string
+  sessionId: string
+  provider: AgentPermissionProvider
+  summary: string
+  detail: string
+  rawExcerpt: string
+  createdAt: number
+}
+
+interface AgentPermissionOverlayState {
+  prompts: AgentPermissionOverlayPrompt[]
+  activePromptId: string | null
+}
+
+type AgentPermissionOverlayAction = {
+  type: 'approve' | 'deny'
+  promptId: string
+} | {
+  type: 'previous' | 'next'
+}
+
 interface PtyPerfStats {
   sessionId: string
   pid: number
@@ -131,5 +168,9 @@ interface Window {
     optimizerClearSettings: () => Promise<PublicOptimizerSettings>
     optimizerTestSettings: (input?: Partial<OptimizerSettingsInput>) => Promise<OptimizerTestResult>
     optimizerOptimize: (input: OptimizePromptInput) => Promise<OptimizePromptResult>
+    agentPermissionPromptShow: (prompt: AgentPermissionPrompt) => Promise<void>
+    agentPermissionPromptDismissSession: (sessionId: string) => Promise<void>
+    agentPermissionOverlayAction: (input: AgentPermissionOverlayAction) => Promise<void>
+    onAgentPermissionOverlayState: (callback: (state: AgentPermissionOverlayState) => void) => () => void
   }
 }

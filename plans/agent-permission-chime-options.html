@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Emu Permission Chime Options</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #101113;
+      --panel: #1b1d21;
+      --panel-2: #22252b;
+      --text: #f5f5f7;
+      --muted: rgba(235, 235, 245, 0.66);
+      --line: rgba(255, 255, 255, 0.1);
+      --blue: #64d2ff;
+      --green: #32d74b;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      min-height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+
+    body {
+      padding: 40px;
+    }
+
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+    }
+
+    header {
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      line-height: 1.15;
+      font-weight: 700;
+    }
+
+    .intro {
+      max-width: 720px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+    }
+
+    .option {
+      min-height: 152px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 10px;
+    }
+
+    .option.recommended {
+      border-color: rgba(100, 210, 255, 0.45);
+      background: linear-gradient(180deg, rgba(100, 210, 255, 0.1), rgba(27, 29, 33, 0.98));
+    }
+
+    .topline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.25;
+      font-weight: 650;
+    }
+
+    .tag {
+      flex: 0 0 auto;
+      padding: 3px 7px;
+      border-radius: 999px;
+      background: rgba(100, 210, 255, 0.14);
+      color: var(--blue);
+      font-size: 11px;
+      font-weight: 650;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      color: rgba(235, 235, 245, 0.52);
+      font-size: 12px;
+    }
+
+    button {
+      height: 32px;
+      min-width: 82px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      background: var(--panel-2);
+      color: var(--text);
+      font: inherit;
+      font-size: 13px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #2c3037;
+    }
+
+    button:active {
+      transform: translateY(1px);
+    }
+
+    .play {
+      background: rgba(50, 215, 75, 0.17);
+      border-color: rgba(50, 215, 75, 0.28);
+      color: #d9ffe0;
+    }
+
+    .play:hover {
+      background: rgba(50, 215, 75, 0.24);
+    }
+
+    footer {
+      margin-top: 20px;
+      color: rgba(235, 235, 245, 0.5);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Emu Permission Chime Options</h1>
+      <p class="intro">
+        These are original synthesized notification sounds designed for the native permission popup.
+        They are short, clean, and meant to be audible without feeling like an alarm.
+      </p>
+    </header>
+
+    <section class="grid" id="options"></section>
+
+    <footer>
+      Playback is generated live with the Web Audio API, so there are no external audio files or licensing constraints.
+    </footer>
+  </main>
+
+  <script>
+    const sounds = [
+      {
+        id: 'glass-ping',
+        name: 'Glass Ping',
+        tag: 'Best first pick',
+        duration: '0.55s',
+        description: 'A bright two-note glass chime with a soft shimmer tail. Clear, polished, and not too loud.',
+        notes: [
+          { type: 'sine', freq: 880, start: 0, duration: 0.18, gain: 0.18, attack: 0.006, release: 0.16 },
+          { type: 'triangle', freq: 1320, start: 0.055, duration: 0.26, gain: 0.1, attack: 0.004, release: 0.22 },
+          { type: 'sine', freq: 1760, start: 0.095, duration: 0.22, gain: 0.045, attack: 0.004, release: 0.2 }
+        ]
+      },
+      {
+        id: 'soft-system',
+        name: 'Soft System',
+        tag: 'Subtle',
+        duration: '0.48s',
+        description: 'A restrained macOS-style confirmation tone. Good if the popup should feel native and calm.',
+        notes: [
+          { type: 'sine', freq: 660, start: 0, duration: 0.16, gain: 0.14, attack: 0.008, release: 0.14 },
+          { type: 'sine', freq: 990, start: 0.08, duration: 0.22, gain: 0.12, attack: 0.006, release: 0.18 }
+        ]
+      },
+      {
+        id: 'neural-tick',
+        name: 'Neural Tick',
+        tag: 'Techy',
+        duration: '0.42s',
+        description: 'A quick digital pulse with a clean high accent. Feels more coding-agent-specific.',
+        notes: [
+          { type: 'square', freq: 440, start: 0, duration: 0.055, gain: 0.045, attack: 0.002, release: 0.045 },
+          { type: 'triangle', freq: 740, start: 0.045, duration: 0.11, gain: 0.12, attack: 0.004, release: 0.09 },
+          { type: 'sine', freq: 1480, start: 0.13, duration: 0.16, gain: 0.08, attack: 0.003, release: 0.14 }
+        ]
+      },
+      {
+        id: 'aurora',
+        name: 'Aurora',
+        tag: 'Elegant',
+        duration: '0.72s',
+        description: 'A smooth rising interval with a little sparkle. More premium, slightly more noticeable.',
+        notes: [
+          { type: 'sine', freq: 523.25, start: 0, duration: 0.26, gain: 0.11, attack: 0.018, release: 0.2 },
+          { type: 'sine', freq: 783.99, start: 0.08, duration: 0.32, gain: 0.12, attack: 0.016, release: 0.26 },
+          { type: 'triangle', freq: 1567.98, start: 0.18, duration: 0.24, gain: 0.045, attack: 0.012, release: 0.24 }
+        ]
+      },
+      {
+        id: 'terminal-ready',
+        name: 'Terminal Ready',
+        tag: 'Utility',
+        duration: '0.38s',
+        description: 'A compact low-high prompt that reads as “attention needed” without sounding decorative.',
+        notes: [
+          { type: 'triangle', freq: 392, start: 0, duration: 0.1, gain: 0.12, attack: 0.004, release: 0.08 },
+          { type: 'triangle', freq: 784, start: 0.095, duration: 0.14, gain: 0.13, attack: 0.004, release: 0.12 }
+        ]
+      },
+      {
+        id: 'crystal-confirm',
+        name: 'Crystal Confirm',
+        tag: 'Bright',
+        duration: '0.62s',
+        description: 'A brighter layered chime. Stronger presence, best if you want the popup to be hard to miss.',
+        notes: [
+          { type: 'sine', freq: 987.77, start: 0, duration: 0.18, gain: 0.15, attack: 0.004, release: 0.16 },
+          { type: 'sine', freq: 1318.51, start: 0.07, duration: 0.2, gain: 0.11, attack: 0.004, release: 0.18 },
+          { type: 'triangle', freq: 1975.53, start: 0.14, duration: 0.18, gain: 0.055, attack: 0.004, release: 0.18 }
+        ]
+      }
+    ]
+
+    let audioContext = null
+
+    function getContext() {
+      if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)()
+      }
+      return audioContext
+    }
+
+    function createImpulseResponse(context) {
+      const seconds = 0.55
+      const length = Math.floor(context.sampleRate * seconds)
+      const impulse = context.createBuffer(2, length, context.sampleRate)
+
+      for (let channel = 0; channel < 2; channel += 1) {
+        const data = impulse.getChannelData(channel)
+        for (let i = 0; i < length; i += 1) {
+          const decay = Math.pow(1 - i / length, 2.5)
+          data[i] = (Math.random() * 2 - 1) * decay * 0.16
+        }
+      }
+
+      return impulse
+    }
+
+    function playSound(sound) {
+      const context = getContext()
+      const now = context.currentTime + 0.02
+      const master = context.createGain()
+      const dry = context.createGain()
+      const wet = context.createGain()
+      const compressor = context.createDynamicsCompressor()
+      const convolver = context.createConvolver()
+
+      master.gain.value = 0.78
+      dry.gain.value = 0.92
+      wet.gain.value = 0.18
+      compressor.threshold.value = -18
+      compressor.knee.value = 18
+      compressor.ratio.value = 2.5
+      compressor.attack.value = 0.003
+      compressor.release.value = 0.18
+      convolver.buffer = createImpulseResponse(context)
+
+      dry.connect(master)
+      wet.connect(convolver)
+      convolver.connect(master)
+      master.connect(compressor)
+      compressor.connect(context.destination)
+
+      sound.notes.forEach((note) => {
+        const osc = context.createOscillator()
+        const gain = context.createGain()
+        const start = now + note.start
+        const end = start + note.duration
+        const attackEnd = start + note.attack
+        const releaseStart = Math.max(attackEnd, end - note.release)
+
+        osc.type = note.type
+        osc.frequency.setValueAtTime(note.freq, start)
+        if (note.type !== 'sine') {
+          osc.detune.setValueAtTime(-2, start)
+          osc.detune.linearRampToValueAtTime(2, end)
+        }
+
+        gain.gain.setValueAtTime(0.0001, start)
+        gain.gain.exponentialRampToValueAtTime(note.gain, attackEnd)
+        gain.gain.setValueAtTime(note.gain, releaseStart)
+        gain.gain.exponentialRampToValueAtTime(0.0001, end)
+
+        osc.connect(gain)
+        gain.connect(dry)
+        gain.connect(wet)
+        osc.start(start)
+        osc.stop(end + 0.04)
+      })
+    }
+
+    const container = document.getElementById('options')
+
+    sounds.forEach((sound, index) => {
+      const card = document.createElement('article')
+      card.className = 'option' + (index === 0 ? ' recommended' : '')
+      card.innerHTML = `
+        <div class="topline">
+          <h2>${sound.name}</h2>
+          <span class="tag">${sound.tag}</span>
+        </div>
+        <p>${sound.description}</p>
+        <div class="meta">
+          <span>${sound.duration}</span>
+          <button class="play" type="button">Play</button>
+        </div>
+      `
+      card.querySelector('button').addEventListener('click', () => playSound(sound))
+      container.appendChild(card)
+    })
+  </script>
+</body>
+</html>

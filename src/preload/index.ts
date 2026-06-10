@@ -6,8 +6,8 @@ function hasFlagValue(name: string, value: string): boolean {
 
 contextBridge.exposeInMainWorld('api', {
   diagnosticsConfig: {
-    webglEnabled: hasFlagValue('--emu-enable-webgl', '1'),
-    vibrancyDisabled: hasFlagValue('--emu-disable-vibrancy', '1')
+    webglEnabled: hasFlagValue('--emu-enable-webgl', '1') || hasFlagValue('--thinking-enable-webgl', '1'),
+    vibrancyDisabled: hasFlagValue('--emu-disable-vibrancy', '1') || hasFlagValue('--thinking-disable-vibrancy', '1')
   },
   // Create a new PTY session
   ptyCreate: (sessionId: string, options?: { cwd?: string | null }) => ipcRenderer.invoke('pty:create', sessionId, options),
@@ -61,5 +61,14 @@ contextBridge.exposeInMainWorld('api', {
   optimizerSaveSettings: (input: unknown) => ipcRenderer.invoke('optimizer:saveSettings', input),
   optimizerClearSettings: () => ipcRenderer.invoke('optimizer:clearSettings'),
   optimizerTestSettings: (input?: unknown) => ipcRenderer.invoke('optimizer:testSettings', input),
-  optimizerOptimize: (input: unknown) => ipcRenderer.invoke('optimizer:optimize', input)
+  optimizerOptimize: (input: unknown) => ipcRenderer.invoke('optimizer:optimize', input),
+  // Agent permission approval popup
+  agentPermissionPromptShow: (prompt: unknown) => ipcRenderer.invoke('agent-permission:show', prompt),
+  agentPermissionPromptDismissSession: (sessionId: string) => ipcRenderer.invoke('agent-permission:dismissSession', sessionId),
+  agentPermissionOverlayAction: (input: unknown) => ipcRenderer.invoke('agent-permission:overlayAction', input),
+  onAgentPermissionOverlayState: (callback: (state: unknown) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, state: unknown) => callback(state)
+    ipcRenderer.on('agent-permission:state', listener)
+    return () => ipcRenderer.removeListener('agent-permission:state', listener)
+  }
 })
