@@ -15,8 +15,10 @@ const AGENT_IDLE_CHECK_DELAY_MS = 900
 const AGENT_PROCESS_POLL_MS = 4_000
 const HIDDEN_AGENT_PROCESS_POLL_MS = 16_000
 const AGENT_SUBMIT_ECHO_POLL_MS = 40
-const AGENT_SUBMIT_MAX_WAIT_MS = 320
-const AGENT_SUBMIT_RETRY_WAIT_MS = 220
+const AGENT_SUBMIT_SINGLE_LINE_SETTLE_MS = 180
+const AGENT_SUBMIT_BRACKETED_PASTE_SETTLE_MS = 650
+const AGENT_SUBMIT_MAX_WAIT_MS = 900
+const AGENT_SUBMIT_RETRY_WAIT_MS = 650
 const MAX_COMMAND_OUTPUT_CHARS = 200_000
 const COMMAND_OUTPUT_HEAD_CHARS = 100_000
 const COMMAND_OUTPUT_TAIL_CHARS = 100_000
@@ -123,12 +125,14 @@ interface ComposerCommitPayload {
   commandText: string
   bodyWrite: string
   fingerprint: string
+  usesBracketedPaste: boolean
 }
 
 interface ComposerSubmitTransaction {
   id: string
   fingerprint: string
   agentTarget: boolean
+  settleMs: number
   startedAt: number
   sentEnterAt: number | null
   retriedEnterAt: number | null
@@ -373,7 +377,8 @@ function buildComposerCommitPayload(text: string, imagePaths: string): ComposerC
   return {
     commandText,
     bodyWrite,
-    fingerprint: normalizeSubmitFingerprint(commandText)
+    fingerprint: normalizeSubmitFingerprint(commandText),
+    usesBracketedPaste
   }
 }
 
@@ -934,10 +939,14 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
       const currentTail = getTerminalTailText(terminal, 16)
       const tailLooksActive = looksLikeAgentActiveTail(currentTail)
+      const tailStillContainsSubmit = terminalTailContainsSubmitFingerprint(currentTail, transaction.fingerprint)
 
-      if (!tailLooksActive) {
+      if (!tailLooksActive && tailStillContainsSubmit) {
         transaction.retriedEnterAt = Date.now()
-        window.api.ptyWrite(session.id, '\r')
+        window.api.ptyWriteSequence(session.id, [{ data: '\r' }]).finally(() => {
+          finishComposerSubmitTransaction(id)
+        })
+        return
       }
 
       finishComposerSubmitTransaction(id)
@@ -949,16 +958,23 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
       transaction.sentEnterAt = Date.now()
       transaction.tailAtEnter = getTerminalTailText(terminal, 16)
-      window.api.ptyWrite(session.id, '\r')
+      window.api.ptyWriteSequence(session.id, [{ data: '\r' }]).then((result) => {
+        if (!result.ok || composerSubmitRef.current?.id !== id) {
+          finishComposerSubmitTransaction(id)
+          return
+        }
 
-      if (transaction.agentTarget) {
-        composerSubmitRetryTimerRef.current = setTimeout(() => {
-          composerSubmitRetryTimerRef.current = null
-          maybeRetryComposerSubmit(id)
-        }, AGENT_SUBMIT_RETRY_WAIT_MS)
-      } else {
+        if (transaction.agentTarget) {
+          composerSubmitRetryTimerRef.current = setTimeout(() => {
+            composerSubmitRetryTimerRef.current = null
+            maybeRetryComposerSubmit(id)
+          }, AGENT_SUBMIT_RETRY_WAIT_MS)
+        } else {
+          finishComposerSubmitTransaction(id)
+        }
+      }).catch(() => {
         finishComposerSubmitTransaction(id)
-      }
+      })
     }
 
     const scheduleAgentSubmitEnter = (id: string) => {
@@ -967,9 +983,11 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
       const elapsedMs = Date.now() - transaction.startedAt
       const tail = getTerminalTailText(terminal, 16)
+      const settled = elapsedMs >= transaction.settleMs
       if (
-        terminalTailContainsSubmitFingerprint(tail, transaction.fingerprint) ||
-        elapsedMs >= AGENT_SUBMIT_MAX_WAIT_MS
+        settled &&
+        (terminalTailContainsSubmitFingerprint(tail, transaction.fingerprint) ||
+          elapsedMs >= AGENT_SUBMIT_MAX_WAIT_MS)
       ) {
         sendComposerSubmitEnter(id)
         return
@@ -1128,6 +1146,9 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         id: submitId,
         fingerprint: payload.fingerprint,
         agentTarget,
+        settleMs: payload.usesBracketedPaste
+          ? AGENT_SUBMIT_BRACKETED_PASTE_SETTLE_MS
+          : AGENT_SUBMIT_SINGLE_LINE_SETTLE_MS,
         startedAt: Date.now(),
         sentEnterAt: null,
         retriedEnterAt: null,
