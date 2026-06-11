@@ -56,12 +56,6 @@ contextBridge.exposeInMainWorld('api', {
   imageSaveTemp: (dataUrl: string, suggestedName?: string) => ipcRenderer.invoke('image:saveTemp', dataUrl, suggestedName),
   // Dev performance diagnostics
   perfGetStats: () => ipcRenderer.invoke('perf:getStats'),
-  // Prompt Optimizer settings and calls
-  optimizerGetSettings: () => ipcRenderer.invoke('optimizer:getSettings'),
-  optimizerSaveSettings: (input: unknown) => ipcRenderer.invoke('optimizer:saveSettings', input),
-  optimizerClearSettings: () => ipcRenderer.invoke('optimizer:clearSettings'),
-  optimizerTestSettings: (input?: unknown) => ipcRenderer.invoke('optimizer:testSettings', input),
-  optimizerOptimize: (input: unknown) => ipcRenderer.invoke('optimizer:optimize', input),
   // Agent permission approval popup
   agentPermissionPromptShow: (prompt: unknown) => ipcRenderer.invoke('agent-permission:show', prompt),
   agentPermissionPromptDismissSession: (sessionId: string) => ipcRenderer.invoke('agent-permission:dismissSession', sessionId),

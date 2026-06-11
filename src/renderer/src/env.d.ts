@@ -1,35 +1,5 @@
 /// <reference types="vite/client" />
 
-type OptimizerProvider = 'openai'
-
-interface PublicOptimizerSettings {
-  configured: boolean
-  provider?: OptimizerProvider
-  model?: string
-}
-
-interface OptimizerSettingsInput {
-  provider: OptimizerProvider
-  apiKey?: string
-  model: string
-}
-
-interface OptimizerTestResult {
-  ok: boolean
-  error?: string
-}
-
-interface OptimizePromptInput {
-  selectedText: string
-  terminalContext?: string
-}
-
-interface OptimizePromptResult {
-  optimizedPrompt: string
-  summary?: string
-  warnings?: string[]
-}
-
 interface MarkdownOpenInput {
   rawPath: string
   cwd?: string | null
@@ -163,11 +133,6 @@ interface Window {
     ptyGetProcess: (sessionId: string) => Promise<string | null>
     imageSaveTemp: (dataUrl: string, suggestedName?: string) => Promise<string>
     perfGetStats: () => Promise<PerfStatsSnapshot>
-    optimizerGetSettings: () => Promise<PublicOptimizerSettings>
-    optimizerSaveSettings: (input: OptimizerSettingsInput) => Promise<PublicOptimizerSettings>
-    optimizerClearSettings: () => Promise<PublicOptimizerSettings>
-    optimizerTestSettings: (input?: Partial<OptimizerSettingsInput>) => Promise<OptimizerTestResult>
-    optimizerOptimize: (input: OptimizePromptInput) => Promise<OptimizePromptResult>
     agentPermissionPromptShow: (prompt: AgentPermissionPrompt) => Promise<void>
     agentPermissionPromptDismissSession: (sessionId: string) => Promise<void>
     agentPermissionOverlayAction: (input: AgentPermissionOverlayAction) => Promise<void>
