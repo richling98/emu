@@ -856,7 +856,6 @@ export default function App() {
                 openDrawer={openHistoryFor === tab.id}
                 onDrawerClose={() => setOpenHistoryFor(null)}
                 onClosePane={isLeftSlot ? handleCloseLeftPane : isRightSlot ? handleCloseRightPane : undefined}
-                onOpenSettings={() => setShowSettings(true)}
                 onOpenMarkdown={handleOpenMarkdown}
                 onPerfEvent={recordTerminalPerfEvent}
                 focusSignal={terminalFocusSignal}

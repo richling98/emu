@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Terminal, type IBufferRange, type ITheme } from '@xterm/xterm'
+import { Terminal, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import type { AgentState, TerminalTab } from '../App'
 import { AgentPermissionPromptDetector, type AgentPermissionProvider } from '../agentPermissionPrompts'
 import CommandHistoryDrawer, { type HistoryEntry } from './CommandHistoryDrawer'
-import PromptOptimizerDrawer from './PromptOptimizerDrawer'
 import RichInputComposer, { type ComposerImageAttachment } from './RichInputComposer'
 import '@xterm/xterm/css/xterm.css'
 import './TerminalPane.css'
@@ -341,43 +340,6 @@ function applyInput(current: string, data: string): string {
   return current + printable
 }
 
-function rangeTouchesText(
-  selection: IBufferRange,
-  textStartLine: number,
-  textStartCol: number,
-  textLength: number,
-  cols: number
-): boolean {
-  if (textStartLine < 0 || textStartCol < 0 || textLength <= 0 || cols <= 0) return false
-
-  const selectionStartLine = selection.start.y - 1
-  const selectionEndLine = selection.end.y - 1
-  const selectionStartCol = selection.start.x - 1
-  const selectionEndCol = selection.end.x - 1
-
-  for (let i = 0; i < textLength; i++) {
-    const absoluteCol = textStartCol + i
-    const line = textStartLine + Math.floor(absoluteCol / cols)
-    const col = absoluteCol % cols
-    if (line < selectionStartLine || line > selectionEndLine) continue
-    if (selectionStartLine === selectionEndLine) {
-      if (col >= selectionStartCol && col < selectionEndCol) return true
-    } else if (line === selectionStartLine) {
-      if (col >= selectionStartCol) return true
-    } else if (line === selectionEndLine) {
-      if (col < selectionEndCol) return true
-    } else {
-      return true
-    }
-  }
-
-  return false
-}
-
-function normalizedSelectionText(text: string): string {
-  return text.replace(/\s+/g, ' ').trim()
-}
-
 function normalizeComposerCommitText(text: string): string {
   const lines = text
     .replace(/\r\n?/g, '\n')
@@ -457,7 +419,6 @@ interface Props {
   openDrawer?: boolean
   onDrawerClose?: () => void
   onClosePane?: () => void
-  onOpenSettings?: () => void
   onSessionTouched?: () => void
   onAgentStateChange?: (state: AgentState, foregroundProcess?: string | null) => void
   onCurrentCwdChange?: (cwd: string) => void
@@ -468,13 +429,7 @@ interface Props {
   xtermTheme?: ITheme
 }
 
-interface PromptSelection {
-  text: string
-  position: IBufferRange
-  anchor: { x: number; y: number; placement: 'above' | 'below' }
-}
-
-export default function TerminalPane({ session, isVisible, slot = 'full', isActive = true, onActivate, onSessionEnd, openDrawer, onDrawerClose, onClosePane, onOpenSettings, onSessionTouched, onAgentStateChange, onCurrentCwdChange, onOpenMarkdown, onPerfEvent, focusSignal = 0, layoutSignal = '', xtermTheme }: Props) {
+export default function TerminalPane({ session, isVisible, slot = 'full', isActive = true, onActivate, onSessionEnd, openDrawer, onDrawerClose, onClosePane, onSessionTouched, onAgentStateChange, onCurrentCwdChange, onOpenMarkdown, onPerfEvent, focusSignal = 0, layoutSignal = '', xtermTheme }: Props) {
   const paneRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const composerDropRef = useRef<HTMLDivElement>(null)
@@ -540,12 +495,12 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   const [terminalDropRect, setTerminalDropRect] = useState<DropHighlightRect | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [isAtBottom, setIsAtBottom] = useState(true)
-  const [promptSelection, setPromptSelection] = useState<PromptSelection | null>(null)
-  const [capturedPromptSelection, setCapturedPromptSelection] = useState<PromptSelection | null>(null)
+  const shouldAutoFollowOutputRef = useRef(true)
+  const autoFollowFrameRef = useRef<number | null>(null)
+  const autoFollowOutputRenderUntilRef = useRef(0)
   const [composerText, setComposerText] = useState('')
   const [composerImages, setComposerImages] = useState<ComposerImageAttachment[]>([])
   const [richInputActive, setRichInputActive] = useState(true)
-  const promptSelectionRef = useRef<PromptSelection | null>(null)
   const composerImagesRef = useRef<ComposerImageAttachment[]>([])
   const richInputActiveRef = useRef(true)
   const inputOwnerRef = useRef<InputOwner>('composer')
@@ -592,14 +547,9 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   useEffect(() => { onOpenMarkdownRef.current = onOpenMarkdown }, [onOpenMarkdown])
   useEffect(() => { onPerfEventRef.current = onPerfEvent }, [onPerfEvent])
 
-  useEffect(() => { promptSelectionRef.current = promptSelection }, [promptSelection])
   useEffect(() => { composerImagesRef.current = composerImages }, [composerImages])
   useEffect(() => { richInputActiveRef.current = richInputActive }, [richInputActive])
   useEffect(() => { currentInputRef.current = composerText }, [composerText])
-
-  useEffect(() => {
-    if (!isVisible || !isActive) setPromptSelection(null)
-  }, [isVisible, isActive])
 
   const selectComposerInput = useCallback(() => {
     if (rawTuiModeRef.current) return
@@ -669,6 +619,39 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     terminalRef.current?.scrollToLine(Math.max(0, line - 3))
   }
 
+  const getViewportElement = () => {
+    return containerRef.current?.querySelector('.xterm-viewport') as HTMLElement | null
+  }
+
+  const distanceFromBottom = (viewport: HTMLElement) => {
+    return viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
+  }
+
+  const isViewportAtBottom = (viewport: HTMLElement) => {
+    return distanceFromBottom(viewport) < 10
+  }
+
+  const snapTerminalToBottom = () => {
+    const terminal = terminalRef.current
+    const viewport = getViewportElement()
+    if (!terminal || !viewport || terminal.buffer.active.type === 'alternate') return
+
+    viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight
+    terminal.scrollToBottom()
+    shouldAutoFollowOutputRef.current = true
+    setIsAtBottom(true)
+  }
+
+  const scheduleAutoFollowSnap = () => {
+    if (autoFollowFrameRef.current !== null) return
+    autoFollowOutputRenderUntilRef.current = Date.now() + 250
+    autoFollowFrameRef.current = requestAnimationFrame(() => {
+      autoFollowFrameRef.current = null
+      if (!shouldAutoFollowOutputRef.current) return
+      snapTerminalToBottom()
+    })
+  }
+
   const handleCloseDrawer = () => {
     setShowDrawer(false)
     onDrawerClose?.()
@@ -683,9 +666,10 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   }
 
   const handleScrollToBottom = () => {
-    const viewport = containerRef.current?.querySelector('.xterm-viewport') as HTMLElement | null
+    const viewport = getViewportElement()
     if (!viewport) return
 
+    shouldAutoFollowOutputRef.current = true
     const DURATION = 300  // ms
     const startTime = performance.now()
     const startPos = viewport.scrollTop
@@ -697,49 +681,19 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       const eased = 1 - Math.pow(1 - progress, 3)
       // Recalculate target every frame so new content added mid-scroll is captured
       const target = viewport.scrollHeight - viewport.clientHeight
+      shouldAutoFollowOutputRef.current = true
+      autoFollowOutputRenderUntilRef.current = Date.now() + 80
       viewport.scrollTop = startPos + (target - startPos) * eased
 
       if (progress < 1) {
         requestAnimationFrame(step)
       } else {
         // Hard snap at the end — guarantees we land exactly at the true bottom
-        viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight
-        terminalRef.current?.scrollToBottom()
+        snapTerminalToBottom()
       }
     }
 
     requestAnimationFrame(step)
-  }
-
-  const handleOptimizeSelection = () => {
-    if (!promptSelection) return
-    setCapturedPromptSelection(promptSelection)
-    setPromptSelection(null)
-  }
-
-  const handleInsertOptimizedPrompt = (text: string) => {
-    const prompt = text.trim()
-    if (!prompt) return
-
-    if (richInputActiveRef.current) {
-      setComposerText(prompt)
-      setCapturedPromptSelection(null)
-      return
-    }
-
-    // Move to end of line, kill backward (\x15 clears the whole buffer in zsh;
-    // in bash it only kills back to the last newline), then backspace over any
-    // remaining content. Use the selection text length as a fallback for
-    // alt-screen contexts where currentInputRef may be empty.
-    // Excess backspaces at an empty buffer are silently ignored by all shells.
-    const originalPrompt = currentInputRef.current || capturedPromptSelection?.text.replace(/\r/g, '') || ''
-    const clearLen = Math.max(originalPrompt.length + 100, 200)
-    const input = `\x05\x15${'\x7f'.repeat(clearLen)}\x1b[200~${prompt}\x1b[201~`
-    window.api.ptyWrite(session.id, input)
-    onSessionTouchedRef.current?.()
-    currentInputRef.current = prompt
-    setCapturedPromptSelection(null)
-    window.setTimeout(() => terminalRef.current?.focus(), 0)
   }
 
   const handleComposerCommit = useCallback((text: string) => {
@@ -887,11 +841,14 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         hiddenOutputReplayFrameRef.current = null
         if (disposed || !isVisibleRef.current) return
 
+        let replayedOutput = false
         if (hiddenOutputOmittedCharsRef.current > 0) {
           const omitted = hiddenOutputOmittedCharsRef.current
           hiddenOutputOmittedCharsRef.current = 0
           const marker = `\r\n\x1b[2m[Emu omitted ${omitted.toLocaleString()} characters of hidden output while this tab was inactive]\x1b[0m\r\n`
+          if (shouldAutoFollowOutputRef.current) autoFollowOutputRenderUntilRef.current = Date.now() + 250
           terminal.write(marker)
+          replayedOutput = true
           recordPerfEvent('hiddenReplayWrites')
           recordPerfEvent('hiddenReplayBytes', marker.length)
           recordPerfEvent('terminalWriteCalls')
@@ -910,20 +867,27 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
             chunk = chunk.slice(0, remainingBudget)
             hiddenOutputBufferCharsRef.current -= chunk.length
           }
+          if (shouldAutoFollowOutputRef.current) autoFollowOutputRenderUntilRef.current = Date.now() + 250
           terminal.write(chunk)
           written += chunk.length
         }
 
         if (written > 0) {
+          replayedOutput = true
           recordPerfEvent('hiddenReplayWrites')
           recordPerfEvent('hiddenReplayBytes', written)
           recordPerfEvent('terminalWriteCalls')
           recordPerfEvent('terminalWriteBytes', written)
         }
 
+        if (replayedOutput && shouldAutoFollowOutputRef.current) {
+          scheduleAutoFollowSnap()
+        }
+
         if (hiddenOutputBufferRef.current.length > 0 || hiddenOutputOmittedCharsRef.current > 0) {
           hiddenOutputReplayFrameRef.current = requestAnimationFrame(step)
         } else if (currentEntryIdRef.current) {
+          if (shouldAutoFollowOutputRef.current) scheduleAutoFollowSnap()
           if (outputFlushTimerRef.current) clearTimeout(outputFlushTimerRef.current)
           outputFlushTimerRef.current = setTimeout(flushOutputBuffer, 600)
         }
@@ -932,10 +896,6 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       hiddenOutputReplayFrameRef.current = requestAnimationFrame(step)
     }
     replayHiddenOutputRef.current = replayHiddenOutput
-
-    const clearPromptSelection = () => {
-      if (promptSelectionRef.current) setPromptSelection(null)
-    }
 
     let disposed = false
 
@@ -1271,80 +1231,6 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       }, getAgentProcessPollDelay())
     }
 
-    const getSelectionAnchor = (position: IBufferRange): PromptSelection['anchor'] | null => {
-      const container = containerRef.current
-      const screen = container?.querySelector('.xterm-screen') as HTMLElement | null
-      if (!container || !screen || terminal.cols <= 0 || terminal.rows <= 0) return null
-
-      const containerRect = container.getBoundingClientRect()
-      const screenRect = screen.getBoundingClientRect()
-      const cellWidth = screenRect.width / terminal.cols
-      const cellHeight = screenRect.height / terminal.rows
-      const viewportY = terminal.buffer.active.viewportY
-      const startCol = Math.max(0, position.start.x - 1)
-      const startRow = position.start.y - 1
-      const visibleRow = startRow - viewportY
-      if (visibleRow < 0 || visibleRow >= terminal.rows) return null
-
-      const rawX = screenRect.left - containerRect.left + startCol * cellWidth
-      const rawY = screenRect.top - containerRect.top + visibleRow * cellHeight
-      const placement = rawY < 42 ? 'below' : 'above'
-      return {
-        x: Math.min(Math.max(rawX, 8), Math.max(8, containerRect.width - 430)),
-        y: Math.min(Math.max(rawY, 8), Math.max(8, containerRect.height - 8)),
-        placement
-      }
-    }
-
-    const updatePromptSelection = () => {
-      if (!isVisibleRef.current || !isActiveRef.current) {
-        clearPromptSelection()
-        return
-      }
-      const text = terminal.getSelection()
-      const position = terminal.getSelectionPosition()
-      const selectedUserText = normalizedSelectionText(text)
-      if (!position || selectedUserText.length < 1) {
-        clearPromptSelection()
-        return
-      }
-      const touchesCurrentInput = rangeTouchesText(
-        position,
-        promptStartLineRef.current,
-        promptStartColRef.current,
-        currentInputRef.current.length,
-        terminal.cols
-      )
-      const currentInputContainsSelection = normalizedSelectionText(currentInputRef.current)
-        .includes(selectedUserText)
-      const touchesHistoricalCommand = commandHistoryRef.current.some((entry) =>
-        rangeTouchesText(
-          position,
-          entry.line,
-          entry.commandStartCol ?? 0,
-          entry.command.length,
-          terminal.cols
-        )
-      )
-      const historicalCommandContainsSelection = commandHistoryRef.current.some((entry) =>
-        normalizedSelectionText(entry.command).includes(selectedUserText)
-      )
-      if (!touchesCurrentInput && !currentInputContainsSelection && !touchesHistoricalCommand && !historicalCommandContainsSelection) {
-        clearPromptSelection()
-        return
-      }
-      const anchor = getSelectionAnchor(position)
-      if (!anchor) {
-        clearPromptSelection()
-        return
-      }
-      setPromptSelection({ text, position, anchor })
-    }
-
-    const selectionChangeDisposable = terminal.onSelectionChange(() => {
-      window.setTimeout(updatePromptSelection, 0)
-    })
-
     // ── Alternate-screen detection via xterm.js buffer events ────────────────
     // We listen to the authoritative buffer-switch event rather than scanning
     // raw PTY bytes for \x1b[?1049h / \x1b[?1049l.  The byte-scan approach
@@ -1353,7 +1239,6 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     // entire terminal session.  onBufferChange only fires when xterm.js actually
     // switches buffers — immune to text that merely looks like the sequence.
     terminal.buffer.onBufferChange(async (newBuffer) => {
-      clearPromptSelection()
       if (newBuffer.type === 'alternate') {
         isAltScreenRef.current = true
         // Snapshot normal-buffer position — used as the navigation anchor for
@@ -1403,10 +1288,11 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     const viewportEl = containerRef.current.querySelector('.xterm-viewport') as HTMLElement | null
     const updateScrollState = () => {
       if (!viewportEl) return
-      clearPromptSelection()
       // < 10px from bottom counts as "at bottom" to handle sub-pixel rounding
-      const distFromBottom = viewportEl.scrollHeight - viewportEl.scrollTop - viewportEl.clientHeight
-      setIsAtBottom(distFromBottom < 10)
+      const atBottom = isViewportAtBottom(viewportEl)
+      if (!atBottom && Date.now() < autoFollowOutputRenderUntilRef.current) return
+      shouldAutoFollowOutputRef.current = atBottom
+      setIsAtBottom(atBottom)
     }
     viewportEl?.addEventListener('scroll', updateScrollState, { passive: true })
 
@@ -1436,6 +1322,10 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       const rawTuiMode = rawTuiModeRef.current
       const scrollingUp = e.deltaY < 0
       if (Date.now() < rawTuiExitingUntilRef.current) return
+      if (scrollingUp) {
+        autoFollowOutputRenderUntilRef.current = 0
+        shouldAutoFollowOutputRef.current = false
+      }
       if (rawTuiMode === 'pager' || isPagerProcessName(proc)) {
         // Use Ctrl+B / Ctrl+F instead of literal `b` / Space so momentum wheel
         // events cannot leak visible spaces into the shell during pager exit.
@@ -1748,9 +1638,15 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         const useAgentScan = shouldUseAgentPermissionScan()
         const scanDelays = provider === 'claude' || useAgentScan ? CLAUDE_PERMISSION_SCAN_DELAYS_MS : [0]
         const tailLines = useAgentScan ? AGENT_PERMISSION_TAIL_LINES : DEFAULT_PERMISSION_TAIL_LINES
+        const shouldAutoFollowOutput = shouldAutoFollowOutputRef.current
+        if (shouldAutoFollowOutput) autoFollowOutputRenderUntilRef.current = Date.now() + 250
         terminal.write(data, () => {
           if (disposed) return
           detectPermissionPrompt(getPermissionScanText(tailLines), 'write-parsed')
+          if (shouldAutoFollowOutput && shouldAutoFollowOutputRef.current) {
+            snapTerminalToBottom()
+            scheduleAutoFollowSnap()
+          }
           for (const delay of scanDelays) {
             if (delay === 0) continue
             window.setTimeout(() => {
@@ -1798,7 +1694,14 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     })
 
     const removeExitListener = window.api.onPtyExit(session.id, () => {
-      terminal.write('\r\n\x1b[2m[Process exited]\x1b[0m\r\n')
+      const shouldAutoFollowOutput = shouldAutoFollowOutputRef.current
+      if (shouldAutoFollowOutput) autoFollowOutputRenderUntilRef.current = Date.now() + 250
+      terminal.write('\r\n\x1b[2m[Process exited]\x1b[0m\r\n', () => {
+        if (shouldAutoFollowOutput && shouldAutoFollowOutputRef.current) {
+          snapTerminalToBottom()
+          scheduleAutoFollowSnap()
+        }
+      })
       clearAgentSession(null)
       onSessionEnd()
     })
@@ -1810,7 +1713,6 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       savedSelection = terminal.getSelection()
       const pos = terminal.getSelectionPosition()
       savedSelStartCol = pos ? pos.start.x - 1 : -1
-      window.setTimeout(updatePromptSelection, 0)
     })
 
     let zoomFitFrame: number | null = null
@@ -1841,7 +1743,6 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
     terminal.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
       if (ev.type !== 'keydown') return true
-      if (ev.key === 'Escape') clearPromptSelection()
 
       // Font zoom: Cmd+= / Cmd+- / Cmd+0
       if (ev.metaKey) {
@@ -1900,7 +1801,6 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
       savedSelection = ''
       savedSelStartCol = -1
-      clearPromptSelection()
 
       // Pass data to PTY as-is — bracketed paste markers (\x1b[200~...\x1b[201~)
       // are left intact so zsh buffers all pasted lines and waits for a single
@@ -1993,7 +1893,6 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       if (resizeDebounce) clearTimeout(resizeDebounce)
       resizeDebounce = setTimeout(() => {
         resizeDebounce = null
-        clearPromptSelection()
         if (resizeFrame !== null) cancelAnimationFrame(resizeFrame)
         resizeFrame = requestAnimationFrame(() => {
           resizeFrame = null
@@ -2148,6 +2047,10 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       disposed = true
       clearAgentIdleTimer()
       clearAgentPermissionWatchdog()
+      if (autoFollowFrameRef.current !== null) {
+        cancelAnimationFrame(autoFollowFrameRef.current)
+        autoFollowFrameRef.current = null
+      }
       if (agentProcessPollRef.current) {
         clearTimeout(agentProcessPollRef.current)
         agentProcessPollRef.current = null
@@ -2168,7 +2071,6 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       webglContextLossDisposable = null
       webglAddon = null
       fitAndResizeRef.current = null
-      selectionChangeDisposable.dispose()
       viewportEl?.removeEventListener('scroll', updateScrollState)
       removeDataListener()
       removeExitListener()
@@ -2213,7 +2115,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     }
     if (isVisible && fitAddonRef.current && terminalRef.current) {
       if (hiddenOutputBufferRef.current.length > 0 || hiddenOutputOmittedCharsRef.current > 0) {
-        terminalRef.current.scrollToBottom()
+        snapTerminalToBottom()
       }
       replayHiddenOutputRef.current?.()
       setTimeout(() => {
@@ -2277,35 +2179,6 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         onPasteImages={addComposerImageFiles}
         onRemoveImage={removeComposerImage}
       />
-      {promptSelection && (
-        <button
-          className={`prompt-optimize-btn prompt-optimize-btn--${promptSelection.anchor.placement}`}
-          style={{
-            left: promptSelection.anchor.x,
-            top: promptSelection.anchor.y
-          }}
-          onMouseDown={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-          }}
-          onClick={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            handleOptimizeSelection()
-          }}
-          title="Optimize selected prompt"
-        >
-          Optimize
-        </button>
-      )}
-      {capturedPromptSelection && (
-        <PromptOptimizerDrawer
-          selectionText={capturedPromptSelection.text}
-          onClose={() => setCapturedPromptSelection(null)}
-          onOpenSettings={onOpenSettings}
-          onInsert={handleInsertOptimizedPrompt}
-        />
-      )}
       {!isAtBottom && (
         <button className="scroll-to-bottom-btn" onClick={handleScrollToBottom} title="Scroll to bottom">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">

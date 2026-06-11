@@ -25,8 +25,7 @@ Learn more on the website: https://richling98.github.io/emu/
 - **Font Zoom** — `⌘+` / `⌘−` to scale font size, `⌘0` to reset.
 - **GPU Rendering** — WebGL-accelerated text rendering with full Retina support.
 - **Screenshot & File Drop** — Drag any file from Finder into the terminal to paste its shell-escaped path.
-- **Prompt Optimizer** — Select any text in the terminal and click the floating "Optimize" button to rewrite it as a cleaner prompt using OpenAI. Requires an API key configured in Settings → Prompt Optimizer.
-- **Settings** — A full settings panel with Appearance (theme picker), Prompt Optimizer (API key, model, provider), and About sections.
+- **Settings** — A full settings panel with Appearance (theme picker), Hotkeys, and About sections.
 - **Login Shell** — Spawns your shell as a login shell, so your `~/.zprofile` and PATH match macOS Terminal exactly.
 
 ### Beauty
