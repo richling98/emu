@@ -54,6 +54,7 @@ export default function RichInputComposer({
 }: Props) {
   const editorRef = useRef<HTMLDivElement>(null)
   const composingRef = useRef(false)
+  const allowNextLineBreakRef = useRef(false)
 
   useEffect(() => {
     const editor = editorRef.current
@@ -74,6 +75,15 @@ export default function RichInputComposer({
     onChange(plainTextFromEditable(editor))
   }
 
+  const commitCurrentValue = (editor = editorRef.current) => {
+    if (!editor) return
+    const text = plainTextFromEditable(editor)
+    if (!text.trim() && images.length === 0) return
+    editor.innerText = ''
+    onChange('')
+    onCommit(text)
+  }
+
   return (
     <div ref={rootRef} className={`rich-input-composer${active ? ' rich-input-composer--active' : ''}${dropActive ? ' rich-input-composer--drop-active' : ''}`}>
       <div className="rich-input-composer__prompt">$</div>
@@ -89,6 +99,19 @@ export default function RichInputComposer({
         onInput={syncValue}
         onCompositionStart={() => { composingRef.current = true }}
         onCompositionEnd={() => { composingRef.current = false; syncValue() }}
+        onBeforeInput={(event) => {
+          const inputEvent = event.nativeEvent as InputEvent
+          if (inputEvent.inputType !== 'insertParagraph' && inputEvent.inputType !== 'insertLineBreak') return
+
+          if (allowNextLineBreakRef.current) {
+            allowNextLineBreakRef.current = false
+            window.setTimeout(syncValue, 0)
+            return
+          }
+
+          event.preventDefault()
+          if (!composingRef.current && !inputEvent.isComposing) commitCurrentValue(event.currentTarget)
+        }}
         onPaste={(event) => {
           event.preventDefault()
           const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/'))
@@ -98,16 +121,21 @@ export default function RichInputComposer({
           syncValue()
         }}
         onKeyDown={(event) => {
-          if (composingRef.current) return
-
           if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault()
-            const text = plainTextFromEditable(event.currentTarget)
-            if (!text.trim() && images.length === 0) return
-            event.currentTarget.innerText = ''
-            onChange('')
-            onCommit(text)
+            if (!composingRef.current && !event.nativeEvent.isComposing) commitCurrentValue(event.currentTarget)
             return
+          }
+
+          if (event.key === 'Enter' && event.shiftKey) {
+            allowNextLineBreakRef.current = true
+            return
+          }
+
+          if (composingRef.current) return
+
+          if (allowNextLineBreakRef.current) {
+            allowNextLineBreakRef.current = false
           }
 
           if (event.key === 'Escape') {
