@@ -54,7 +54,7 @@ export default function RichInputComposer({
 }: Props) {
   const editorRef = useRef<HTMLDivElement>(null)
   const composingRef = useRef(false)
-  const allowNextLineBreakRef = useRef(false)
+  const commitLockRef = useRef(false)
 
   useEffect(() => {
     const editor = editorRef.current
@@ -75,13 +75,31 @@ export default function RichInputComposer({
     onChange(plainTextFromEditable(editor))
   }
 
+  const scrubLeakedLineBreak = (editor: HTMLDivElement) => {
+    window.setTimeout(() => {
+      if (plainTextFromEditable(editor).trim() !== '') return
+      editor.innerText = ''
+      onChange('')
+    }, 0)
+  }
+
   const commitCurrentValue = (editor = editorRef.current) => {
     if (!editor) return
+    if (commitLockRef.current) return
+    commitLockRef.current = true
+    window.setTimeout(() => { commitLockRef.current = false }, 0)
+
     const text = plainTextFromEditable(editor)
-    if (!text.trim() && images.length === 0) return
+    if (!text.trim() && images.length === 0) {
+      editor.innerText = ''
+      onChange('')
+      scrubLeakedLineBreak(editor)
+      return
+    }
     editor.innerText = ''
     onChange('')
     onCommit(text)
+    scrubLeakedLineBreak(editor)
   }
 
   return (
@@ -99,17 +117,30 @@ export default function RichInputComposer({
         onInput={syncValue}
         onCompositionStart={() => { composingRef.current = true }}
         onCompositionEnd={() => { composingRef.current = false; syncValue() }}
+        onKeyDownCapture={(event) => {
+          if (event.key !== 'Enter') return
+
+          event.preventDefault()
+          event.stopPropagation()
+
+          if (event.shiftKey) {
+            if (!composingRef.current && !event.nativeEvent.isComposing) {
+              insertTextAtSelection('\n')
+              syncValue()
+            }
+            return
+          }
+
+          if (!composingRef.current && !event.nativeEvent.isComposing) {
+            commitCurrentValue(event.currentTarget)
+          }
+        }}
         onBeforeInput={(event) => {
           const inputEvent = event.nativeEvent as InputEvent
           if (inputEvent.inputType !== 'insertParagraph' && inputEvent.inputType !== 'insertLineBreak') return
 
-          if (allowNextLineBreakRef.current) {
-            allowNextLineBreakRef.current = false
-            window.setTimeout(syncValue, 0)
-            return
-          }
-
           event.preventDefault()
+          event.stopPropagation()
           if (!composingRef.current && !inputEvent.isComposing) commitCurrentValue(event.currentTarget)
         }}
         onPaste={(event) => {
@@ -121,22 +152,7 @@ export default function RichInputComposer({
           syncValue()
         }}
         onKeyDown={(event) => {
-          if (event.key === 'Enter' && !event.shiftKey) {
-            event.preventDefault()
-            if (!composingRef.current && !event.nativeEvent.isComposing) commitCurrentValue(event.currentTarget)
-            return
-          }
-
-          if (event.key === 'Enter' && event.shiftKey) {
-            allowNextLineBreakRef.current = true
-            return
-          }
-
           if (composingRef.current) return
-
-          if (allowNextLineBreakRef.current) {
-            allowNextLineBreakRef.current = false
-          }
 
           if (event.key === 'Escape') {
             event.preventDefault()

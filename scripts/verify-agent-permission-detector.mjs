@@ -5,7 +5,7 @@ import { build } from 'esbuild'
 const outfile = '/tmp/emu-agent-permission-prompts.mjs'
 
 await build({
-  entryPoints: ['src/renderer/src/agentPermissionPrompts.ts'],
+  entryPoints: ['src/shared/agentPermissionPrompts.ts'],
   outfile,
   bundle: true,
   format: 'esm',
@@ -177,6 +177,66 @@ const secondClaude = claudeDetector.append([
 ].join('\n'), claudeContext)
 assert(secondClaude, 'a second different Claude prompt should emit while the first remains pending in main')
 assert.equal(secondClaude.summary, 'Run: npm test')
+
+const splitCodexDetector = new AgentPermissionPromptDetector()
+let splitCodexTail = ''
+const splitCodexChunks = [
+  codexPrompt.slice(0, 80),
+  codexPrompt.slice(80, 180),
+  codexPrompt.slice(180)
+]
+let splitCodexMatch = null
+for (const chunk of splitCodexChunks) {
+  splitCodexTail += chunk
+  splitCodexMatch = splitCodexDetector.append(splitCodexTail, {
+    sessionId: 'session-split-codex',
+    provider: 'codex',
+    agentSession: true
+  }) ?? splitCodexMatch
+}
+assert(splitCodexMatch, 'Codex prompt split across PTY chunks should emit after accumulated buffer')
+assert.equal(splitCodexMatch.summary, 'Run: npm run dev')
+assert.equal(splitCodexDetector.append(splitCodexTail, {
+  sessionId: 'session-split-codex',
+  provider: 'codex',
+  agentSession: true
+}), null, 'split Codex accumulated buffer should not duplicate the same prompt')
+
+const splitClaudeDetector = new AgentPermissionPromptDetector()
+let splitClaudeTail = ''
+const splitClaudeChunks = [
+  claudePrompt.slice(0, 32),
+  claudePrompt.slice(32, 88),
+  claudePrompt.slice(88)
+]
+let splitClaudeMatch = null
+for (const chunk of splitClaudeChunks) {
+  splitClaudeTail += chunk
+  splitClaudeMatch = splitClaudeDetector.append(splitClaudeTail, {
+    sessionId: 'session-split-claude',
+    provider: 'claude',
+    agentSession: true
+  }) ?? splitClaudeMatch
+}
+assert(splitClaudeMatch, 'Claude prompt split across PTY chunks should emit after accumulated buffer')
+assert.equal(splitClaudeMatch.summary, 'Run: npm run dev')
+
+const sessionADetector = new AgentPermissionPromptDetector()
+const sessionBDetector = new AgentPermissionPromptDetector()
+const sessionAPrompt = sessionADetector.append(codexPrompt, {
+  sessionId: 'session-A',
+  provider: 'codex',
+  agentSession: true
+})
+const sessionBPrompt = sessionBDetector.append(claudePrompt, {
+  sessionId: 'session-B',
+  provider: 'claude',
+  agentSession: true
+})
+assert(sessionAPrompt, 'first simultaneous session should emit')
+assert(sessionBPrompt, 'second simultaneous session should emit')
+assert.notEqual(sessionAPrompt.sessionId, sessionBPrompt.sessionId)
+assert.notEqual(sessionAPrompt.fingerprint, sessionBPrompt.fingerprint)
 
 const staleCodexHintDetector = new AgentPermissionPromptDetector()
 const claudeWithStaleCodexHint = staleCodexHintDetector.append(claudeSkillPrompt, {

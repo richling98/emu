@@ -4,7 +4,14 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import type { AgentState, TerminalTab } from '../App'
-import { AgentPermissionPromptDetector, type AgentPermissionProvider } from '../agentPermissionPrompts'
+import {
+  AgentPermissionPromptDetector,
+  getAgentProviderFromCommand,
+  getAgentProviderFromProcess,
+  isAgentLaunchCommand,
+  isAgentProcessName,
+  type AgentPermissionProvider
+} from '../../../shared/agentPermissionPrompts'
 import CommandHistoryDrawer, { type HistoryEntry } from './CommandHistoryDrawer'
 import RichInputComposer, { type ComposerImageAttachment } from './RichInputComposer'
 import '@xterm/xterm/css/xterm.css'
@@ -14,10 +21,8 @@ const DEFAULT_FONT_SIZE = 13
 const AGENT_IDLE_CHECK_DELAY_MS = 900
 const AGENT_PROCESS_POLL_MS = 4_000
 const HIDDEN_AGENT_PROCESS_POLL_MS = 16_000
-const AGENT_SUBMIT_ECHO_POLL_MS = 40
 const AGENT_SUBMIT_SINGLE_LINE_SETTLE_MS = 180
 const AGENT_SUBMIT_BRACKETED_PASTE_SETTLE_MS = 650
-const AGENT_SUBMIT_MAX_WAIT_MS = 900
 const AGENT_SUBMIT_RETRY_WAIT_MS = 650
 const MAX_COMMAND_OUTPUT_CHARS = 200_000
 const COMMAND_OUTPUT_HEAD_CHARS = 100_000
@@ -26,25 +31,13 @@ const HIDDEN_OUTPUT_BUFFER_MAX_CHARS = 2 * 1024 * 1024
 const HIDDEN_OUTPUT_REPLAY_CHARS_PER_FRAME = 128 * 1024
 const DEFAULT_PERMISSION_TAIL_LINES = 28
 const AGENT_PERMISSION_TAIL_LINES = 80
+const AGENT_PERMISSION_RAW_BUFFER_MAX_CHARS = 32 * 1024
 const CLAUDE_PERMISSION_SCAN_DELAYS_MS = [0, 50, 150, 300] as const
 const AGENT_PERMISSION_WATCHDOG_INTERVAL_MS = 500
 const AGENT_PERMISSION_WATCHDOG_DURATION_MS = 30_000
 
 function shouldUseWebglRenderer(): boolean {
   return window.api.diagnosticsConfig.webglEnabled
-}
-
-function isAgentProcessName(processName: string | null): boolean {
-  if (!processName) return false
-  const normalized = processName.toLowerCase().replace(/\\/g, '/').split('/').pop()?.replace(/^-/, '') ?? ''
-  return /\b(claude|codex)\b/.test(normalized)
-}
-
-function isAgentLaunchCommand(command: string): boolean {
-  const normalized = command.trim().toLowerCase()
-  if (!normalized) return false
-  return /(^|[;&|]\s*)(claude|codex)([\s;&|]|$)/.test(normalized) ||
-    /(^|[;&|]\s*)(npx|npm exec|bunx|pnpm dlx|yarn dlx)\s+([@\w./-]*claude[-\w./]*|[@\w./-]*codex[-\w./]*)/.test(normalized)
 }
 
 function isShellProcessName(processName: string | null): boolean {
@@ -55,26 +48,6 @@ function isShellProcessName(processName: string | null): boolean {
 
 function normalizedProcessBasename(processName: string | null): string {
   return processName?.toLowerCase().replace(/\\/g, '/').split('/').pop()?.replace(/^-/, '') ?? ''
-}
-
-function getAgentProviderFromProcess(processName: string | null): AgentPermissionProvider | null {
-  const normalized = normalizedProcessBasename(processName)
-  if (normalized.includes('claude')) return 'claude'
-  if (normalized.includes('codex')) return 'codex'
-  return null
-}
-
-function getAgentProviderFromCommand(command: string): AgentPermissionProvider | null {
-  const normalized = command.trim().toLowerCase()
-  if (/(^|[;&|]\s*)(claude)([\s;&|]|$)/.test(normalized) ||
-    /(^|[;&|]\s*)(npx|npm exec|bunx|pnpm dlx|yarn dlx)\s+([@\w./-]*claude[-\w./]*)/.test(normalized)) {
-    return 'claude'
-  }
-  if (/(^|[;&|]\s*)(codex)([\s;&|]|$)/.test(normalized) ||
-    /(^|[;&|]\s*)(npx|npm exec|bunx|pnpm dlx|yarn dlx)\s+([@\w./-]*codex[-\w./]*)/.test(normalized)) {
-    return 'codex'
-  }
-  return null
 }
 
 function isPagerProcessName(processName: string | null): boolean {
@@ -125,12 +98,14 @@ interface ComposerCommitPayload {
   commandText: string
   bodyWrite: string
   fingerprint: string
+  lastLineFingerprint: string
   usesBracketedPaste: boolean
 }
 
 interface ComposerSubmitTransaction {
   id: string
   fingerprint: string
+  lastLineFingerprint: string
   agentTarget: boolean
   settleMs: number
   startedAt: number
@@ -365,6 +340,16 @@ function normalizeSubmitFingerprint(text: string): string {
   return normalizeSubmitText(text).slice(-180)
 }
 
+function normalizeSubmitLastLineFingerprint(text: string): string {
+  const lastLine = text
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map(normalizeSubmitText)
+    .filter(Boolean)
+    .at(-1) ?? ''
+  return lastLine.slice(-180)
+}
+
 function buildComposerCommitPayload(text: string, imagePaths: string): ComposerCommitPayload | null {
   const commandText = [normalizeComposerCommitText(text), imagePaths].filter(Boolean).join(' ').trim()
   if (!commandText) return null
@@ -378,6 +363,7 @@ function buildComposerCommitPayload(text: string, imagePaths: string): ComposerC
     commandText,
     bodyWrite,
     fingerprint: normalizeSubmitFingerprint(commandText),
+    lastLineFingerprint: normalizeSubmitLastLineFingerprint(commandText),
     usesBracketedPaste
   }
 }
@@ -385,6 +371,20 @@ function buildComposerCommitPayload(text: string, imagePaths: string): ComposerC
 function terminalTailContainsSubmitFingerprint(tail: string, fingerprint: string): boolean {
   if (fingerprint.length < 2) return false
   return normalizeSubmitText(tail).includes(fingerprint)
+}
+
+function terminalTailContainsSubmitEvidence(tail: string, transaction: ComposerSubmitTransaction): boolean {
+  return terminalTailContainsSubmitFingerprint(tail, transaction.fingerprint) ||
+    terminalTailContainsSubmitFingerprint(tail, transaction.lastLineFingerprint)
+}
+
+function shouldDebugRichSubmit(): boolean {
+  try {
+    return window.localStorage.getItem('emu.debugRichSubmit') === '1' ||
+      window.localStorage.getItem('thinking.debugRichSubmit') === '1'
+  } catch {
+    return false
+  }
 }
 
 function shellEscape(path: string): string {
@@ -459,6 +459,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   const agentIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const agentProcessPollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const agentPermissionDetectorRef = useRef(new AgentPermissionPromptDetector())
+  const agentPermissionRawBufferRef = useRef('')
   const agentPermissionWatchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const agentPermissionWatchdogUntilRef = useRef(0)
 
@@ -503,6 +504,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   const shouldAutoFollowOutputRef = useRef(true)
   const autoFollowFrameRef = useRef<number | null>(null)
   const autoFollowOutputRenderUntilRef = useRef(0)
+  const scrollToBottomAnimRef = useRef<number | null>(null)
   const [composerText, setComposerText] = useState('')
   const [composerImages, setComposerImages] = useState<ComposerImageAttachment[]>([])
   const [richInputActive, setRichInputActive] = useState(true)
@@ -516,7 +518,6 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
   const rawTuiShellPollCountRef = useRef(0)
   const commitComposerRef = useRef<(text: string) => void>(() => {})
   const composerSubmitRef = useRef<ComposerSubmitTransaction | null>(null)
-  const composerSubmitEnterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const composerSubmitRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const recordPerfEvent = useCallback((event: TerminalPerfEvent, value = 1) => {
@@ -641,8 +642,13 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     const viewport = getViewportElement()
     if (!terminal || !viewport || terminal.buffer.active.type === 'alternate') return
 
+    // Do NOT call terminal.scrollToBottom() here. It fires _onScroll with
+    // suppressScrollEvent:false, which schedules a deferred _innerRefresh via
+    // requestAnimationFrame. That rAF snaps scrollTop back to the bottom AFTER
+    // the user has started scrolling up, fighting every gesture frame-by-frame.
+    // Setting scrollTop directly triggers _handleScroll with suppressScrollEvent:true —
+    // it correctly updates ydisp without scheduling any deferred snap.
     viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight
-    terminal.scrollToBottom()
     shouldAutoFollowOutputRef.current = true
     setIsAtBottom(true)
   }
@@ -674,31 +680,34 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     const viewport = getViewportElement()
     if (!viewport) return
 
+    if (scrollToBottomAnimRef.current !== null) {
+      cancelAnimationFrame(scrollToBottomAnimRef.current)
+      scrollToBottomAnimRef.current = null
+    }
+
     shouldAutoFollowOutputRef.current = true
     const DURATION = 300  // ms
     const startTime = performance.now()
     const startPos = viewport.scrollTop
 
     const step = (now: number) => {
+      scrollToBottomAnimRef.current = null
       const elapsed = now - startTime
       const progress = Math.min(elapsed / DURATION, 1)
-      // Ease-out cubic — fast start, gentle landing
       const eased = 1 - Math.pow(1 - progress, 3)
-      // Recalculate target every frame so new content added mid-scroll is captured
       const target = viewport.scrollHeight - viewport.clientHeight
       shouldAutoFollowOutputRef.current = true
       autoFollowOutputRenderUntilRef.current = Date.now() + 80
       viewport.scrollTop = startPos + (target - startPos) * eased
 
       if (progress < 1) {
-        requestAnimationFrame(step)
+        scrollToBottomAnimRef.current = requestAnimationFrame(step)
       } else {
-        // Hard snap at the end — guarantees we land exactly at the true bottom
         snapTerminalToBottom()
       }
     }
 
-    requestAnimationFrame(step)
+    scrollToBottomAnimRef.current = requestAnimationFrame(step)
   }
 
   const handleComposerCommit = useCallback((text: string) => {
@@ -839,6 +848,12 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     }
     fitAndResizeRef.current = fitAndResizeTerminal
 
+    let getPermissionScanText: (tailLines?: number) => string = () => ''
+    let detectPermissionPrompt: (
+      text: string,
+      source: 'raw' | 'raw-buffer' | 'write-parsed' | 'followup' | 'watchdog' | 'hidden-replay'
+    ) => boolean = () => false
+
     const replayHiddenOutput = () => {
       if (disposed || !isVisibleRef.current || hiddenOutputReplayFrameRef.current !== null) return
 
@@ -873,7 +888,10 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
             hiddenOutputBufferCharsRef.current -= chunk.length
           }
           if (shouldAutoFollowOutputRef.current) autoFollowOutputRenderUntilRef.current = Date.now() + 250
-          terminal.write(chunk)
+          terminal.write(chunk, () => {
+            if (disposed) return
+            detectPermissionPrompt(getPermissionScanText(AGENT_PERMISSION_TAIL_LINES), 'hidden-replay')
+          })
           written += chunk.length
         }
 
@@ -908,6 +926,11 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       onSessionTouchedRef.current?.()
     }
 
+    const debugRichSubmit = (event: string, details: Record<string, unknown> = {}) => {
+      if (!shouldDebugRichSubmit()) return
+      console.debug('[rich-submit]', event, { sessionId: session.id, ...details })
+    }
+
     const clearAgentIdleTimer = () => {
       if (agentIdleTimerRef.current) {
         clearTimeout(agentIdleTimerRef.current)
@@ -916,10 +939,6 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
     }
 
     const clearComposerSubmitTimers = () => {
-      if (composerSubmitEnterTimerRef.current) {
-        clearTimeout(composerSubmitEnterTimerRef.current)
-        composerSubmitEnterTimerRef.current = null
-      }
       if (composerSubmitRetryTimerRef.current) {
         clearTimeout(composerSubmitRetryTimerRef.current)
         composerSubmitRetryTimerRef.current = null
@@ -939,10 +958,17 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
       const currentTail = getTerminalTailText(terminal, 16)
       const tailLooksActive = looksLikeAgentActiveTail(currentTail)
-      const tailStillContainsSubmit = terminalTailContainsSubmitFingerprint(currentTail, transaction.fingerprint)
+      const tailStillContainsSubmit = terminalTailContainsSubmitEvidence(currentTail, transaction)
+      debugRichSubmit('retry-check', {
+        id,
+        tailLooksActive,
+        tailStillContainsSubmit,
+        elapsedMs: Date.now() - transaction.startedAt
+      })
 
       if (!tailLooksActive && tailStillContainsSubmit) {
         transaction.retriedEnterAt = Date.now()
+        debugRichSubmit('retry-enter', { id })
         window.api.ptyWriteSequence(session.id, [{ data: '\r' }]).finally(() => {
           finishComposerSubmitTransaction(id)
         })
@@ -958,6 +984,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
 
       transaction.sentEnterAt = Date.now()
       transaction.tailAtEnter = getTerminalTailText(terminal, 16)
+      debugRichSubmit('send-enter', { id, agentTarget: transaction.agentTarget })
       window.api.ptyWriteSequence(session.id, [{ data: '\r' }]).then((result) => {
         if (!result.ok || composerSubmitRef.current?.id !== id) {
           finishComposerSubmitTransaction(id)
@@ -975,28 +1002,6 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       }).catch(() => {
         finishComposerSubmitTransaction(id)
       })
-    }
-
-    const scheduleAgentSubmitEnter = (id: string) => {
-      const transaction = composerSubmitRef.current
-      if (!transaction || transaction.id !== id) return
-
-      const elapsedMs = Date.now() - transaction.startedAt
-      const tail = getTerminalTailText(terminal, 16)
-      const settled = elapsedMs >= transaction.settleMs
-      if (
-        settled &&
-        (terminalTailContainsSubmitFingerprint(tail, transaction.fingerprint) ||
-          elapsedMs >= AGENT_SUBMIT_MAX_WAIT_MS)
-      ) {
-        sendComposerSubmitEnter(id)
-        return
-      }
-
-      composerSubmitEnterTimerRef.current = setTimeout(() => {
-        composerSubmitEnterTimerRef.current = null
-        scheduleAgentSubmitEnter(id)
-      }, AGENT_SUBMIT_ECHO_POLL_MS)
     }
 
     const setAgentState = (state: AgentState, foregroundProcess: string | null = agentProcessRef.current) => {
@@ -1142,26 +1147,37 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         return []
       })
       clearComposerSubmitTimers()
+      const settleMs = payload.usesBracketedPaste
+        ? AGENT_SUBMIT_BRACKETED_PASTE_SETTLE_MS
+        : AGENT_SUBMIT_SINGLE_LINE_SETTLE_MS
       composerSubmitRef.current = {
         id: submitId,
         fingerprint: payload.fingerprint,
+        lastLineFingerprint: payload.lastLineFingerprint,
         agentTarget,
-        settleMs: payload.usesBracketedPaste
-          ? AGENT_SUBMIT_BRACKETED_PASTE_SETTLE_MS
-          : AGENT_SUBMIT_SINGLE_LINE_SETTLE_MS,
+        settleMs,
         startedAt: Date.now(),
         sentEnterAt: null,
         retriedEnterAt: null,
         tailAtEnter: ''
       }
+      debugRichSubmit('start', {
+        id: submitId,
+        agentTarget,
+        textLength: payload.commandText.length,
+        usesBracketedPaste: payload.usesBracketedPaste,
+        settleMs
+      })
 
       if (agentTarget) {
-        window.api.ptyWriteSequence(session.id, [{ data: payload.bodyWrite }]).then((result) => {
+        window.api.ptyWriteSequence(session.id, [
+          { data: payload.bodyWrite, delayAfterMs: settleMs }
+        ]).then((result) => {
           if (!result.ok || composerSubmitRef.current?.id !== submitId) {
             finishComposerSubmitTransaction(submitId)
             return
           }
-          scheduleAgentSubmitEnter(submitId)
+          sendComposerSubmitEnter(submitId)
         }).catch(() => {
           finishComposerSubmitTransaction(submitId)
         })
@@ -1346,6 +1362,10 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       if (scrollingUp) {
         autoFollowOutputRenderUntilRef.current = 0
         shouldAutoFollowOutputRef.current = false
+        if (scrollToBottomAnimRef.current !== null) {
+          cancelAnimationFrame(scrollToBottomAnimRef.current)
+          scrollToBottomAnimRef.current = null
+        }
       }
       if (rawTuiMode === 'pager' || isPagerProcessName(proc)) {
         // Use Ctrl+B / Ctrl+F instead of literal `b` / Space so momentum wheel
@@ -1550,15 +1570,15 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       agentSession: agentSessionRef.current || isAgentProcessName(agentProcessRef.current)
     })
 
-    const getPermissionScanText = (tailLines = DEFAULT_PERMISSION_TAIL_LINES) => {
+    getPermissionScanText = (tailLines = DEFAULT_PERMISSION_TAIL_LINES) => {
       return isAltScreenRef.current
         ? `\n${getTerminalVisibleText(terminal)}`
         : `\n${getTerminalTailText(terminal, tailLines)}`
     }
 
-    const detectPermissionPrompt = (
+    detectPermissionPrompt = (
       text: string,
-      source: 'raw' | 'write-parsed' | 'followup' | 'watchdog'
+      source: 'raw' | 'raw-buffer' | 'write-parsed' | 'followup' | 'watchdog' | 'hidden-replay'
     ): boolean => {
       const context = permissionContext()
       const permissionPrompt = agentPermissionDetectorRef.current.append(text, {
@@ -1584,6 +1604,14 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       agentProviderRef.current = permissionPrompt.provider
       window.api.agentPermissionPromptShow(permissionPrompt).catch(() => {})
       return true
+    }
+
+    const appendPermissionRawBuffer = (data: string) => {
+      agentPermissionRawBufferRef.current = `${agentPermissionRawBufferRef.current}${data}`
+      if (agentPermissionRawBufferRef.current.length > AGENT_PERMISSION_RAW_BUFFER_MAX_CHARS) {
+        agentPermissionRawBufferRef.current = agentPermissionRawBufferRef.current.slice(-AGENT_PERMISSION_RAW_BUFFER_MAX_CHARS)
+      }
+      return agentPermissionRawBufferRef.current
     }
 
     const shouldUseAgentPermissionScan = () => {
@@ -1650,6 +1678,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         onCurrentCwdChangeRef.current?.(cwd)
       }
       detectPermissionPrompt(data, 'raw')
+      detectPermissionPrompt(appendPermissionRawBuffer(data), 'raw-buffer')
       const shouldWriteImmediately = isVisibleRef.current ||
         isAltScreenRef.current ||
         Boolean(rawTuiModeRef.current) ||
@@ -2072,6 +2101,10 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
         cancelAnimationFrame(autoFollowFrameRef.current)
         autoFollowFrameRef.current = null
       }
+      if (scrollToBottomAnimRef.current !== null) {
+        cancelAnimationFrame(scrollToBottomAnimRef.current)
+        scrollToBottomAnimRef.current = null
+      }
       if (agentProcessPollRef.current) {
         clearTimeout(agentProcessPollRef.current)
         agentProcessPollRef.current = null
@@ -2088,6 +2121,7 @@ export default function TerminalPane({ session, isVisible, slot = 'full', isActi
       hiddenOutputBufferRef.current = []
       hiddenOutputBufferCharsRef.current = 0
       hiddenOutputOmittedCharsRef.current = 0
+      agentPermissionRawBufferRef.current = ''
       const webglContextLossDisposableToDispose = webglContextLossDisposable
       webglContextLossDisposable = null
       webglAddon = null
