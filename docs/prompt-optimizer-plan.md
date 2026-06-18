@@ -2,13 +2,13 @@
 
 ## Current Scope
 
-V1 builds a highlight-to-optimize workflow inside Emu:
+V1 builds a highlight-to-optimize workflow inside Thinking:
 
 1. User highlights text in the terminal.
-2. Emu shows a floating `Optimize` button.
+2. Thinking shows a floating `Optimize` button.
 3. User clicks it.
-4. Emu sends the selected text to a locally configured optimizer LLM provider.
-5. Emu shows the optimized result in a right-hand drawer.
+4. Thinking sends the selected text to a locally configured optimizer LLM provider.
+5. Thinking shows the optimized result in a right-hand drawer.
 6. User can edit, insert, copy, regenerate, or dismiss the optimized prompt.
 
 V1 explicitly does **not** include repo context extraction, cwd tracking, active Claude/Codex session reuse, hidden background agents, hosted accounts, or replace-selection behavior.
@@ -35,7 +35,7 @@ Completed changes:
   - Model
   - disabled `Test`, `Clear Key`, and `Save` buttons
 - Removed the old sidebar gear/About button.
-- Moved the existing “Why Emu is better than your Terminal” writeup into the `About` tab.
+- Moved the existing “Why Thinking is better than your Terminal” writeup into the `About` tab.
 - Made the settings modal a constant `50vh`.
 - Added scrollbars to all settings tabs so content stays accessible when the app window is short.
 

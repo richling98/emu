@@ -2,7 +2,7 @@
 
 ## Problem
 
-Sometimes submitting from Emu's rich input composer writes the prompt into the active Claude Code or Codex command line but does not actually submit it. The visible result is that the text is sitting in the agent input area, and the user must click or mouse over the terminal and press Enter manually.
+Sometimes submitting from Thinking's rich input composer writes the prompt into the active Claude Code or Codex command line but does not actually submit it. The visible result is that the text is sitting in the agent input area, and the user must click or mouse over the terminal and press Enter manually.
 
 This appears most common inside agent TUIs such as Claude Code and Codex. It has not yet been proven to affect a plain shell prompt at the same rate.
 
@@ -110,7 +110,7 @@ Files:
 
 Verification:
 
-- Run Emu in dev mode.
+- Run Thinking in dev mode.
 - Submit simple and multi-line prompts in Claude Code and Codex.
 - Confirm the trace shows whether Enter is sent before or after the prompt visibly lands.
 
@@ -152,7 +152,7 @@ Files:
 Verification:
 
 - `npm run build`
-- Manual shell test: submit `echo emu-submit-test`.
+- Manual shell test: submit `echo thinking-submit-test`.
 - Confirm command runs once and command history records one entry.
 
 ### Phase 3: Extract Commit Sequencing Into a Pure Helper
@@ -282,7 +282,7 @@ This can be a simple Node script under `scripts/` if we do not want to add a tes
 
 Then document a manual or automated flow:
 
-1. Run Emu dev.
+1. Run Thinking dev.
 2. Launch the fake TUI in a tab.
 3. Submit a rich composer prompt.
 4. Verify `SUBMITTED:<id>` appears exactly once.
@@ -313,7 +313,7 @@ Verification:
 
 | Context | Input | Expected |
 | --- | --- | --- |
-| zsh shell | `echo emu-submit-test` | command executes once |
+| zsh shell | `echo thinking-submit-test` | command executes once |
 | zsh shell | multiline shell input | behavior matches current intended shell behavior |
 | Claude Code idle prompt | single-line message | message submits once |
 | Claude Code idle prompt | multi-line message | message submits once with line breaks preserved |

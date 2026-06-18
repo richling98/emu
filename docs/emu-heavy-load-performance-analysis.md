@@ -1,7 +1,7 @@
-# Emu Heavy-Load CPU and Memory Analysis
+# Thinking Heavy-Load CPU and Memory Analysis
 
 Date: 2026-06-07  
-Scope: local Emu codebase review plus current public architecture notes for Ghostty, Warp, and xterm.js.
+Scope: local Thinking codebase review plus current public architecture notes for Ghostty, Warp, and xterm.js.
 
 ## Executive Summary
 
@@ -10,14 +10,14 @@ The most likely root cause of the hot laptop / loud fan problem is CPU load, not
 1. Every `node-pty` output chunk is forwarded immediately over Electron IPC.
 2. Every tab is mounted as a live `TerminalPane`, even hidden tabs.
 3. Hidden tabs keep live xterm.js instances, live PTYs, process polling, IPC listeners, output parsing, and command-history capture.
-4. The WebGL renderer is installed as a dependency but not actually loaded in `TerminalPane.tsx`, so Emu appears to use xterm.js's default renderer path.
-5. Emu does additional per-output work beyond plain terminal rendering: cwd OSC parsing, agent-idle heuristics, command preview extraction, output-flush timers, command-output copying support, link providers, scroll state, and React state updates.
+4. The WebGL renderer is installed as a dependency but not actually loaded in `TerminalPane.tsx`, so Thinking appears to use xterm.js's default renderer path.
+5. Thinking does additional per-output work beyond plain terminal rendering: cwd OSC parsing, agent-idle heuristics, command preview extraction, output-flush timers, command-output copying support, link providers, scroll state, and React state updates.
 
-This does not mean Emu's architecture is fundamentally wrong. Electron + xterm.js + node-pty can support a good terminal product, especially if the product value is richer UI and agent workflow. But Emu's current implementation is not optimized for many high-output background tabs. Ghostty and Warp do have stronger raw-throughput architecture: they are native/Rust/Zig GPU-first systems that avoid Electron's IPC and Chromium overhead.
+This does not mean Thinking's architecture is fundamentally wrong. Electron + xterm.js + node-pty can support a good terminal product, especially if the product value is richer UI and agent workflow. But Thinking's current implementation is not optimized for many high-output background tabs. Ghostty and Warp do have stronger raw-throughput architecture: they are native/Rust/Zig GPU-first systems that avoid Electron's IPC and Chromium overhead.
 
-My recommendation: do not rewrite the app first. Ship an Emu performance pass that batches PTY output, pauses/degrades hidden-pane rendering, enables the xterm WebGL renderer, caps retained output, and adds profiling. Only consider a native renderer or Tauri/native rewrite after measuring the remaining gap.
+My recommendation: do not rewrite the app first. Ship an Thinking performance pass that batches PTY output, pauses/degrades hidden-pane rendering, enables the xterm WebGL renderer, caps retained output, and adds profiling. Only consider a native renderer or Tauri/native rewrite after measuring the remaining gap.
 
-## What I Found In Emu
+## What I Found In Thinking
 
 ### The PTY Output Path Is Unbatched
 
@@ -45,9 +45,9 @@ This is the first place I would optimize. A terminal should generally batch outp
 
 Plain-English explanation:
 
-Imagine each running process is handing Emu tiny scraps of paper with new terminal text on them. Right now Emu appears to walk each scrap from the terminal process, through Electron IPC, into the UI, and asks xterm.js to update the screen immediately. If 10 busy tabs each hand Emu hundreds of scraps per second, Emu spends a lot of time just handling deliveries.
+Imagine each running process is handing Thinking tiny scraps of paper with new terminal text on them. Right now Thinking appears to walk each scrap from the terminal process, through Electron IPC, into the UI, and asks xterm.js to update the screen immediately. If 10 busy tabs each hand Thinking hundreds of scraps per second, Thinking spends a lot of time just handling deliveries.
 
-Batching means Emu collects those scraps for a few milliseconds and delivers them as one envelope. The user still sees output essentially live, because the batch window is shorter than a frame of video, but the computer does much less bookkeeping. Instead of "wake up, cross IPC, parse, render" hundreds or thousands of times per second, Emu can do it tens of times per second with larger chunks.
+Batching means Thinking collects those scraps for a few milliseconds and delivers them as one envelope. The user still sees output essentially live, because the batch window is shorter than a frame of video, but the computer does much less bookkeeping. Instead of "wake up, cross IPC, parse, render" hundreds or thousands of times per second, Thinking can do it tens of times per second with larger chunks.
 
 The value is not that fewer bytes are rendered. The value is that the fixed overhead around each delivery is paid far fewer times.
 
@@ -87,7 +87,7 @@ But CSS hiding does not stop the mounted component. Each hidden pane still owns:
 
 Important terminology:
 
-"Hidden tab" means a tab/session that still exists in Emu and can be navigated back to, but is not currently visible in the active pane or split pane. It does not mean a physically deleted tab. Deleted tabs should have their PTY closed and their `TerminalPane` unmounted through the cleanup path.
+"Hidden tab" means a tab/session that still exists in Thinking and can be navigated back to, but is not currently visible in the active pane or split pane. It does not mean a physically deleted tab. Deleted tabs should have their PTY closed and their `TerminalPane` unmounted through the cleanup path.
 
 So the issue is:
 
@@ -96,7 +96,7 @@ So the issue is:
 - other tabs you can still click back to: hidden but still mounted;
 - deleted tabs: not what I am referring to here.
 
-For a user running many parallel agent/process tabs, this is likely the largest Emu-specific scaling problem. The app pays render/parse cost for terminal output that is not currently visible. That is useful if the goal is instant tab switching with perfectly up-to-date terminal state, but it is expensive when many hidden tabs are streaming output.
+For a user running many parallel agent/process tabs, this is likely the largest Thinking-specific scaling problem. The app pays render/parse cost for terminal output that is not currently visible. That is useful if the goal is instant tab switching with perfectly up-to-date terminal state, but it is expensive when many hidden tabs are streaming output.
 
 ### WebGL Is Installed But Not Loaded
 
@@ -123,7 +123,7 @@ This also contradicts the About modal claim:
 
 Source: `src/renderer/src/components/AboutModal.tsx:17`.
 
-xterm.js's own README says WebGL is an optional addon and `@xterm/addon-webgl` renders xterm.js using a WebGL2 canvas context: https://github.com/xtermjs/xterm.js/#addons. Emu has the dependency but does not appear to activate it.
+xterm.js's own README says WebGL is an optional addon and `@xterm/addon-webgl` renders xterm.js using a WebGL2 canvas context: https://github.com/xtermjs/xterm.js/#addons. Thinking has the dependency but does not appear to activate it.
 
 Plain-English explanation:
 
@@ -133,12 +133,12 @@ The benefit is similar to using a graphics card for a game instead of asking the
 
 One caveat: if every hidden tab creates its own WebGL context, that can create GPU memory/context pressure. So WebGL should be paired with hidden-tab virtualization or suspension.
 
-### Emu Does Extra Work On Every Output Burst
+### Thinking Does Extra Work On Every Output Burst
 
 For each PTY data callback, `TerminalPane.tsx` also does:
 
 - `touchSessionActivity()`
-- scan output for `OSC 633;EmuCwd`
+- scan output for `OSC 633;ThinkingCwd`
 - `terminal.write(data)`
 - schedule agent idle checks
 - maybe schedule raw TUI prompt checks
@@ -147,7 +147,7 @@ For each PTY data callback, `TerminalPane.tsx` also does:
 
 Source: `src/renderer/src/components/TerminalPane.tsx:1386`.
 
-This is not inherently wrong, but it means Emu is not just a terminal renderer. It is a terminal renderer plus agent-state inference plus command logging plus rich UI features. Under heavy output, these features should be gated, batched, or disabled for hidden tabs.
+This is not inherently wrong, but it means Thinking is not just a terminal renderer. It is a terminal renderer plus agent-state inference plus command logging plus rich UI features. Under heavy output, these features should be gated, batched, or disabled for hidden tabs.
 
 Proposed fix:
 
@@ -178,11 +178,11 @@ Proposed fix:
    - Cap command history length per tab.
    - Store truncation markers instead of unbounded strings.
 
-The goal is to preserve Emu's useful agent/workspace features without running all of them on every byte of output from every background process.
+The goal is to preserve Thinking's useful agent/workspace features without running all of them on every byte of output from every background process.
 
 ### Output Capture Can Retain Large Text
 
-When a command finishes, Emu reads rendered xterm buffer lines and stores `outputFull` in React state:
+When a command finishes, Thinking reads rendered xterm buffer lines and stores `outputFull` in React state:
 
 ```ts
 for (let ln = startLine + 1; ln < endLine; ln++) {
@@ -255,7 +255,7 @@ Electron creates a baseline cost:
 - Chromium compositor/GPU process;
 - DOM/CSS/layout interaction.
 
-That means Emu will not match Ghostty or Warp on raw terminal throughput if they are fully optimized. But the current hot path has fixable issues inside the Electron model:
+That means Thinking will not match Ghostty or Warp on raw terminal throughput if they are fully optimized. But the current hot path has fixable issues inside the Electron model:
 
 - no PTY output batching;
 - hidden panes still render and parse output;
@@ -264,7 +264,7 @@ That means Emu will not match Ghostty or Warp on raw terminal throughput if they
 - agent heuristics run for all tabs;
 - no profiling/performance budget exists.
 
-So the answer is: Electron imposes a ceiling, but Emu is currently below that ceiling.
+So the answer is: Electron imposes a ceiling, but Thinking is currently below that ceiling.
 
 ## Competitor Architecture Comparison
 
@@ -278,7 +278,7 @@ Ghostty also uses native platform UI: SwiftUI and Metal/CoreText on macOS, GTK o
 
 Source: https://github.com/ghostty-org/ghostty#native-platform-experiences
 
-The relevant difference: Ghostty's hot path is built around native threads, native parsing, and native GPU rendering. Emu's hot path is PTY -> Electron main process -> serialized IPC -> JavaScript parser/rendering in a Chromium renderer.
+The relevant difference: Ghostty's hot path is built around native threads, native parsing, and native GPU rendering. Thinking's hot path is PTY -> Electron main process -> serialized IPC -> JavaScript parser/rendering in a Chromium renderer.
 
 ### Warp
 
@@ -290,7 +290,7 @@ Warp's newer block-model writeup explains that it is not just a single terminal 
 
 Source: https://www.warp.dev/blog/block-model-behind-warps-agentic-development-environment
 
-The relevant difference: Warp's architecture is designed to avoid paying render cost for non-visible history. Emu currently keeps a traditional xterm grid per tab and still processes hidden tabs.
+The relevant difference: Warp's architecture is designed to avoid paying render cost for non-visible history. Thinking currently keeps a traditional xterm grid per tab and still processes hidden tabs.
 
 ## Root-Cause Hypotheses, Ranked
 
@@ -331,11 +331,11 @@ Expected impact:
 
 ### P0: Load xterm WebGL Renderer
 
-Emu has `@xterm/addon-webgl` but does not load it. xterm.js documents WebGL as an optional renderer addon.
+Thinking has `@xterm/addon-webgl` but does not load it. xterm.js documents WebGL as an optional renderer addon.
 
 Simple reason this helps:
 
-WebGL lets xterm.js use the GPU for drawing terminal text. In plain terms, it moves more of the "paint the screen over and over" work from the CPU to the graphics hardware. That matters when output is flying by or when multiple terminal panes are visible. It will not reduce the CPU used by the actual commands running in the terminal, but it should reduce the CPU Emu spends displaying their output.
+WebGL lets xterm.js use the GPU for drawing terminal text. In plain terms, it moves more of the "paint the screen over and over" work from the CPU to the graphics hardware. That matters when output is flying by or when multiple terminal panes are visible. It will not reduce the CPU used by the actual commands running in the terminal, but it should reduce the CPU Thinking spends displaying their output.
 
 Fix:
 
@@ -351,7 +351,7 @@ Risk:
 
 ### P1: Reduce Hot-Path Feature Work
 
-Emu currently does useful workspace features during the same callback that handles raw terminal output. That callback should be treated as a hot path: it may run constantly when many processes are active.
+Thinking currently does useful workspace features during the same callback that handles raw terminal output. That callback should be treated as a hot path: it may run constantly when many processes are active.
 
 Fix:
 
@@ -364,7 +364,7 @@ Fix:
 
 Plain-English version:
 
-Right now Emu is doing multiple side chores every time new terminal text arrives. Some chores are valuable, but they do not all need to happen immediately. The fix is to let the terminal display stay fast, then do the bookkeeping later, less often, or only for the tab the user can actually see.
+Right now Thinking is doing multiple side chores every time new terminal text arrives. Some chores are valuable, but they do not all need to happen immediately. The fix is to let the terminal display stay fast, then do the bookkeeping later, less often, or only for the tab the user can actually see.
 
 ### P1: Cap Command History Output
 
@@ -419,7 +419,7 @@ top -o cpu
 sudo powermetrics --samplers tasks -n 1
 ```
 
-The important question is whether CPU sits in Emu's renderer, Emu's main process, Electron Helper GPU, or the child processes. The fix depends on that split.
+The important question is whether CPU sits in Thinking's renderer, Thinking's main process, Electron Helper GPU, or the child processes. The fix depends on that split.
 
 ## Recommended Fix Plan
 
@@ -451,7 +451,7 @@ How to interpret it:
 
 - High `PTY bytes` with high system CPU in child processes means the workload itself is expensive.
 - High `IPC msgs` relative to bytes means the output path needs batching.
-- High `Hidden bytes` means Emu is spending work on tabs the user cannot currently see.
+- High `Hidden bytes` means Thinking is spending work on tabs the user cannot currently see.
 - High `xterm writes` means the renderer is doing frequent terminal updates and should benefit from batching and WebGL.
 - High `Polls` means agent/process heuristics may need gating for hidden or non-agent tabs.
 
@@ -482,11 +482,11 @@ Implementation note:
 Phase 2 now includes:
 
 - Main-process PTY output batching with a 12 ms flush window and a 256 KB immediate flush threshold. The overlay's `PTY bytes` still shows raw input throughput, while `IPC msgs` should drop when output arrives in many small chunks.
-- xterm.js WebGL activation is now treated as experimental and opt-in. Corrected diagnostics showed that when WebGL is truly enabled through `EMU_ENABLE_WEBGL=1`, the app can blank at launch in this Electron runtime. This happened even with vibrancy disabled, so WebGL should not be considered part of the stable performance path yet.
+- xterm.js WebGL activation is now treated as experimental and opt-in. Corrected diagnostics showed that when WebGL is truly enabled through `THINKING_ENABLE_WEBGL=1`, the app can blank at launch in this Electron runtime. This happened even with vibrancy disabled, so WebGL should not be considered part of the stable performance path yet.
 - Hidden-tab foreground-process polling reduced from every 4 seconds to every 16 seconds, while visible tabs and running agent/TUI states keep the faster cadence.
 - Command-history `outputFull` capped at 200,000 characters, preserving the first and last 100,000 characters with a truncation marker.
-- `EMU_DISABLE_VIBRANCY=1 npm run dev` test mode for launching an opaque, non-vibrant window to isolate macOS compositor cost.
-- `EMU_ENABLE_WEBGL=1 npm run dev` test mode for explicitly enabling WebGL. The overlay shows the real WebGL/vibrancy mode so stale assumptions do not pollute test results.
+- `THINKING_DISABLE_VIBRANCY=1 npm run dev` test mode for launching an opaque, non-vibrant window to isolate macOS compositor cost.
+- `THINKING_ENABLE_WEBGL=1 npm run dev` test mode for explicitly enabling WebGL. The overlay shows the real WebGL/vibrancy mode so stale assumptions do not pollute test results.
 
 Success criterion:
 
@@ -511,11 +511,11 @@ Phase 3 now takes the conservative path:
 
 - Hidden normal-screen tabs keep reading PTY output immediately, but defer `terminal.write`.
 - Hidden output is stored in a bounded 2 MB per-tab buffer.
-- If the buffer exceeds the cap, old hidden output is dropped and Emu records the omitted character count.
-- When the tab becomes visible, Emu replays buffered output incrementally at up to 128 KB per animation frame.
-- If output was omitted, Emu inserts a visible marker before replaying the retained tail:
+- If the buffer exceeds the cap, old hidden output is dropped and Thinking records the omitted character count.
+- When the tab becomes visible, Thinking replays buffered output incrementally at up to 128 KB per animation frame.
+- If output was omitted, Thinking inserts a visible marker before replaying the retained tail:
   ```text
-  [Emu omitted 2,400,000 characters of hidden output while this tab was inactive]
+  [Thinking omitted 2,400,000 characters of hidden output while this tab was inactive]
   ```
 - Hidden alternate-screen/TUI tabs still render in real time for now, because apps like editors, pagers, and full-screen agent UIs rely on cursor movement and screen-state updates.
 
@@ -528,19 +528,19 @@ Expected overlay behavior:
 
 ### Phase 3 Validation Checklist
 
-Run these with the normal safe dev app, meaning no `EMU_ENABLE_WEBGL=1`.
+Run these with the normal safe dev app, meaning no `THINKING_ENABLE_WEBGL=1`.
 
 Baseline expected overlay badges:
 
 - `WebGL off`
-- `Vibrancy on` unless testing with `EMU_DISABLE_VIBRANCY=1`
+- `Vibrancy on` unless testing with `THINKING_DISABLE_VIBRANCY=1`
 
 Test 1: visible output load
 
 1. Open one tab.
 2. Run:
    ```bash
-   yes "emu visible throughput test $(date)" | head -n 200000
+   yes "thinking visible throughput test $(date)" | head -n 200000
    ```
 3. Expected:
    - `PTY bytes` rises sharply.
@@ -592,7 +592,7 @@ Test 5: backlog replay
    - the tab catches up in chunks;
    - `xterm writes` briefly rises;
    - the app remains responsive;
-   - if the backlog exceeded the cap, Emu prints an omission marker before the retained tail.
+   - if the backlog exceeded the cap, Thinking prints an omission marker before the retained tail.
 
 ### Phase 4: WebGL Isolation
 
@@ -601,7 +601,7 @@ WebGL should be investigated separately from the stable CPU fix.
 Current evidence:
 
 - WebGL off: app is usable.
-- Correctly enabled WebGL through `EMU_ENABLE_WEBGL=1`: app blanks on launch.
+- Correctly enabled WebGL through `THINKING_ENABLE_WEBGL=1`: app blanks on launch.
 - WebGL with vibrancy disabled also blanked, so the issue is not only transparent-window composition.
 - Earlier confusion came from a bad flag path: the overlay showed `WebGL off`, meaning the renderer was not actually running WebGL.
 
@@ -609,7 +609,7 @@ Next WebGL-specific experiment:
 
 1. Build a tiny Electron repro with only one `BrowserWindow`, one xterm terminal, `@xterm/addon-fit`, and `@xterm/addon-webgl`.
 2. If the tiny repro blanks, the issue is xterm WebGL plus this Electron/GPU runtime.
-3. If the tiny repro works, the issue is Emu's mounting, CSS, or renderer lifecycle.
+3. If the tiny repro works, the issue is Thinking's mounting, CSS, or renderer lifecycle.
 4. Until this is resolved, keep WebGL disabled by default and do not count it as part of the Phase 3 performance win.
 
 ### Phase 5: Architecture Reassessment
@@ -621,7 +621,7 @@ Stay with Electron if:
 - visible terminal latency is good;
 - CPU stays acceptable with many hidden processes;
 - memory returns after closing tabs;
-- Emu's differentiator is rich agent UI rather than fastest raw terminal throughput.
+- Thinking's differentiator is rich agent UI rather than fastest raw terminal throughput.
 
 Consider native/Tauri/renderer rewrite if:
 
@@ -630,18 +630,18 @@ Consider native/Tauri/renderer rewrite if:
 - heavy users require dozens of live visible terminals;
 - the product goal is Ghostty-class terminal performance, not just better agent workflows.
 
-## Is Emu's Architecture Fundamentally Wrong?
+## Is Thinking's Architecture Fundamentally Wrong?
 
 No, but it is currently mixing two product models:
 
 1. Traditional terminal emulator: optimize byte stream parsing/rendering at very high throughput.
 2. Agent workspace: track commands, infer agent state, provide rich prompt composition, output capture, markdown popouts, and workspace UI.
 
-Electron/React is a reasonable choice for the second model. Ghostty's architecture is better for the first model. Warp's architecture is interesting because it rethinks terminal output as structured, virtualized blocks, which is closer to Emu's agent-workspace direction.
+Electron/React is a reasonable choice for the second model. Ghostty's architecture is better for the first model. Warp's architecture is interesting because it rethinks terminal output as structured, virtualized blocks, which is closer to Thinking's agent-workspace direction.
 
 The strategic question is not "Electron or native?" It is:
 
-> Should Emu optimize around raw terminal throughput, or around many agent sessions with structured state and selective rendering?
+> Should Thinking optimize around raw terminal throughput, or around many agent sessions with structured state and selective rendering?
 
 For the user-reported issue, the right near-term answer is selective rendering. Do not spend CPU rendering hidden agent/process output in real time.
 
@@ -666,7 +666,7 @@ Before shipping:
 4. Confirm 5-10 hidden busy tabs show rising `Hidden bytes` but low `xterm writes`.
 5. Confirm closing hidden busy tabs does not blank the app.
 6. Check memory after closing all busy tabs.
-7. Check Activity Monitor and separate Emu/Electron CPU from child-process CPU and Defender CPU.
+7. Check Activity Monitor and separate Thinking/Electron CPU from child-process CPU and Defender CPU.
 
 Recommended next code polish:
 
@@ -677,8 +677,8 @@ Recommended next code polish:
 
 WebGL follow-up:
 
-Do not re-enable WebGL in the main app until it is isolated. Corrected diagnostics showed that true `EMU_ENABLE_WEBGL=1` can blank the app at launch. The next WebGL task should be a tiny Electron + xterm + WebGL repro. If the repro blanks, the issue is the Electron/xterm/GPU runtime. If the repro works, the issue is Emu-specific mounting, CSS, or lifecycle.
+Do not re-enable WebGL in the main app until it is isolated. Corrected diagnostics showed that true `THINKING_ENABLE_WEBGL=1` can blank the app at launch. The next WebGL task should be a tiny Electron + xterm + WebGL repro. If the repro blanks, the issue is the Electron/xterm/GPU runtime. If the repro works, the issue is Thinking-specific mounting, CSS, or lifecycle.
 
 Architecture decision:
 
-If the stable path keeps CPU acceptable for many hidden agent sessions, Electron remains reasonable for Emu's product direction. Revisit native rendering or a Warp-like virtualized block model only if visible terminal rendering remains the bottleneck after the hidden-tab and batching fixes.
+If the stable path keeps CPU acceptable for many hidden agent sessions, Electron remains reasonable for Thinking's product direction. Revisit native rendering or a Warp-like virtualized block model only if visible terminal rendering remains the bottleneck after the hidden-tab and batching fixes.

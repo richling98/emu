@@ -158,10 +158,10 @@
 <body>
 <div class="container">
   <h1>Native Markdown Viewer Implementation Plan</h1>
-  <p class="subtitle">Emu feature plan - click a Markdown path in terminal output and render it in a collapsible right-side pop-out.</p>
+  <p class="subtitle">Thinking feature plan - click a Markdown path in terminal output and render it in a collapsible right-side pop-out.</p>
 
   <div class="card">
-    <p><strong>Goal:</strong> When a user Cmd-clicks a local Markdown file link in Emu, Emu should open a native, read-only Markdown viewer in a right-hand pop-out pane instead of sending the file to Finder or the system default app.</p>
+    <p><strong>Goal:</strong> When a user Cmd-clicks a local Markdown file link in Thinking, Thinking should open a native, read-only Markdown viewer in a right-hand pop-out pane instead of sending the file to Finder or the system default app.</p>
     <p><strong>Core assumption:</strong> "Markdown file link" means a local path visible in terminal output, including absolute paths, relative paths, and <code>file://</code> links that point to <code>.md</code>-style files. Web URLs should continue opening in the browser.</p>
   </div>
 
@@ -314,9 +314,9 @@
     <div class="num">1</div>
     <div class="phase-body">
       <h3><span class="tag">Foundation</span> Add current-directory tracking</h3>
-      <p>Add a small Emu-specific shell integration sequence that announces the session cwd before each prompt. Store it in <code>TerminalPane</code> as <code>currentWorkingDirectoryRef</code>.</p>
+      <p>Add a small Thinking-specific shell integration sequence that announces the session cwd before each prompt. Store it in <code>TerminalPane</code> as <code>currentWorkingDirectoryRef</code>.</p>
       <ul>
-        <li>In <code>setupShellIntegration()</code>, append a zsh <code>precmd</code> hook that emits a private OSC sequence such as <code>ESC ] 633;EmuCwd=/absolute/path BEL</code>.</li>
+        <li>In <code>setupShellIntegration()</code>, append a zsh <code>precmd</code> hook that emits a private OSC sequence such as <code>ESC ] 633;ThinkingCwd=/absolute/path BEL</code>.</li>
         <li>In <code>TerminalPane.tsx</code>, parse incoming PTY data for that OSC marker before <code>terminal.write(data)</code>.</li>
         <li>Default cwd to the PTY spawn directory for sessions that have not emitted the marker yet.</li>
         <li>Do not expose cwd in UI; it is only used to resolve relative links.</li>
@@ -439,7 +439,7 @@
       <h3><span class="tag soft">Polish</span> Update docs and manual QA coverage</h3>
       <p>Once behavior is implemented, update the user-facing feature list and run a focused verification pass.</p>
       <ul>
-        <li>Update <code>README.md</code>: Markdown paths open in Emu; other file paths still open through the system.</li>
+        <li>Update <code>README.md</code>: Markdown paths open in Thinking; other file paths still open through the system.</li>
         <li>Run <code>npm run build</code> to verify TypeScript and bundling.</li>
         <li>Run the app and manually test absolute paths, relative paths after <code>cd</code>, split panes, <code>file://</code> Markdown URLs, broken files, large files, and links inside rendered Markdown.</li>
       </ul>
@@ -470,7 +470,7 @@
       </tr>
       <tr>
         <td><code>cd docs</code>, <code>echo ./ghostty-feature-gaps.md</code>, Cmd-click path</td>
-        <td>Relative path resolves from the current shell cwd and opens in Emu.</td>
+        <td>Relative path resolves from the current shell cwd and opens in Thinking.</td>
       </tr>
       <tr>
         <td>Cmd-click <code>./package.json</code></td>
@@ -478,11 +478,11 @@
       </tr>
       <tr>
         <td>Rendered Markdown contains <code>[Other](./other.md)</code></td>
-        <td>Viewer navigates to the other Markdown file without leaving Emu.</td>
+        <td>Viewer navigates to the other Markdown file without leaving Thinking.</td>
       </tr>
       <tr>
         <td>Rendered Markdown contains <code>[Web](https://example.com)</code></td>
-        <td>Browser opens externally; Emu window does not navigate.</td>
+        <td>Browser opens externally; Thinking window does not navigate.</td>
       </tr>
       <tr>
         <td>Split screen: click Markdown link in right pane</td>
@@ -543,7 +543,7 @@
 
   <h2>Recommended First Cut</h2>
   <div class="card">
-    <p>Build phases 1 through 5 first. That delivers the central user promise: local Markdown links open in a right-hand Emu pop-out, Preview mode renders rich Markdown, Markdown mode shows raw source, relative links work, Markdown-to-Markdown navigation stays native, and the user can collapse the document when they need more terminal space. Then add local images in phase 6 before calling the feature polished.</p>
+    <p>Build phases 1 through 5 first. That delivers the central user promise: local Markdown links open in a right-hand Thinking pop-out, Preview mode renders rich Markdown, Markdown mode shows raw source, relative links work, Markdown-to-Markdown navigation stays native, and the user can collapse the document when they need more terminal space. Then add local images in phase 6 before calling the feature polished.</p>
     <p>This keeps the first implementation surgical: one new pop-out component, one CSS file, focused IPC additions, app-level viewer and mode state, and a targeted change to the existing terminal link provider.</p>
   </div>
 </div>

@@ -16,9 +16,9 @@ When a user changes directory inside a terminal, the matching left-hand sidebar 
 
 Example:
 
-- User runs `cd /Users/rling/Documents/Vibing/Emu-dev`
-- Emu already receives the cwd as `/Users/rling/Documents/Vibing/Emu-dev`
-- Sidebar project name changes from `Project 1` to `Emu-dev`
+- User runs `cd /Users/rling/Documents/Vibing/Thinking-dev`
+- Thinking already receives the cwd as `/Users/rling/Documents/Vibing/Thinking-dev`
+- Sidebar project name changes from `Project 1` to `Thinking-dev`
 
 The top project tabs should keep their own names, such as `Project 1`, `Project 2`, or a user-renamed project title. This change is only for the left sidebar project name.
 
@@ -26,7 +26,7 @@ The top project tabs should keep their own names, such as `Project 1`, `Project 
 
 The prior sidebar-project/top-project tab feature already gives us most of the plumbing:
 
-- `TerminalPane` extracts cwd from the shell integration OSC sequence via `extractEmuCwd`.
+- `TerminalPane` extracts cwd from the shell integration OSC sequence via `extractThinkingCwd`.
 - `TerminalPane` calls `onCurrentCwdChange(cwd)` whenever cwd changes.
 - `App.tsx` handles that in `handleCurrentCwdChange(id, currentCwd)`.
 - `App.tsx` already knows which workspace owns the tab that reported the cwd.
@@ -41,7 +41,7 @@ So this should be implemented in `App.tsx` without changing the main-process she
 1. New projects still start as `Project 1`, `Project 2`, etc.
 2. When any top project tab in a sidebar project reports a cwd, the owning sidebar project can rename to the cwd basename.
 3. The displayed name should be only the final path segment:
-   - `/Users/rling/Documents/Vibing/Emu-dev` -> `Emu-dev`
+   - `/Users/rling/Documents/Vibing/Thinking-dev` -> `Thinking-dev`
    - `/Users/rling/Documents/Vibing` -> `Vibing`
    - `/Users/rling` -> `rling`
 4. The app should ignore invalid or empty cwd strings.
@@ -53,7 +53,7 @@ Recommended behavior: manual sidebar rename should opt the project out of future
 
 Reasoning:
 
-- If the user explicitly renames a project to something meaningful, such as `Launch fixes`, Emu should not overwrite it the next time a terminal prompt reports cwd.
+- If the user explicitly renames a project to something meaningful, such as `Launch fixes`, Thinking should not overwrite it the next time a terminal prompt reports cwd.
 - Default `Project N` names are placeholders, so replacing them with folder names is useful.
 - Folder-name auto-renames are helpful only until the user intentionally gives the project a custom label.
 
@@ -87,8 +87,8 @@ Expected rules:
 
 Examples:
 
-- `/Users/rling/Documents/Vibing/Emu-dev` -> `Emu-dev`
-- `/Users/rling/Documents/Vibing/Emu-dev/` -> `Emu-dev`
+- `/Users/rling/Documents/Vibing/Thinking-dev` -> `Thinking-dev`
+- `/Users/rling/Documents/Vibing/Thinking-dev/` -> `Thinking-dev`
 - `/` -> `null`
 - `''` -> `null`
 
@@ -135,8 +135,8 @@ Status: not run in this implementation pass; use this checklist for interactive 
 
 - Start the dev app.
 - Confirm initial sidebar name is `Project 1`.
-- In `Project 1`, run `cd /Users/rling/Documents/Vibing/Emu-dev`.
-- Confirm the sidebar name becomes `Emu-dev`.
+- In `Project 1`, run `cd /Users/rling/Documents/Vibing/Thinking-dev`.
+- Confirm the sidebar name becomes `Thinking-dev`.
 - Run `cd /Users/rling/Documents/Vibing`.
 - Confirm the sidebar name becomes `Vibing` if the project has not been manually renamed.
 - Manually rename the sidebar project to `Launch fixes`.
