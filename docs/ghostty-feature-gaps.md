@@ -1,13 +1,13 @@
 # Ghostty Feature Gap Analysis
 
-A comparison of Ghostty vs Emu to identify features worth building.
+A comparison of Ghostty vs Thinking to identify features worth building.
 Research date: 2026-04-20.
 
 ---
 
 ## Summary
 
-The biggest gaps affecting daily Emu users:
+The biggest gaps affecting daily Thinking users:
 
 1. **No font choice** — hardcoded JetBrains Mono is a dealbreaker for many devs
 2. **No config file** — zero customization beyond 6 built-in themes
@@ -20,13 +20,13 @@ The biggest gaps affecting daily Emu users:
 
 ## Full Feature Gap Table
 
-| Category | Feature | Ghostty | Emu | Notes |
+| Category | Feature | Ghostty | Thinking | Notes |
 |---|---|---|---|---|
 | **Rendering** | Renderer | Native Metal (macOS) / OpenGL (Linux) | xterm.js WebGL | Ghostty's renderer is faster and uses less CPU |
 | **Rendering** | Threading | Dedicated read/write/render threads per terminal | Single-threaded JS renderer | Ghostty stays smooth under heavy output |
 | **Rendering** | Terminal parser | SIMD-optimized, written in Zig | xterm.js parser (JS) | Matters for `cat`-ing large files, fast build output |
 | **Rendering** | Alpha blending | Linear-corrected mode (no text fringing) | Default browser alpha blending | Ghostty text looks cleaner on colored backgrounds |
-| **Fonts** | Font selection | Full config: family, bold, italic, fallback chains | Hardcoded JetBrains Mono | Emu users can't change the font at all |
+| **Fonts** | Font selection | Full config: family, bold, italic, fallback chains | Hardcoded JetBrains Mono | Thinking users can't change the font at all |
 | **Fonts** | Ligatures | Full OpenType feature control (-calt, -liga, etc.) | None | |
 | **Fonts** | Variable fonts | Axis control (wght, slnt, etc.) | None | |
 | **Fonts** | Grapheme clustering | Correct emoji, skin tones, RTL scripts | Best-effort via xterm.js | |
@@ -70,7 +70,7 @@ The biggest gaps affecting daily Emu users:
 | **Mouse** | Mouse hide while typing | Yes | No | |
 | **Mouse** | Scroll multiplier | Per precision/discrete device | No | |
 | **Mouse** | Mouse reporting control | Toggle per-terminal | No | |
-| **Config** | User config file | Rich text format, hundreds of options, hot-reload | None | Emu has zero user-facing config |
+| **Config** | User config file | Rich text format, hundreds of options, hot-reload | None | Thinking has zero user-facing config |
 | **Config** | CLI tools | `+list-fonts`, `+list-themes`, etc. | None | |
 | **Platform** | Linux support | Yes (GTK, systemd integration) | No | |
 | **Platform** | Auto-update | Yes | Manual DMG download | |

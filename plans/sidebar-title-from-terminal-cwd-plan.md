@@ -6,9 +6,9 @@ Automatically rename each left-hand sidebar project from its default placeholder
 
 Primary example:
 
-- Terminal command: `cd /Users/rling/Documents/Vibing/Emu-dev`
-- Reported cwd: `/Users/rling/Documents/Vibing/Emu-dev`
-- Sidebar project title: `Emu-dev`
+- Terminal command: `cd /Users/rling/Documents/Vibing/Thinking-dev`
+- Reported cwd: `/Users/rling/Documents/Vibing/Thinking-dev`
+- Sidebar project title: `Thinking-dev`
 
 This plan is scoped to the left-hand sidebar project title. Top terminal tab names can continue using their own names, such as `Project 1`, `Project 2`, or user-provided tab names.
 
@@ -22,11 +22,11 @@ This plan is scoped to the left-hand sidebar project title. Top terminal tab nam
 
 ## Current Code Context
 
-Emu already has most of the needed cwd plumbing:
+Thinking already has most of the needed cwd plumbing:
 
 - `src/main/index.ts` writes a zsh wrapper in `setupShellIntegration()`.
-- That wrapper emits `OSC 633;EmuCwd=<absolute path>` before each prompt.
-- `src/renderer/src/components/TerminalPane.tsx` parses that sequence with `extractEmuCwd(data)`.
+- That wrapper emits `OSC 633;ThinkingCwd=<absolute path>` before each prompt.
+- `src/renderer/src/components/TerminalPane.tsx` parses that sequence with `extractThinkingCwd(data)`.
 - `TerminalPane` stores the latest cwd in `currentWorkingDirectoryRef`.
 - `TerminalPane` calls `onCurrentCwdChange(cwd)` when a new cwd is received.
 - `src/renderer/src/App.tsx` owns sidebar project state and already knows which sidebar project owns the reporting terminal tab.
@@ -39,7 +39,7 @@ The implementation should therefore live primarily in `src/renderer/src/App.tsx`
 1. A new sidebar project still starts with its existing placeholder title, such as `Project 1`.
 2. When any terminal tab inside that sidebar project reports a cwd, the owning sidebar project title changes to the cwd folder basename.
 3. Only the final folder segment should be displayed:
-   - `/Users/rling/Documents/Vibing/Emu-dev` -> `Emu-dev`
+   - `/Users/rling/Documents/Vibing/Thinking-dev` -> `Thinking-dev`
    - `/Users/rling/Documents/Vibing/` -> `Vibing`
    - `/Users/rling` -> `rling`
 4. Empty, invalid, or root-only cwd values should not change the sidebar title.
@@ -91,8 +91,8 @@ Expected examples:
 
 | Input | Output |
 | --- | --- |
-| `/Users/rling/Documents/Vibing/Emu-dev` | `Emu-dev` |
-| `/Users/rling/Documents/Vibing/Emu-dev/` | `Emu-dev` |
+| `/Users/rling/Documents/Vibing/Thinking-dev` | `Thinking-dev` |
+| `/Users/rling/Documents/Vibing/Thinking-dev/` | `Thinking-dev` |
 | `/Users/rling` | `rling` |
 | `/` | `null` |
 | `` | `null` |
@@ -150,10 +150,10 @@ Manual Electron QA:
 3. In the terminal, run:
 
    ```sh
-   cd /Users/rling/Documents/Vibing/Emu-dev
+   cd /Users/rling/Documents/Vibing/Thinking-dev
    ```
 
-4. Confirm the left sidebar project title changes to `Emu-dev`.
+4. Confirm the left sidebar project title changes to `Thinking-dev`.
 5. Run:
 
    ```sh
@@ -173,7 +173,7 @@ Manual Electron QA:
 
 ## Acceptance Criteria
 
-- `cd /Users/rling/Documents/Vibing/Emu-dev` changes the left sidebar title to `Emu-dev`.
+- `cd /Users/rling/Documents/Vibing/Thinking-dev` changes the left sidebar title to `Thinking-dev`.
 - The sidebar title uses the folder basename, not the full path.
 - Manual sidebar renames are not overwritten by future cwd changes.
 - Top terminal tab names remain independent.

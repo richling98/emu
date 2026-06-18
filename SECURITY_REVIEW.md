@@ -1,4 +1,4 @@
-# Emu — Pre-Release Security Review
+# Thinking — Pre-Release Security Review
 
 **Reviewer:** Senior Security Engineer (automated audit)
 **Date:** 2026-04-10
@@ -40,7 +40,7 @@ webPreferences: {
 This is the single most important pre-release fix because it turns every other renderer-side vulnerability from "UI glitch" into "arbitrary code execution."
 
 > **🔵 In plain English — what this means:**
-> Think of Emu like a bank building. The terminal window (where you type commands) is the public lobby. The part that actually runs your shell commands is the secure back office. A "sandbox" is like the bulletproof glass partition between the lobby and the back office — even if something bad happens in the lobby, the back office stays safe.
+> Think of Thinking like a bank building. The terminal window (where you type commands) is the public lobby. The part that actually runs your shell commands is the secure back office. A "sandbox" is like the bulletproof glass partition between the lobby and the back office — even if something bad happens in the lobby, the back office stays safe.
 >
 > Right now, that bulletproof glass is turned off. That means if any bug or malicious program ever managed to do something sneaky inside the terminal display area, it would have unrestricted access to your entire computer — your files, your network, everything — not just the terminal.
 >
@@ -168,7 +168,7 @@ Also audit the `WebLinksAddon` callback in the renderer ([src/renderer/src/compo
 > **🔵 In plain English — what this means:**
 > Your automated build pipeline uses several third-party tools (think of them like subcontractors) to package and publish the app. You've hired them by name — "use tool version 1 from this GitHub account." The problem is that "version 1" is just a label that the tool's author can move to point at completely different code at any moment.
 >
-> So if any of these subcontractors' GitHub accounts got hacked, or if a subcontractor went rogue, they could silently update what "version 1" means — replacing it with malicious code. The very next time your build pipeline runs (e.g. when you push a new release), that malicious code would run with full access to your Apple developer certificate, your Apple account password, and your GitHub token. That's enough to publish a backdoored version of Emu to users under your own name and signature.
+> So if any of these subcontractors' GitHub accounts got hacked, or if a subcontractor went rogue, they could silently update what "version 1" means — replacing it with malicious code. The very next time your build pipeline runs (e.g. when you push a new release), that malicious code would run with full access to your Apple developer certificate, your Apple account password, and your GitHub token. That's enough to publish a backdoored version of Thinking to users under your own name and signature.
 >
 > **🔧 How we'll fix it:**
 > Instead of hiring the subcontractor by their moving label ("version 1"), we hire them by their exact fingerprint — a specific commit hash like `a9d9f5a`. Even if the label moves, the fingerprint never changes. We look up the exact commit SHA that corresponds to each version tag right now, and hard-code that in the workflow files.
@@ -206,7 +206,7 @@ ipcMain.handle('shell:openPath', (_, path: string) => shell.openPath(path))
 **What it means:** Any string the renderer sends is passed directly to `shell.openPath`, which opens the path in Finder or the default associated app. A compromised renderer (see C-1) could open sensitive files or directories, revealing their existence and contents through OS dialogs.
 
 > **🔵 In plain English — what this means:**
-> Emu has a feature where file paths that appear in your terminal output are clickable — click one and it opens in Finder. The code that handles this click takes whatever text was passed to it and opens it, no questions asked.
+> Thinking has a feature where file paths that appear in your terminal output are clickable — click one and it opens in Finder. The code that handles this click takes whatever text was passed to it and opens it, no questions asked.
 >
 > In the very unlikely scenario that something malicious was running inside the terminal display, it could try to trick this feature into opening sensitive locations on your Mac — like your SSH keys folder, your Keychain file, or system directories — causing them to appear in Finder or open in associated apps, potentially leaking information.
 >
@@ -286,7 +286,7 @@ Once C-1 (sandbox) is fixed, the risk surface narrows substantially, but `unsafe
 `MessageBubble.tsx` is currently dead code (see L-1 below) and does not render in the app. However, it renders ANSI-converted HTML via `ansi-to-html` with `escapeXML: true`. The `escapeXML` option does escape HTML entities in terminal text, but the generated HTML still includes `<span style="...">` tags for colors, and subtle edge cases in the library could produce unexpected output.
 
 > **🔵 In plain English — what this means:**
-> There's an old component left over from an earlier version of Emu that used to display terminal output as styled chat bubbles. This component is no longer connected to anything in the app — it's like a room in the building that's been sealed off. It can't hurt anyone right now.
+> There's an old component left over from an earlier version of Thinking that used to display terminal output as styled chat bubbles. This component is no longer connected to anything in the app — it's like a room in the building that's been sealed off. It can't hurt anyone right now.
 >
 > But it contains a pattern called `dangerouslySetInnerHTML` — React's own way of saying "I'm putting raw HTML directly into the page, which could be dangerous." If someone ever re-opened this sealed room and connected it back to live data without noticing the danger, it could create an XSS vulnerability where terminal output injects malicious scripts into the app.
 >
@@ -341,7 +341,7 @@ The following files implement a "chat bubble" shell I/O display that was superse
 The NPM dependency `ansi-to-html` is also dead — it is only used in `MessageBubble.tsx`.
 
 > **🔵 In plain English — what this means:**
-> During development, Emu had an earlier design where terminal input and output was displayed as a chat-like conversation (similar to how iMessage shows messages). That design was replaced by the current full xterm.js terminal. However, four source files from the old design were never deleted — they're still sitting in the codebase doing nothing.
+> During development, Thinking had an earlier design where terminal input and output was displayed as a chat-like conversation (similar to how iMessage shows messages). That design was replaced by the current full xterm.js terminal. However, four source files from the old design were never deleted — they're still sitting in the codebase doing nothing.
 >
 > Dead code is a security and maintenance problem for three reasons: (1) it confuses anyone reading the code about what the app actually does, (2) it bundles unnecessary code (and a third-party library) into the shipped app, and (3) if a vulnerability is ever found in that dead library (`ansi-to-html`), security scanners will flag the app even though the vulnerable code is never actually called.
 >
@@ -390,12 +390,12 @@ This workflow contains numerous references that do not match the current codebas
 This workflow would fail on every triggered run and is likely copied verbatim from Hyper terminal or a similar project.
 
 > **🔵 In plain English — what this means:**
-> GitHub Actions workflows are automated scripts that run when you push code — they're supposed to build the app and check that everything works. The `nodejs.yml` file is one of these scripts, but it was copy-pasted from a completely different terminal app (likely Hyper) and never updated to match Emu. It references folders that don't exist, package managers that aren't being used, test commands that don't exist, and tries to build versions of the app for platforms Emu doesn't target.
+> GitHub Actions workflows are automated scripts that run when you push code — they're supposed to build the app and check that everything works. The `nodejs.yml` file is one of these scripts, but it was copy-pasted from a completely different terminal app (likely Hyper) and never updated to match Thinking. It references folders that don't exist, package managers that aren't being used, test commands that don't exist, and tries to build versions of the app for platforms Thinking doesn't target.
 >
 > If this workflow is triggered (e.g. by a pull request), it will simply fail — which means you get no automatic build verification at all. Worse, it's noise that makes it harder to notice real failures.
 >
 > **🔧 How we'll fix it:**
-> Replace the entire file with a clean, minimal CI workflow that matches what Emu actually uses: check out the code, install dependencies with npm, and run the build. Simple, correct, and fast.
+> Replace the entire file with a clean, minimal CI workflow that matches what Thinking actually uses: check out the code, install dependencies with npm, and run the build. Simple, correct, and fast.
 >
 > **✅ Outcome:** CI actually works. Pushes and pull requests get real build verification.
 >

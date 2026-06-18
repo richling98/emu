@@ -170,7 +170,7 @@
       padding: 18px 20px;
     }
     .vs-card.ghostty { border-color: #89b4fa40; }
-    .vs-card.emu { border-color: #cba6f740; }
+    .vs-card.thinking { border-color: #cba6f740; }
     .vs-card-title {
       font-size: 0.78rem;
       font-weight: 700;
@@ -179,7 +179,7 @@
       margin-bottom: 12px;
     }
     .vs-card.ghostty .vs-card-title { color: #89b4fa; }
-    .vs-card.emu .vs-card-title { color: #cba6f7; }
+    .vs-card.thinking .vs-card-title { color: #cba6f7; }
     .vs-row {
       display: flex;
       align-items: flex-start;
@@ -225,7 +225,7 @@
 <div class="container">
 
   <h1>Ghostty Infrastructure Parity</h1>
-  <p class="subtitle">Competitive analysis &amp; improvement roadmap · emu · May 2026</p>
+  <p class="subtitle">Competitive analysis &amp; improvement roadmap · thinking · May 2026</p>
 
   <!-- ── EXECUTIVE SUMMARY ── -->
   <h2>Executive Summary</h2>
@@ -237,13 +237,13 @@
       on benchmarks while being far more feature-rich.
     </p>
     <p style="margin-top:8px">
-      Emu is built on <strong>Electron + xterm.js</strong>. This gives us an outstanding UI/UX
+      Thinking is built on <strong>Electron + xterm.js</strong>. This gives us an outstanding UI/UX
       foundation and rapid iteration speed, but creates a fundamental performance gap in raw
       throughput, latency, and protocol coverage. This plan identifies what we can close within the
       Electron model and where we ultimately need to go further.
     </p>
     <p style="margin-top:8px">
-      Emu's differentiators — AI prompt optimizer, agent status detection, command history with
+      Thinking's differentiators — AI prompt optimizer, agent status detection, command history with
       smart output capture — are not in Ghostty at all. We shouldn't abandon them.
       The goal is to close the <em>infrastructure</em> gap while keeping those product advantages.
     </p>
@@ -261,7 +261,7 @@
 
   <h3>The Native Stack</h3>
   <table>
-    <thead><tr><th>Layer</th><th>Ghostty</th><th>Emu Native (proposed)</th></tr></thead>
+    <thead><tr><th>Layer</th><th>Ghostty</th><th>Thinking Native (proposed)</th></tr></thead>
     <tbody>
       <tr>
         <td><strong>App shell</strong></td>
@@ -353,7 +353,7 @@
         <tr><td>Port AI features (prompt optimizer, agent detection, history)</td><td><span class="badge badge-yellow">1–2 weeks</span></td><td>Pure logic port; URLSession replaces fetch; state machines translate directly</td></tr>
         <tr><td>Themes, settings UI, keyboard shortcuts</td><td><span class="badge badge-yellow">1 week</span></td><td>SwiftUI makes this fast; can match current Catppuccin themes exactly</td></tr>
         <tr><td>Testing, polish, distribution</td><td><span class="badge badge-yellow">2 weeks</span></td><td>Notarization is simpler for a native app than Electron</td></tr>
-        <tr><td style="font-weight:600">Total</td><td><span class="badge badge-orange">~10–14 weeks</span></td><td>For a v1 that matches current emu features with native infrastructure</td></tr>
+        <tr><td style="font-weight:600">Total</td><td><span class="badge badge-orange">~10–14 weeks</span></td><td>For a v1 that matches current thinking features with native infrastructure</td></tr>
       </tbody>
     </table>
   </div>
@@ -375,8 +375,8 @@
       <div class="vs-row"><span class="vs-icon">📡</span><span class="vs-text"><strong>libghostty</strong> — embeddable C/Zig library for third parties</span></div>
       <div class="vs-row"><span class="vs-icon">✅</span><span class="vs-text">Kitty graphics protocol, image protocol, synchronized rendering, clipboard sequences</span></div>
     </div>
-    <div class="vs-card emu">
-      <div class="vs-card-title">Emu</div>
+    <div class="vs-card thinking">
+      <div class="vs-card-title">Thinking</div>
       <div class="vs-row"><span class="vs-icon">⚙️</span><span class="vs-text"><strong>TypeScript + React</strong> — runs inside Chromium/Node.js (Electron)</span></div>
       <div class="vs-row"><span class="vs-icon">🖥️</span><span class="vs-text"><strong>Electron app</strong> — not a native macOS app; no menu bar, no AppleScript</span></div>
       <div class="vs-row"><span class="vs-icon">🎨</span><span class="vs-text"><strong>WebGL via xterm.js</strong> — rendered by Chromium's compositor, not Metal</span></div>
@@ -395,7 +395,7 @@
       <tr>
         <th>Dimension</th>
         <th>Ghostty</th>
-        <th>Emu Today</th>
+        <th>Thinking Today</th>
         <th>Gap</th>
       </tr>
     </thead>
@@ -452,7 +452,7 @@
         <td><strong>AI / agent features</strong></td>
         <td>None</td>
         <td>Prompt optimizer, agent status, command history</td>
-        <td><span class="badge badge-green">Emu wins</span></td>
+        <td><span class="badge badge-green">Thinking wins</span></td>
       </tr>
       <tr>
         <td><strong>Cross-platform</strong></td>
@@ -520,7 +520,7 @@
     <p style="margin-top:10px">
       Success criteria: ship a memory smoke test that opens many tabs, writes large output, closes
       them, and verifies memory returns near baseline. This will not make Electron as small as
-      Ghostty, but it should make Emu feel predictable instead of leaky.
+      Ghostty, but it should make Thinking feel predictable instead of leaky.
     </p>
   </div>
   <div class="card">
@@ -663,7 +663,7 @@ ptyProcess.onData((data) => {
       <div class="file-pill">src/renderer/src/components/TerminalPane.tsx</div>
       <h3>OSC 133 shell integration — replace the ZDOTDIR zsh hack</h3>
       <p>
-        Emu currently injects prompt-detection via a ZDOTDIR wrapper that patches zsh startup.
+        Thinking currently injects prompt-detection via a ZDOTDIR wrapper that patches zsh startup.
         This is fragile (zsh only, breaks if users have custom ZDOTDIR, can conflict with frameworks
         like Oh My Zsh). Ghostty uses the <strong>OSC 133</strong> shell integration protocol —
         the same protocol used by iTerm2, WezTerm, and kitty. It works via a few escape sequences
@@ -675,8 +675,8 @@ ptyProcess.onData((data) => {
       <table>
         <thead><tr><th>Step</th><th>Description</th></tr></thead>
         <tbody>
-          <tr><td>1. Write shell snippets</td><td>Small <code>~/.config/emu/shell-integration.zsh</code> and <code>.bash</code> files that emit OSC 133 A/B/C/D marks at prompt and command boundaries</td></tr>
-          <tr><td>2. Source them from emu</td><td>Set <code>EMU_SHELL_INTEGRATION=1</code> in the spawned PTY env; snippets check this var before activating</td></tr>
+          <tr><td>1. Write shell snippets</td><td>Small <code>~/.config/thinking/shell-integration.zsh</code> and <code>.bash</code> files that emit OSC 133 A/B/C/D marks at prompt and command boundaries</td></tr>
+          <tr><td>2. Source them from thinking</td><td>Set <code>THINKING_SHELL_INTEGRATION=1</code> in the spawned PTY env; snippets check this var before activating</td></tr>
           <tr><td>3. Parse in renderer</td><td>Handle OSC 133 sequences in <code>TerminalPane.tsx</code> to mark prompt lines — replace the current buffer-scan logic</td></tr>
           <tr><td>4. Remove ZDOTDIR wrapper</td><td>Delete <code>zdotdir/</code> and related main-process setup</td></tr>
         </tbody>
@@ -844,21 +844,21 @@ ptyProcess.onData((data) => {
   <div class="callout warn">
     <strong>This is not optional if infrastructure parity is the actual goal.</strong>
     Phases 1–3 are genuine improvements and worth shipping now. But they are incremental gains
-    within a fundamentally limited architecture. Phase 4 is where emu becomes a peer to Ghostty,
+    within a fundamentally limited architecture. Phase 4 is where thinking becomes a peer to Ghostty,
     not just a well-tuned Electron app.
   </div>
 
   <div class="card" style="border-color: #cba6f740;">
     <div class="card-title" style="color:#cba6f7;">The Native Path: Swift + libghostty-vt + Metal</div>
     <p>
-      Rebuild emu as a native macOS app using <strong>SwiftUI</strong> for the shell,
+      Rebuild thinking as a native macOS app using <strong>SwiftUI</strong> for the shell,
       <strong>libghostty-vt</strong> (Ghostty's open-source C/Zig library) for VT parsing,
       and a custom <strong>Metal</strong> renderer with <strong>CoreText</strong> for fonts.
       This is exactly how Ghostty is built — and since libghostty-vt is open source,
       we inherit Ghostty's SIMD-accelerated parser without writing any Zig ourselves.
     </p>
     <p style="margin-top:8px">
-      All of emu's AI features (prompt optimizer, agent detection, command history) port
+      All of thinking's AI features (prompt optimizer, agent detection, command history) port
       cleanly to Swift. <code>URLSession</code> replaces <code>fetch</code>. State machines
       translate directly. The terminal domain knowledge we've built up stays intact.
     </p>
@@ -968,8 +968,8 @@ ptyProcess.onData((data) => {
     </tbody>
   </table>
 
-  <!-- ── WHERE EMU WINS ── -->
-  <h2>Where Emu Already Wins vs Ghostty</h2>
+  <!-- ── WHERE THINKING WINS ── -->
+  <h2>Where Thinking Already Wins vs Ghostty</h2>
   <div class="card" style="border-color: #a6e3a140;">
     <div class="card-title" style="color:#a6e3a1;">These are our moats — protect and extend them</div>
     <p style="margin-top:8px">
@@ -978,15 +978,15 @@ ptyProcess.onData((data) => {
     </p>
     <p style="margin-top:8px">
       <strong>Agent Status Detection</strong> — Knowing when Claude Code is running/idle/stale,
-      and surfacing that in the sidebar, is unique to Emu. Ghostty just shows processes.
+      and surfacing that in the sidebar, is unique to Thinking. Ghostty just shows processes.
     </p>
     <p style="margin-top:8px">
       <strong>Command History with Smart Output Capture</strong> — Ghostty has no equivalent.
-      Emu's ability to browse past commands with searchable output previews is a genuine
+      Thinking's ability to browse past commands with searchable output previews is a genuine
       productivity feature that power users notice immediately.
     </p>
     <p style="margin-top:8px">
-      <strong>UI Polish and Themes</strong> — Emu's design aesthetic (Catppuccin-first, dark and
+      <strong>UI Polish and Themes</strong> — Thinking's design aesthetic (Catppuccin-first, dark and
       beautiful) is subjectively better than Ghostty's more utilitarian look. Continue investing here.
     </p>
   </div>
@@ -1043,7 +1043,7 @@ ptyProcess.onData((data) => {
   </div>
 
   <hr />
-  <p style="font-size:0.78rem; color:#45475a; text-align:center">emu · ghostty-infrastructure-parity · May 2026</p>
+  <p style="font-size:0.78rem; color:#45475a; text-align:center">thinking · ghostty-infrastructure-parity · May 2026</p>
 
 </div>
 </body>

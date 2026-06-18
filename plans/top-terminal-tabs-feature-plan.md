@@ -14,11 +14,11 @@ Last updated: implementation complete; `npm run build` passed.
 
 ## Understanding
 
-You want Emu to add a second tab layer across the main terminal area, directly below the existing macOS-style titlebar that contains the window controls, settings button, and split-screen toggle.
+You want Thinking to add a second tab layer across the main terminal area, directly below the existing macOS-style titlebar that contains the window controls, settings button, and split-screen toggle.
 
 The left sidebar tabs should represent the folder or broader workspace the user is working in. Inside whichever left sidebar item is selected, the new top navbar should show project or feature tabs for that same folder:
 
-- The left sidebar should show the folder name from the workspace cwd once the terminal reports it, such as `Emu-dev` for `/Users/rling/Documents/Vibing/Emu-dev`.
+- The left sidebar should show the folder name from the workspace cwd once the terminal reports it, such as `Thinking-dev` for `/Users/rling/Documents/Vibing/Thinking-dev`.
 - The first top tab should be named `Project 1` by default.
 - The user can rename `Project 1` to something meaningful, such as `Auth refactor`, `Bug fix`, or `Release prep`.
 - The user can create additional top tabs named `Project 2`, `Project 3`, and so on.
@@ -38,7 +38,7 @@ The current app has a single tab/session model:
 - `src/main/index.ts` creates PTYs in `ipcMain.handle('pty:create')`.
 - `src/preload/index.ts` exposes `ptyCreate(sessionId, options?)`.
 - `src/renderer/src/env.d.ts` types that preload API.
-- Shell integration already reports cwd via the OSC sequence `633;EmuCwd=...`, and `TerminalPane` already stores that in `currentWorkingDirectoryRef`.
+- Shell integration already reports cwd via the OSC sequence `633;ThinkingCwd=...`, and `TerminalPane` already stores that in `currentWorkingDirectoryRef`.
 - However, `pty:create` currently always spawns new PTYs in `os.homedir()`, so the new feature needs an IPC-level cwd parameter.
 - The current sidebar default name is based on creation date/time; this should change to ordinal project naming.
 
@@ -237,7 +237,7 @@ Split-screen:
    - Pass the cwd from `TerminalPane`.
 
 5. Add cwd propagation from terminal to app state.
-   - When `extractEmuCwd(data)` returns a cwd, update the tab's `currentCwd`.
+   - When `extractThinkingCwd(data)` returns a cwd, update the tab's `currentCwd`.
    - Use that state when creating future top tabs.
 
 6. Update layout CSS.
