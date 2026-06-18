@@ -5,7 +5,7 @@ import { build } from 'esbuild'
 const outfile = '/tmp/emu-agent-permission-prompts.mjs'
 
 await build({
-  entryPoints: ['src/renderer/src/agentPermissionPrompts.ts'],
+  entryPoints: ['src/shared/agentPermissionPrompts.ts'],
   outfile,
   bundle: true,
   format: 'esm',
@@ -36,6 +36,95 @@ assert.equal(parsed.detail, 'Allow the Electron/Vite dev server to bind to local
 assert.equal(parsed.fingerprint, 'codex:command:npm run dev')
 assert.deepEqual(parsed.approveAction, [{ data: 'y' }])
 assert.deepEqual(parsed.denyAction, [{ data: '\x1b' }])
+
+const codexPromptWithoutFooter = [
+  'Would you like to run the following command?',
+  '',
+  'Reason: Do you want to allow DNS lookups to confirm the current authoritative nameservers for starboard.place?',
+  '',
+  '$ dig +short NS starboard.place',
+  '',
+  '› 1. Yes, proceed (y)',
+  '  2. Yes, and do not ask again for commands that start with `dig +short NS starboard.place` (p)',
+  '  3. No, and tell Codex what to do differently (esc)'
+].join('\n')
+
+const parsedCodexPromptWithoutFooter = __agentPermissionPromptTest.parseCodexPermissionPrompt(codexPromptWithoutFooter)
+assert(parsedCodexPromptWithoutFooter, 'Codex command prompt should parse when selected choices are visible even if footer is off-screen')
+assert.equal(parsedCodexPromptWithoutFooter.summary, 'Run: dig +short NS starboard.place')
+assert.equal(parsedCodexPromptWithoutFooter.fingerprint, 'codex:command:dig +short ns starboard.place')
+assert.deepEqual(parsedCodexPromptWithoutFooter.approveAction, [{ data: 'y' }])
+assert.deepEqual(parsedCodexPromptWithoutFooter.denyAction, [{ data: '\x1b' }])
+
+const codexOutlookReadPrompt = [
+  'Would you like to run the following command?',
+  '',
+  'Reason: Do you want to allow Outlook read access so I can verify the company hyperlinks saved in the draft?',
+  '',
+  '$ outlook-cli message read',
+  "'AAMkADFmNDUxYzIwLWIzZmUtNDIxYy05YWU4LWI0NzZmNGI0ZTk1MABGAAAAAAD3LR020B42R4Khx_Zme6WFBwCoAzqXBVVTQpFYvpsF8zNfAAAAAAEPAABC9n-na00PRaI6STA86h7HAABiSKgaAAA=' --no-markdown --json > /tmp/joint_csp_draft_readback.json && python3 -",
+  "<<'PY'",
+  'import json',
+  "body=json.load(open('/tmp/joint_csp_draft_readback.json'))['data']['body']",
+  'content=body[\'content\']',
+  "print('contentType:', body['contentType'])",
+  "print('anchor_count:', content.count('<a href='))",
+  'PY',
+  '',
+  '› 1. Yes, proceed (y)',
+  '  2. No, and tell Codex what to do differently (esc)',
+  '',
+  'Press enter to confirm or esc to cancel'
+].join('\n')
+
+const parsedCodexOutlookRead = __agentPermissionPromptTest.parseCodexPermissionPrompt(codexOutlookReadPrompt)
+assert(parsedCodexOutlookRead, 'Multiline Codex command prompt should parse')
+assert.equal(parsedCodexOutlookRead.summary, 'Run: outlook-cli message read')
+assert(parsedCodexOutlookRead.fingerprint.includes('outlook-cli message read'))
+assert(parsedCodexOutlookRead.fingerprint.includes('aamkadfmnduxyziwlwizzmutndixyy05ywu4lwi0nzzmngi0ztk1mabgaaaaaad3lr020b42r4khx_zme6wfbwcoazqxbvvtqpfyvpsf8znfaaaaaaepaabc9n-na00prai6sta86h7haabiskgaaaa='))
+
+const secondCodexOutlookReadPrompt = codexOutlookReadPrompt
+  .replace('AAMkADFmNDUxYzIwLWIzZmUtNDIxYy05YWU4LWI0NzZmNGI0ZTk1MABGAAAAAAD3LR020B42R4Khx_Zme6WFBwCoAzqXBVVTQpFYvpsF8zNfAAAAAAEPAABC9n-na00PRaI6STA86h7HAABiSKgaAAA=', 'AAMkSECONDMESSAGEIDNDIxYy05YWU4LWI0NzZmNGI0ZTk1MABGAAAAAAD3LR020B42R4Khx_Zme6WFBwCoAzqXBVVTQpFYvpsF8zNfAAAAAAEPAABC9n-na00PRaI6STA86h7HAABiSKgaAAA=')
+
+const parsedSecondCodexOutlookRead = __agentPermissionPromptTest.parseCodexPermissionPrompt(secondCodexOutlookReadPrompt)
+assert(parsedSecondCodexOutlookRead, 'Second multiline Codex command prompt should parse')
+assert.notEqual(
+  parsedCodexOutlookRead.fingerprint,
+  parsedSecondCodexOutlookRead.fingerprint,
+  'Multiline Codex prompts with the same first line but different continuation lines should have different fingerprints'
+)
+
+const codexToolPrompt = [
+  'Field 1/1',
+  'Allow Microsoft Outlook Email to run tool "microsoft outlook email_draft_email"?',
+  '',
+  'subject: Joint CSP Startup Summary',
+  'text_content: <div style="font-family: Arial, Helvetica, sans-serif; co...',
+  'to: [{"email": "rling@nvidia.com", "name": "Richard Ling"}]',
+  '',
+  '› 1. Allow                  Run the tool and continue.',
+  '  2. Allow for this session  Run the tool and remember this choice for this session.',
+  '  3. Always allow            Run the tool and remember this choice for future tool calls.',
+  '  4. Cancel                  Cancel this tool call',
+  'enter to submit | esc to cancel'
+].join('\n')
+
+const parsedCodexTool = __agentPermissionPromptTest.parseCodexPermissionPrompt(codexToolPrompt)
+assert(parsedCodexTool, 'Codex app connector tool prompt should parse')
+assert.equal(parsedCodexTool.provider, 'codex')
+assert.equal(parsedCodexTool.summary, 'Run tool: Microsoft Outlook Email / microsoft outlook email_draft_email')
+assert(parsedCodexTool.detail.includes('subject: Joint CSP Startup Summary'))
+assert(parsedCodexTool.detail.includes('to: [{"email": "rling@nvidia.com", "name": "Richard Ling"}]'))
+assert.deepEqual(parsedCodexTool.approveAction, [{ data: '\r' }])
+assert.deepEqual(parsedCodexTool.denyAction, [{ data: '\x1b' }])
+
+const codexToolWithoutSession = new AgentPermissionPromptDetector().append(codexToolPrompt, {
+  sessionId: 'session-codex-tool-no-agent',
+  provider: null,
+  agentSession: false
+})
+assert(codexToolWithoutSession, 'Codex tool prompt should infer provider even before agent session is marked')
+assert.equal(codexToolWithoutSession.provider, 'codex')
 
 const claudePrompt = [
   'Bash command',
@@ -90,7 +179,7 @@ assert(parsedClaudeSkill, 'Claude skill permission prompt should parse')
 assert.equal(parsedClaudeSkill.summary, 'Use skill: run')
 assert.equal(parsedClaudeSkill.fingerprint, 'claude:skill:run')
 assert.deepEqual(parsedClaudeSkill.approveAction, [{ data: '\r' }])
-assert.deepEqual(parsedClaudeSkill.denyAction, [{ data: '\x1b[B\x1b[B' }, { data: '\r' }])
+assert.deepEqual(parsedClaudeSkill.denyAction, [{ data: '\x1b' }])
 
 const exactClaudeSkillPrompt = [
   '╭── Claude Code v2.1.170 ───────────────────────────────────────────────────────────────────────────╮',
@@ -127,7 +216,7 @@ assert(parsedExactClaudeSkill, 'Exact Claude skill prompt from screenshot should
 assert.equal(parsedExactClaudeSkill.summary, 'Use skill: run')
 assert.equal(parsedExactClaudeSkill.fingerprint, 'claude:skill:run')
 assert.deepEqual(parsedExactClaudeSkill.approveAction, [{ data: '\r' }])
-assert.deepEqual(parsedExactClaudeSkill.denyAction, [{ data: '\x1b[B\x1b[B' }, { data: '\r' }])
+assert.deepEqual(parsedExactClaudeSkill.denyAction, [{ data: '\x1b' }])
 
 const withOldOutput = [
   'I can help with that. Here is a plan with tools and approval language.',
@@ -178,6 +267,66 @@ const secondClaude = claudeDetector.append([
 assert(secondClaude, 'a second different Claude prompt should emit while the first remains pending in main')
 assert.equal(secondClaude.summary, 'Run: npm test')
 
+const splitCodexDetector = new AgentPermissionPromptDetector()
+let splitCodexTail = ''
+const splitCodexChunks = [
+  codexPrompt.slice(0, 80),
+  codexPrompt.slice(80, 180),
+  codexPrompt.slice(180)
+]
+let splitCodexMatch = null
+for (const chunk of splitCodexChunks) {
+  splitCodexTail += chunk
+  splitCodexMatch = splitCodexDetector.append(splitCodexTail, {
+    sessionId: 'session-split-codex',
+    provider: 'codex',
+    agentSession: true
+  }) ?? splitCodexMatch
+}
+assert(splitCodexMatch, 'Codex prompt split across PTY chunks should emit after accumulated buffer')
+assert.equal(splitCodexMatch.summary, 'Run: npm run dev')
+assert.equal(splitCodexDetector.append(splitCodexTail, {
+  sessionId: 'session-split-codex',
+  provider: 'codex',
+  agentSession: true
+}), null, 'split Codex accumulated buffer should not duplicate the same prompt')
+
+const splitClaudeDetector = new AgentPermissionPromptDetector()
+let splitClaudeTail = ''
+const splitClaudeChunks = [
+  claudePrompt.slice(0, 32),
+  claudePrompt.slice(32, 88),
+  claudePrompt.slice(88)
+]
+let splitClaudeMatch = null
+for (const chunk of splitClaudeChunks) {
+  splitClaudeTail += chunk
+  splitClaudeMatch = splitClaudeDetector.append(splitClaudeTail, {
+    sessionId: 'session-split-claude',
+    provider: 'claude',
+    agentSession: true
+  }) ?? splitClaudeMatch
+}
+assert(splitClaudeMatch, 'Claude prompt split across PTY chunks should emit after accumulated buffer')
+assert.equal(splitClaudeMatch.summary, 'Run: npm run dev')
+
+const sessionADetector = new AgentPermissionPromptDetector()
+const sessionBDetector = new AgentPermissionPromptDetector()
+const sessionAPrompt = sessionADetector.append(codexPrompt, {
+  sessionId: 'session-A',
+  provider: 'codex',
+  agentSession: true
+})
+const sessionBPrompt = sessionBDetector.append(claudePrompt, {
+  sessionId: 'session-B',
+  provider: 'claude',
+  agentSession: true
+})
+assert(sessionAPrompt, 'first simultaneous session should emit')
+assert(sessionBPrompt, 'second simultaneous session should emit')
+assert.notEqual(sessionAPrompt.sessionId, sessionBPrompt.sessionId)
+assert.notEqual(sessionAPrompt.fingerprint, sessionBPrompt.fingerprint)
+
 const staleCodexHintDetector = new AgentPermissionPromptDetector()
 const claudeWithStaleCodexHint = staleCodexHintDetector.append(claudeSkillPrompt, {
   sessionId: 'session-stale-codex',
@@ -203,5 +352,29 @@ const falsePositive = [
 assert.equal(__agentPermissionPromptTest.parseCodexPermissionPrompt(falsePositive), null)
 assert.equal(new AgentPermissionPromptDetector().append(falsePositive, context), null)
 assert.equal(__agentPermissionPromptTest.parseClaudePermissionPrompt(falsePositive, false), null)
+
+const genericProceedFalsePositive = [
+  'Do you want to proceed?',
+  'This is ordinary prose, not a terminal approval menu.'
+].join('\n')
+assert.equal(new AgentPermissionPromptDetector().append(genericProceedFalsePositive, context), null)
+
+const documentedPromptFalsePositive = [
+  'Documentation example:',
+  'Would you like to run the following command?',
+  '$ npm run dev',
+  'No active choices are visible in this paragraph.'
+].join('\n')
+assert.equal(new AgentPermissionPromptDetector().append(documentedPromptFalsePositive, context), null)
+
+const explanatoryMenuSnippetFalsePositive = [
+  'A human can tell this is obviously a permission prompt:',
+  'Would you like to run the following command?',
+  '$ dig +short NS starboard.place',
+  '› 1. Yes, proceed (y)',
+  "  2. Yes, and don't ask again...",
+  '  3. No ... (esc)'
+].join('\n')
+assert.equal(new AgentPermissionPromptDetector().append(explanatoryMenuSnippetFalsePositive, context), null)
 
 console.log('agent permission detector fixtures passed')

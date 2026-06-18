@@ -51,6 +51,7 @@ interface AgentPermissionPrompt {
   id: string
   sessionId: string
   provider: AgentPermissionProvider
+  workspaceName?: string
   summary: string
   detail: string
   rawExcerpt: string
@@ -64,10 +65,16 @@ interface AgentPermissionOverlayPrompt {
   id: string
   sessionId: string
   provider: AgentPermissionProvider
+  workspaceName?: string
   summary: string
   detail: string
   rawExcerpt: string
   createdAt: number
+}
+
+interface AgentPermissionSessionMetadata {
+  sessionId: string
+  workspaceName?: string | null
 }
 
 interface AgentPermissionOverlayState {
@@ -117,7 +124,7 @@ interface DiagnosticsConfig {
 interface Window {
   api: {
     diagnosticsConfig: DiagnosticsConfig
-    ptyCreate: (sessionId: string, options?: { cwd?: string | null }) => Promise<{ pid: number }>
+    ptyCreate: (sessionId: string, options?: { cwd?: string | null; workspaceName?: string | null }) => Promise<{ pid: number }>
     ptyWrite: (sessionId: string, data: string) => void
     ptyWriteSequence: (sessionId: string, writes: PtyWriteChunk[]) => Promise<PtyWriteSequenceResult>
     ptyResize: (sessionId: string, cols: number, rows: number) => void
@@ -133,6 +140,7 @@ interface Window {
     ptyGetProcess: (sessionId: string) => Promise<string | null>
     imageSaveTemp: (dataUrl: string, suggestedName?: string) => Promise<string>
     perfGetStats: () => Promise<PerfStatsSnapshot>
+    agentPermissionSessionMetadata: (metadata: AgentPermissionSessionMetadata) => Promise<void>
     agentPermissionPromptShow: (prompt: AgentPermissionPrompt) => Promise<void>
     agentPermissionPromptDismissSession: (sessionId: string) => Promise<void>
     agentPermissionOverlayAction: (input: AgentPermissionOverlayAction) => Promise<void>

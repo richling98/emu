@@ -10,7 +10,7 @@ contextBridge.exposeInMainWorld('api', {
     vibrancyDisabled: hasFlagValue('--emu-disable-vibrancy', '1') || hasFlagValue('--thinking-disable-vibrancy', '1')
   },
   // Create a new PTY session
-  ptyCreate: (sessionId: string, options?: { cwd?: string | null }) => ipcRenderer.invoke('pty:create', sessionId, options),
+  ptyCreate: (sessionId: string, options?: { cwd?: string | null; workspaceName?: string | null }) => ipcRenderer.invoke('pty:create', sessionId, options),
   // Send input to PTY
   ptyWrite: (sessionId: string, data: string) => ipcRenderer.send('pty:write', sessionId, data),
   ptyWriteSequence: (sessionId: string, writes: Array<{ data: string; delayAfterMs?: number }>) =>
@@ -57,6 +57,7 @@ contextBridge.exposeInMainWorld('api', {
   // Dev performance diagnostics
   perfGetStats: () => ipcRenderer.invoke('perf:getStats'),
   // Agent permission approval popup
+  agentPermissionSessionMetadata: (metadata: unknown) => ipcRenderer.invoke('agent-permission:sessionMetadata', metadata),
   agentPermissionPromptShow: (prompt: unknown) => ipcRenderer.invoke('agent-permission:show', prompt),
   agentPermissionPromptDismissSession: (sessionId: string) => ipcRenderer.invoke('agent-permission:dismissSession', sessionId),
   agentPermissionOverlayAction: (input: unknown) => ipcRenderer.invoke('agent-permission:overlayAction', input),

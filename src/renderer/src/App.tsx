@@ -231,7 +231,9 @@ export default function App() {
   const selectedTabId = selectedSession?.selectedTabId ?? null
   const sidebarSessions = useMemo(() => sessions.map(summarizeSession), [sessions])
   const allTabs = useMemo(
-    () => sessions.flatMap((session) => session.tabs.map((tab) => ({ tab, workspaceId: session.id }))),
+    () => sessions.flatMap((session) =>
+      session.tabs.map((tab) => ({ tab, workspaceId: session.id, workspaceName: session.name }))
+    ),
     [sessions]
   )
   const rightPaneSessionId = useMemo(() => {
@@ -832,7 +834,7 @@ export default function App() {
             onDelete={handleDeleteTopTab}
           />
 
-          {allTabs.map(({ tab }) => {
+          {allTabs.map(({ tab, workspaceName }) => {
             const isLeftSlot = tab.id === selectedTabId
             const isRightSlot = layoutMode === 'split' && tab.id === rightPaneTabId
             const slot = layoutMode === 'split'
@@ -842,6 +844,7 @@ export default function App() {
               <TerminalPane
                 key={tab.id}
                 session={tab}
+                workspaceName={workspaceName}
                 isVisible={isLeftSlot || isRightSlot}
                 slot={slot}
                 isActive={tab.id === activePaneId}
