@@ -4,8 +4,19 @@ let input = ''
 let pasteMode = false
 let pasteEndedAt = 0
 let submitCount = 0
+let firstEnterBecameNewline = false
 
-const PASTE_SETTLE_MS = 500
+function argValue(name, fallback) {
+  const index = process.argv.indexOf(name)
+  if (index === -1) return fallback
+  const value = Number(process.argv[index + 1])
+  return Number.isFinite(value) ? value : fallback
+}
+
+const FIRST_ENTER_NEWLINE = process.argv.includes('--first-enter-newline') ||
+  process.env.EMU_SUBMIT_PROBE_FIRST_ENTER_NEWLINE === '1'
+const ECHO_DELAY_MS = argValue('--echo-delay-ms', Number(process.env.EMU_SUBMIT_PROBE_ECHO_DELAY_MS ?? 0))
+const PASTE_SETTLE_MS = argValue('--paste-settle-ms', Number(process.env.EMU_SUBMIT_PROBE_PASTE_SETTLE_MS ?? 500))
 
 function write(text) {
   process.stdout.write(text)
@@ -20,17 +31,28 @@ function submit() {
   const submitted = input.replace(/\s+/g, ' ').trim()
   write(`\r\nSUBMITTED:${submitCount}:${submitted}\r\n`)
   input = ''
+  firstEnterBecameNewline = false
   renderPrompt()
 }
 
 function appendText(text) {
   input += text
-  write(text.replace(/\n/g, '\r\n'))
+  const rendered = text.replace(/\n/g, '\r\n')
+  if (ECHO_DELAY_MS > 0) {
+    setTimeout(() => write(rendered), ECHO_DELAY_MS)
+  } else {
+    write(rendered)
+  }
 }
 
 function handleEnter() {
   const now = Date.now()
   if (pasteEndedAt > 0 && now - pasteEndedAt < PASTE_SETTLE_MS) {
+    return
+  }
+  if (FIRST_ENTER_NEWLINE && input.trim() && !firstEnterBecameNewline) {
+    firstEnterBecameNewline = true
+    appendText('\n')
     return
   }
   if (input.trim()) submit()
@@ -86,5 +108,5 @@ if (process.stdin.isTTY) {
 process.stdin.resume()
 process.stdin.on('data', handleData)
 
-write('Emu submit probe. Ctrl-C exits.')
+write(`Thinking submit probe. Ctrl-C exits. first-enter-newline=${FIRST_ENTER_NEWLINE ? 'on' : 'off'} echo-delay-ms=${ECHO_DELAY_MS} paste-settle-ms=${PASTE_SETTLE_MS}`)
 renderPrompt()
