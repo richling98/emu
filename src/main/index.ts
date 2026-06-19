@@ -831,6 +831,7 @@ function ensureAgentPermissionOverlayWindow(): BrowserWindow {
     height: AGENT_PERMISSION_OVERLAY_HEIGHT,
     frame: false,
     resizable: false,
+    fullscreenable: false,
     movable: true,
     alwaysOnTop: true,
     skipTaskbar: true,
