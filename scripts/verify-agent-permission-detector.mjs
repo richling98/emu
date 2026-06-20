@@ -56,6 +56,47 @@ assert.equal(parsedCodexPromptWithoutFooter.fingerprint, 'codex:command:dig +sho
 assert.deepEqual(parsedCodexPromptWithoutFooter.approveAction, [{ data: 'y' }])
 assert.deepEqual(parsedCodexPromptWithoutFooter.denyAction, [{ data: '\x1b' }])
 
+const codexServerPromptWithoutFooter = [
+  'Would you like to run the following command?',
+  '',
+  'Reason: Do you want to allow starting the local',
+  'dashboard server on port 3000 for smoke testing?',
+  '',
+  '$ node website/server.js',
+  '',
+  '› 1. Yes, proceed (y)',
+  "  2. Yes, and don't ask again for commands that",
+  '     start with `node website/server.js` (p)',
+  '  3. No, and tell Codex what to do differently',
+  '     (esc)'
+].join('\n')
+
+const parsedCodexServerPromptWithoutFooter = __agentPermissionPromptTest.parseCodexPermissionPrompt(codexServerPromptWithoutFooter)
+assert(parsedCodexServerPromptWithoutFooter, 'Screenshot Codex command prompt should parse without footer')
+assert.equal(parsedCodexServerPromptWithoutFooter.summary, 'Run: node website/server.js')
+assert.equal(parsedCodexServerPromptWithoutFooter.detail, 'Do you want to allow starting the local dashboard server on port 3000 for smoke testing?')
+assert.equal(parsedCodexServerPromptWithoutFooter.fingerprint, 'codex:command:node website/server.js')
+assert.deepEqual(parsedCodexServerPromptWithoutFooter.approveAction, [{ data: 'y' }])
+assert.deepEqual(parsedCodexServerPromptWithoutFooter.denyAction, [{ data: '\x1b' }])
+
+const codexWrappedApprovePrompt = [
+  'Would you like to run the following command?',
+  '',
+  'Reason: Allow a local smoke-test server.',
+  '',
+  '$ node website/server.js',
+  '',
+  '› 1. Yes, proceed',
+  '     (y)',
+  "  2. Yes, and don't ask again for commands that start with `node website/server.js` (p)",
+  '  3. No, and tell Codex what to do differently (esc)'
+].join('\n')
+
+const parsedCodexWrappedApprove = __agentPermissionPromptTest.parseCodexPermissionPrompt(codexWrappedApprovePrompt)
+assert(parsedCodexWrappedApprove, 'Codex command prompt should parse when approve hotkey wraps')
+assert.equal(parsedCodexWrappedApprove.summary, 'Run: node website/server.js')
+assert.deepEqual(parsedCodexWrappedApprove.approveAction, [{ data: 'y' }])
+
 const codexOutlookReadPrompt = [
   'Would you like to run the following command?',
   '',
@@ -157,6 +198,22 @@ assert(parsedClaudeHotkey, 'Claude hotkey prompt should parse')
 assert.equal(parsedClaudeHotkey.summary, 'Run: npm test')
 assert.deepEqual(parsedClaudeHotkey.approveAction, [{ data: 'y' }])
 assert.deepEqual(parsedClaudeHotkey.denyAction, [{ data: '\x1b' }])
+
+const claudeWrappedDescriptionPrompt = [
+  'Claude needs permission to use Bash',
+  'Bash(command: "node website/server.js")',
+  'Description: Start the local dashboard server',
+  'for smoke testing on port 3000.',
+  '',
+  'Do you want to allow this command?',
+  '› 1. Yes (y)',
+  '  2. No (esc)'
+].join('\n')
+
+const parsedClaudeWrappedDescription = __agentPermissionPromptTest.parseClaudePermissionPrompt(claudeWrappedDescriptionPrompt)
+assert(parsedClaudeWrappedDescription, 'Claude command prompt should parse with wrapped description')
+assert.equal(parsedClaudeWrappedDescription.summary, 'Run: node website/server.js')
+assert.equal(parsedClaudeWrappedDescription.detail, 'Start the local dashboard server for smoke testing on port 3000.')
 
 const claudeSkillPrompt = [
   '● Skill(run)',
@@ -366,6 +423,40 @@ const documentedPromptFalsePositive = [
   'No active choices are visible in this paragraph.'
 ].join('\n')
 assert.equal(new AgentPermissionPromptDetector().append(documentedPromptFalsePositive, context), null)
+
+const assistantExplanationFalsePositive = [
+  '› okay so now tell me in layman\'s terms how the permission popup should behave now',
+  '',
+  'Now the permission popup should show only when Emu thinks Codex or Claude is actually waiting for an approve/deny answer.',
+  '',
+  '- If Codex asks "Would you like to run this command?", the popup should appear.',
+  '- If the text is just normal output talking about permissions, approval, commands, or tools, it should not show a popup.',
+  '',
+  'So this should work now:',
+  '1. Yes, proceed',
+  '   (y)',
+  '3. No, and tell Codex what to do differently',
+  '   (esc)'
+].join('\n')
+assert.equal(
+  new AgentPermissionPromptDetector().append(assistantExplanationFalsePositive, {
+    sessionId: 'session-assistant-explanation',
+    provider: 'claude',
+    agentSession: true
+  }),
+  null,
+  'assistant explanations about permission popups should not emit approvals'
+)
+
+const permissionShapedMiss = [
+  'Would you like to run the following command?',
+  '$ npm run dev',
+  '› 1. Maybe later',
+  '  2. Ask again'
+].join('\n')
+const missSnapshot = __agentPermissionPromptTest.agentPermissionMissSnapshot(permissionShapedMiss, 'codex')
+assert(missSnapshot, 'permission-shaped nonmatches should produce a debug miss snapshot')
+assert(missSnapshot.includes('Would you like to run the following command?'))
 
 const explanatoryMenuSnippetFalsePositive = [
   'A human can tell this is obviously a permission prompt:',

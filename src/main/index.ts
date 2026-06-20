@@ -8,6 +8,7 @@ import os from 'os'
 import { fileURLToPath } from 'url'
 import {
   AgentPermissionPromptDetector,
+  agentPermissionMissSnapshot,
   getAgentProviderFromCommand,
   getAgentProviderFromProcess,
   inferProviderFromText,
@@ -148,6 +149,7 @@ const AGENT_PERMISSION_OVERLAY_WIDTH = 390
 const AGENT_PERMISSION_OVERLAY_HEIGHT = 168
 const AGENT_PERMISSION_OVERLAY_MARGIN = 16
 const AGENT_PERMISSION_RESOLVED_SUPPRESSION_MS = 2_000
+const AGENT_PERMISSION_MISS_LOG_PATH = '/tmp/emu-agent-permission-misses.log'
 const DEBUG_AGENT_PERMISSION = process.env.EMU_DEBUG_AGENT_PERMISSION === '1' ||
   process.env.THINKING_DEBUG_AGENT_PERMISSION === '1'
 
@@ -177,6 +179,7 @@ interface AgentPermissionSessionState {
   provider: AgentPermissionProvider | null
   agentSession: boolean
   rawTail: string
+  lastMissSnapshot: string | null
 }
 
 const agentPermissionSessionStates = new Map<string, AgentPermissionSessionState>()
@@ -186,6 +189,27 @@ function debugAgentPermission(event: string, details: Record<string, unknown> = 
   console.info('[agent-permission:main]', { event, ...details })
 }
 
+function redactAgentPermissionMissSnapshot(text: string): string {
+  return text
+    .replace(/\b(?:sk|pk|ghp|github_pat|xox[abprs])_[A-Za-z0-9_=-]{12,}\b/g, '[redacted-token]')
+    .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, '[redacted-email]')
+    .slice(-2_000)
+}
+
+function logAgentPermissionMiss(sessionId: string, state: AgentPermissionSessionState): void {
+  if (!DEBUG_AGENT_PERMISSION) return
+  const snapshot = agentPermissionMissSnapshot(state.rawTail, state.provider)
+  if (!snapshot || snapshot === state.lastMissSnapshot) return
+
+  state.lastMissSnapshot = snapshot
+  const entry = [
+    `[${new Date().toISOString()}] session=${sessionId} provider=${state.provider ?? 'unknown'}`,
+    redactAgentPermissionMissSnapshot(snapshot),
+    ''
+  ].join('\n')
+  fs.appendFile(AGENT_PERMISSION_MISS_LOG_PATH, `${entry}\n`, () => {})
+}
+
 function getAgentPermissionSessionState(sessionId: string): AgentPermissionSessionState {
   let state = agentPermissionSessionStates.get(sessionId)
   if (!state) {
@@ -193,7 +217,8 @@ function getAgentPermissionSessionState(sessionId: string): AgentPermissionSessi
       detector: new AgentPermissionPromptDetector(),
       provider: null,
       agentSession: false,
-      rawTail: ''
+      rawTail: '',
+      lastMissSnapshot: null
     }
     agentPermissionSessionStates.set(sessionId, state)
   }
@@ -260,10 +285,14 @@ function scanAgentPermissionPtyOutput(sessionId: string, data: string, processNa
     textTail: state.rawTail.slice(-2_000)
   })
 
-  if (!prompt) return
+  if (!prompt) {
+    logAgentPermissionMiss(sessionId, state)
+    return
+  }
 
   state.provider = prompt.provider
   state.agentSession = true
+  state.lastMissSnapshot = null
   debugAgentPermission('main-pty-scan-matched', {
     sessionId,
     provider: prompt.provider,

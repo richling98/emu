@@ -74,6 +74,37 @@ function snapshotLines(text: string): string[] {
     .slice(-MAX_SNAPSHOT_LINES)
 }
 
+function isStandaloneHotkeyLine(line: string): boolean {
+  return /^\((?:y|n|a|d|p|esc|escape|enter|return)\)$/i.test(normalizeLine(line))
+}
+
+function isIndentedContinuationLine(line: string): boolean {
+  return /^\s+\S/.test(line) && !isMenuChoiceLine(line) && !isWaitHintLine(line)
+}
+
+function logicalPromptLines(lines: string[]): string[] {
+  const logicalLines: string[] = []
+
+  for (const line of lines) {
+    const normalized = normalizeLine(line)
+    if (!normalized) continue
+
+    const previous = logicalLines[logicalLines.length - 1]
+    if (previous && (
+      isStandaloneHotkeyLine(line) ||
+      (isIndentedContinuationLine(line) && isMenuChoiceLine(previous)) ||
+      (/^(reason|description):\s+/i.test(normalizeLine(previous)) && !/^\$\s+/.test(normalized) && !isMenuChoiceLine(line) && !isWaitHintLine(line) && !isClaudePromptStart(normalized))
+    )) {
+      logicalLines[logicalLines.length - 1] = `${previous} ${normalized}`
+      continue
+    }
+
+    logicalLines.push(line)
+  }
+
+  return logicalLines
+}
+
 function extractCodexPromptBlock(lines: string[]): string[] | null {
   let start = -1
   for (let index = lines.length - 1; index >= 0; index--) {
@@ -154,7 +185,7 @@ function reasonFromCodexBlock(block: string[]): string {
 }
 
 function parseCodexPermissionPrompt(text: string): ParsedPermissionPrompt | null {
-  const lines = snapshotLines(text)
+  const lines = logicalPromptLines(snapshotLines(text))
   return parseCodexCommandPermissionPrompt(lines) ?? parseCodexToolPermissionPrompt(lines)
 }
 
@@ -257,7 +288,7 @@ function isClaudePromptStart(line: string): boolean {
     /^use\s+skill\b/i.test(normalized) ||
     /\b(approval|permission)\s+(required|needed)\b/i.test(normalized) ||
     /\b(needs|requires)\s+(your\s+)?(approval|permission)\b/i.test(normalized) ||
-    /\b(do you want to|would you like to)\b.*\b(proceed|continue|run|execute|allow|approve|use)\b/i.test(normalized) ||
+    /^(do you want to|would you like to)\b.*\b(proceed|continue|run|execute|allow|approve|use)\b/i.test(normalized) ||
     /\b(allow|approve)\b.*\b(command|tool|bash|shell|edit|write|file|network|mcp)\b/i.test(normalized)
 }
 
@@ -407,7 +438,7 @@ function extractClaudePromptBlock(lines: string[], providerConfirmed: boolean): 
   let promptIndex = -1
   for (let index = lines.length - 1; index >= 0; index--) {
     const normalized = normalizeLine(lines[index])
-    if (isClaudePromptStart(normalized) || (/claude/i.test(normalized) && /\b(allow|approve|permission)\b/i.test(normalized))) {
+    if (isClaudePromptStart(normalized) || (/^claude( code)?\b/i.test(normalized) && /\b(allow|approve|approval|permission)\b/i.test(normalized))) {
       promptIndex = index
       break
     }
@@ -415,7 +446,8 @@ function extractClaudePromptBlock(lines: string[], providerConfirmed: boolean): 
   if (promptIndex === -1) return null
 
   const block = lines.slice(Math.max(0, promptIndex - 8))
-  const choices = approvalChoices(block)
+  const choiceBlock = lines.slice(promptIndex)
+  const choices = approvalChoices(choiceBlock)
   const hasApprove = choices.some((choice) => choice.kind === 'approve')
   const hasDeny = choices.some((choice) => choice.kind === 'deny')
   if (!hasApprove || !hasDeny) return null
@@ -423,7 +455,7 @@ function extractClaudePromptBlock(lines: string[], providerConfirmed: boolean): 
 }
 
 function parseClaudePermissionPrompt(text: string, providerConfirmed = true): ParsedPermissionPrompt | null {
-  const lines = snapshotLines(text)
+  const lines = logicalPromptLines(snapshotLines(text))
   const block = extractClaudePromptBlock(lines, providerConfirmed)
   if (!block) return null
 
@@ -456,7 +488,7 @@ function parseClaudePermissionPrompt(text: string, providerConfirmed = true): Pa
 }
 
 function parseGenericAgentPermissionPrompt(text: string, provider: AgentPermissionProvider): ParsedPermissionPrompt | null {
-  const lines = snapshotLines(text)
+  const lines = logicalPromptLines(snapshotLines(text))
   let promptIndex = -1
   for (let index = lines.length - 1; index >= 0; index--) {
     const normalized = normalizeLine(lines[index])
@@ -468,10 +500,11 @@ function parseGenericAgentPermissionPrompt(text: string, provider: AgentPermissi
   if (promptIndex === -1) return null
 
   const block = lines.slice(Math.max(0, promptIndex - 8))
-  const choices = approvalChoices(block)
+  const choiceBlock = lines.slice(promptIndex)
+  const choices = approvalChoices(choiceBlock)
   const hasApprove = choices.some((choice) => choice.kind === 'approve')
   const hasDeny = choices.some((choice) => choice.kind === 'deny')
-  const hasWaitHint = block.some(isWaitHintLine) || choices.some((choice) => choice.selected)
+  const hasWaitHint = choiceBlock.some(isWaitHintLine) || choices.some((choice) => choice.selected)
   if (!hasApprove || !hasDeny || !hasWaitHint) return null
 
   const normalized = block.map(normalizeLine).filter(Boolean)
@@ -557,6 +590,22 @@ function detectSnapshot(text: string, providerHint: AgentPermissionProvider | nu
   return parseCodexPermissionPrompt(text) ?? parseClaudePermissionPrompt(text, false)
 }
 
+export function agentPermissionMissSnapshot(text: string, providerHint: AgentPermissionProvider | null): string | null {
+  if (detectSnapshot(text, providerHint)) return null
+
+  const lines = logicalPromptLines(snapshotLines(text))
+  const normalized = lines.map(normalizeLine).filter(Boolean)
+  const joined = normalized.join('\n')
+  const choiceCount = lines.filter(isMenuChoiceLine).length
+  const hasMenuShape = choiceCount >= 2 || normalized.some((line) => isWaitHintLine(line))
+  const hasPermissionSignal = Boolean(providerHint) ||
+    Boolean(inferProviderFromText(text)) ||
+    /\b(permission|approval|approve|allow|proceed|command|tool|skill|bash|shell|cancel)\b/i.test(joined)
+
+  if (!hasMenuShape || !hasPermissionSignal) return null
+  return joined.slice(-MAX_EXCERPT_CHARS)
+}
+
 export class AgentPermissionPromptDetector {
   private lastFingerprint: string | null = null
 
@@ -592,5 +641,7 @@ export class AgentPermissionPromptDetector {
 export const __agentPermissionPromptTest = {
   parseCodexPermissionPrompt,
   parseClaudePermissionPrompt,
-  normalizeTerminalText
+  normalizeTerminalText,
+  logicalPromptLines,
+  agentPermissionMissSnapshot
 }
