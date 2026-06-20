@@ -209,6 +209,7 @@ export default function App() {
   const [splitRatio, setSplitRatio] = useState(0.5)
   const [themeId, setThemeId] = useState(() => localStorage.getItem('emmy-theme-id') ?? DEFAULT_THEME_ID)
   const [showSettings, setShowSettings] = useState(false)
+  const [updateAvailable, setUpdateAvailable] = useState(false)
   const [markdownDocument, setMarkdownDocument] = useState<MarkdownOpenResult | null>(null)
   const [markdownCollapsed, setMarkdownCollapsed] = useState(false)
   const [markdownViewMode, setMarkdownViewMode] = useState<MarkdownViewMode>('preview')
@@ -265,6 +266,15 @@ export default function App() {
 
     window.addEventListener('keydown', handlePerfToggle, true)
     return () => window.removeEventListener('keydown', handlePerfToggle, true)
+  }, [])
+
+  // Lights up the Settings gear with a dot when a newer Emu version is found —
+  // either by the silent launch-time check or a check from inside Settings.
+  useEffect(() => {
+    return window.api.onUpdateStatus((status) => {
+      if (status.status === 'available') setUpdateAvailable(true)
+      else if (status.status === 'not-available') setUpdateAvailable(false)
+    })
   }, [])
 
   useEffect(() => {
@@ -791,6 +801,7 @@ export default function App() {
               <path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z" />
               <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6l-.04.1a2 2 0 0 1-3.92 0L10 20a1.7 1.7 0 0 0-1-.6 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1l-.1-.04a2 2 0 0 1 0-3.92L4 10a1.7 1.7 0 0 0 .6-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6l.04-.1a2 2 0 0 1 3.92 0L14 4a1.7 1.7 0 0 0 1 .6 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.18.37.45.7.8 1l.1.04a2 2 0 0 1 0 3.92l-.1.04c-.35.3-.62.63-.8 1Z" />
             </svg>
+            {updateAvailable && <span className="update-available-dot" />}
           </button>
           <button
             className={`layout-btn ${layoutMode === 'split' ? 'active' : ''}`}

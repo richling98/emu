@@ -121,6 +121,15 @@ interface DiagnosticsConfig {
   vibrancyDisabled: boolean
 }
 
+type UpdateStatus =
+  | { status: 'checking' }
+  | { status: 'available'; version: string }
+  | { status: 'not-available' }
+  | { status: 'downloading'; percent: number }
+  | { status: 'downloaded' }
+  | { status: 'error'; message: string }
+  | { status: 'unsupported' }
+
 interface Window {
   api: {
     diagnosticsConfig: DiagnosticsConfig
@@ -145,5 +154,9 @@ interface Window {
     agentPermissionPromptDismissSession: (sessionId: string) => Promise<void>
     agentPermissionOverlayAction: (input: AgentPermissionOverlayAction) => Promise<void>
     onAgentPermissionOverlayState: (callback: (state: AgentPermissionOverlayState) => void) => () => void
+    getAppVersion: () => Promise<string>
+    checkForUpdates: () => Promise<UpdateStatus>
+    downloadUpdate: () => Promise<void>
+    onUpdateStatus: (callback: (status: UpdateStatus) => void) => () => void
   }
 }

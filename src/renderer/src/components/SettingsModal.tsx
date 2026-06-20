@@ -9,7 +9,7 @@ interface Props {
   onClose: () => void
 }
 
-type SettingsSection = 'appearance' | 'hotkeys' | 'about'
+type SettingsSection = 'appearance' | 'hotkeys' | 'about' | 'updates'
 
 const HOTKEY_SECTIONS = [
   {
@@ -62,12 +62,33 @@ const HOTKEY_SECTIONS = [
 
 export default function SettingsModal({ activeThemeId, onSelectTheme, onClose }: Props) {
   const [section, setSection] = useState<SettingsSection>('appearance')
+  const [appVersion, setAppVersion] = useState<string | null>(null)
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [onClose])
+
+  useEffect(() => {
+    window.api.getAppVersion().then(setAppVersion)
+    return window.api.onUpdateStatus(setUpdateStatus)
+  }, [])
+
+  const checkForUpdates = (): void => {
+    setUpdateStatus({ status: 'checking' })
+    window.api.checkForUpdates().then(setUpdateStatus)
+  }
+
+  useEffect(() => {
+    if (section === 'updates') checkForUpdates()
+  }, [section])
+
+  const handleDownloadUpdate = (): void => {
+    setUpdateStatus({ status: 'downloading', percent: 0 })
+    window.api.downloadUpdate()
+  }
 
   return (
     <div className="settings-overlay" onClick={onClose}>
@@ -96,6 +117,12 @@ export default function SettingsModal({ activeThemeId, onSelectTheme, onClose }:
               onClick={() => setSection('about')}
             >
               About
+            </button>
+            <button
+              className={`settings-nav-item${section === 'updates' ? ' settings-nav-item--active' : ''}`}
+              onClick={() => setSection('updates')}
+            >
+              Updates
             </button>
           </nav>
 
@@ -191,6 +218,52 @@ export default function SettingsModal({ activeThemeId, onSelectTheme, onClose }:
                     </div>
                   ))}
                 </div>
+              </section>
+            )}
+
+            {section === 'updates' && (
+              <section className="settings-section settings-updates-section" aria-labelledby="updates-settings-title">
+                <h2 id="updates-settings-title" className="settings-section-title">Updates</h2>
+                <p className="settings-updates-version">{appVersion ? `Emu v${appVersion}` : ' '}</p>
+
+                {(!updateStatus || updateStatus.status === 'checking') && (
+                  <p className="settings-updates-status">Checking for updates…</p>
+                )}
+
+                {updateStatus?.status === 'not-available' && (
+                  <p className="settings-updates-status settings-updates-status--ok">You're on the latest version of Emu!</p>
+                )}
+
+                {updateStatus?.status === 'available' && (
+                  <div className="settings-updates-row">
+                    <p className="settings-updates-status">Emu v{updateStatus.version} is available.</p>
+                    <button className="settings-updates-button" onClick={handleDownloadUpdate}>Update</button>
+                  </div>
+                )}
+
+                {updateStatus?.status === 'downloading' && (
+                  <div className="settings-updates-progress">
+                    <p className="settings-updates-status">Downloading update… {updateStatus.percent}%</p>
+                    <div className="settings-updates-progress-track">
+                      <div className="settings-updates-progress-fill" style={{ width: `${updateStatus.percent}%` }} />
+                    </div>
+                  </div>
+                )}
+
+                {updateStatus?.status === 'downloaded' && (
+                  <p className="settings-updates-status">Installing and relaunching…</p>
+                )}
+
+                {updateStatus?.status === 'error' && (
+                  <div className="settings-updates-row">
+                    <p className="settings-updates-status settings-updates-status--error">Couldn't check for updates.</p>
+                    <button className="settings-updates-button settings-updates-button--secondary" onClick={checkForUpdates}>Try again</button>
+                  </div>
+                )}
+
+                {updateStatus?.status === 'unsupported' && (
+                  <p className="settings-updates-status">Updates aren't available in development builds.</p>
+                )}
               </section>
             )}
           </div>

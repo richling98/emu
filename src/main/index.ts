@@ -1,4 +1,5 @@
 import { app, shell, BrowserWindow, ipcMain, nativeImage, screen } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'path'
 import fs from 'fs'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -158,6 +159,18 @@ let activeAgentPermissionPromptId: string | null = null
 let agentPermissionOverlayUserMoved = false
 let agentPermissionOverlayProgrammaticMoveUntil = 0
 let agentPermissionOverlayBounds: Electron.Rectangle | null = null
+
+type UpdateStatusPayload =
+  | { status: 'checking' }
+  | { status: 'available'; version: string }
+  | { status: 'not-available' }
+  | { status: 'downloading'; percent: number }
+  | { status: 'downloaded' }
+  | { status: 'error'; message: string }
+  | { status: 'unsupported' }
+
+let updateCheckInFlight = false
+let updateDownloadInFlight = false
 
 interface AgentPermissionSessionState {
   detector: AgentPermissionPromptDetector
@@ -1285,6 +1298,67 @@ function setupShellIntegration(): string {
   return dir
 }
 
+// ---- Auto-update (electron-updater / Squirrel.Mac) ----
+// Download never starts on its own — only when the renderer explicitly calls
+// updates:download (i.e. the user clicked "Update"). The launch-time check and
+// the Settings tab's on-open check both just ask "is there a newer version".
+autoUpdater.autoDownload = false
+
+function broadcastUpdateStatus(payload: UpdateStatusPayload): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window === agentPermissionOverlayWindow || window.isDestroyed()) continue
+    window.webContents.send('updates:status', payload)
+  }
+}
+
+function performUpdateCheck(): Promise<UpdateStatusPayload> {
+  if (updateCheckInFlight) return Promise.resolve({ status: 'checking' })
+  updateCheckInFlight = true
+
+  return new Promise<UpdateStatusPayload>((resolvePromise) => {
+    const finish = (payload: UpdateStatusPayload): void => {
+      autoUpdater.removeListener('update-available', onAvailable)
+      autoUpdater.removeListener('update-not-available', onNotAvailable)
+      autoUpdater.removeListener('error', onError)
+      updateCheckInFlight = false
+      resolvePromise(payload)
+    }
+    const onAvailable = (info: { version: string }): void => finish({ status: 'available', version: info.version })
+    const onNotAvailable = (): void => finish({ status: 'not-available' })
+    const onError = (error: Error): void =>
+      finish({ status: 'error', message: error.message || 'Update check failed' })
+
+    autoUpdater.once('update-available', onAvailable)
+    autoUpdater.once('update-not-available', onNotAvailable)
+    autoUpdater.once('error', onError)
+    autoUpdater.checkForUpdates().catch(onError)
+  })
+}
+
+function performUpdateDownload(): Promise<void> {
+  if (updateDownloadInFlight) return Promise.resolve()
+  updateDownloadInFlight = true
+  broadcastUpdateStatus({ status: 'downloading', percent: 0 })
+
+  return autoUpdater.downloadUpdate().then(
+    () => {},
+    (error: Error) => {
+      updateDownloadInFlight = false
+      broadcastUpdateStatus({ status: 'error', message: error.message || 'Update failed to download' })
+    }
+  )
+}
+
+autoUpdater.on('download-progress', (progress) => {
+  broadcastUpdateStatus({ status: 'downloading', percent: Math.round(progress.percent) })
+})
+
+autoUpdater.on('update-downloaded', () => {
+  updateDownloadInFlight = false
+  broadcastUpdateStatus({ status: 'downloaded' })
+  autoUpdater.quitAndInstall()
+})
+
 function createWindow(): void {
   const iconPath = join(__dirname, '../../build/icon.icns')
   const appIcon = nativeImage.createFromPath(iconPath)
@@ -1443,6 +1517,18 @@ app.whenReady().then(() => {
     return getPerfStatsSnapshot()
   })
 
+  ipcMain.handle('app:getVersion', () => app.getVersion())
+
+  ipcMain.handle('updates:check', async (): Promise<UpdateStatusPayload> => {
+    if (!app.isPackaged) return { status: 'unsupported' }
+    return performUpdateCheck()
+  })
+
+  ipcMain.handle('updates:download', async () => {
+    if (!app.isPackaged) return
+    await performUpdateDownload()
+  })
+
   ipcMain.handle('agent-permission:sessionMetadata', (_, input: unknown) => {
     if (!input || typeof input !== 'object') return
     const candidate = input as { sessionId?: unknown; workspaceName?: unknown }
@@ -1543,6 +1629,14 @@ app.whenReady().then(() => {
   })
 
   createWindow()
+
+  // Silent background check a few seconds after launch, so the Settings gear
+  // icon can show an "update available" dot without the user opening Settings.
+  if (app.isPackaged) {
+    setTimeout(() => {
+      performUpdateCheck().then(broadcastUpdateStatus).catch(() => {})
+    }, 5_000)
+  }
 
   app.on('activate', function () {
     const appWindows = BrowserWindow.getAllWindows().filter((window) => window !== agentPermissionOverlayWindow)

@@ -61,6 +61,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
   transition: background 0.15s, color 0.15s;
   color: rgba(255, 255, 255, 0.6);
   padding: 0;
@@ -74,6 +75,17 @@
 .layout-btn.active {
   background: color-mix(in srgb, var(--accent) 22%, transparent);
   color: var(--accent);
+}
+
+.update-available-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 1.5px rgba(20, 20, 24, 0.9);
 }
 
 /* The main content area below the titlebar */

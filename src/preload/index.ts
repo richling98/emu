@@ -65,5 +65,14 @@ contextBridge.exposeInMainWorld('api', {
     const listener = (_: Electron.IpcRendererEvent, state: unknown) => callback(state)
     ipcRenderer.on('agent-permission:state', listener)
     return () => ipcRenderer.removeListener('agent-permission:state', listener)
+  },
+  // App updates (electron-updater)
+  getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
+  checkForUpdates: () => ipcRenderer.invoke('updates:check'),
+  downloadUpdate: () => ipcRenderer.invoke('updates:download'),
+  onUpdateStatus: (callback: (status: unknown) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, status: unknown) => callback(status)
+    ipcRenderer.on('updates:status', listener)
+    return () => ipcRenderer.removeListener('updates:status', listener)
   }
 })
