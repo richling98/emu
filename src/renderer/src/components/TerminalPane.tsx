@@ -12,6 +12,15 @@ import {
   isAgentProcessName,
   type AgentPermissionProvider
 } from '../../../shared/agentPermissionPrompts'
+
+function shouldDebugScrollWheel(): boolean {
+  try {
+    return window.localStorage.getItem('emu.debugScrollWheel') === '1' ||
+      window.localStorage.getItem('thinking.debugScrollWheel') === '1'
+  } catch {
+    return false
+  }
+}
 import CommandHistoryDrawer, { type HistoryEntry } from './CommandHistoryDrawer'
 import RichInputComposer, { type ComposerImageAttachment } from './RichInputComposer'
 import '@xterm/xterm/css/xterm.css'
@@ -174,6 +183,15 @@ function shouldDebugAgentPermission(): boolean {
   try {
     return window.localStorage.getItem('emu.debugAgentPermission') === '1' ||
       window.localStorage.getItem('thinking.debugAgentPermission') === '1'
+  } catch {
+    return false
+  }
+}
+
+function shouldDebugScrollFollow(): boolean {
+  try {
+    return window.localStorage.getItem('emu.debugScrollFollow') === '1' ||
+      window.localStorage.getItem('thinking.debugScrollFollow') === '1'
   } catch {
     return false
   }
@@ -505,6 +523,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
   const [terminalDropRect, setTerminalDropRect] = useState<DropHighlightRect | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [isAtBottom, setIsAtBottom] = useState(true)
+  const isAtBottomRef = useRef(true)
   const shouldAutoFollowOutputRef = useRef(true)
   const autoFollowFrameRef = useRef<number | null>(null)
   const autoFollowOutputRenderUntilRef = useRef(0)
@@ -522,6 +541,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
   const rawTuiShellPollCountRef = useRef(0)
   const commitComposerRef = useRef<(text: string) => void>(() => {})
   const composerSubmitRef = useRef<ComposerSubmitTransaction | null>(null)
+  const wheelAccumulatorRef = useRef(0)
   const composerSubmitRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const recordPerfEvent = useCallback((event: TerminalPerfEvent, value = 1) => {
@@ -557,6 +577,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
   useEffect(() => { onOpenMarkdownRef.current = onOpenMarkdown }, [onOpenMarkdown])
   useEffect(() => { onPerfEventRef.current = onPerfEvent }, [onPerfEvent])
   useEffect(() => { workspaceNameRef.current = workspaceName }, [workspaceName])
+  useEffect(() => { isAtBottomRef.current = isAtBottom }, [isAtBottom])
 
   useEffect(() => {
     void window.api.agentPermissionSessionMetadata({
@@ -650,10 +671,10 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     return distanceFromBottom(viewport) < 10
   }
 
-  const snapTerminalToBottom = () => {
-    const terminal = terminalRef.current
-    const viewport = getViewportElement()
-    if (!terminal || !viewport || terminal.buffer.active.type === 'alternate') return
+    const snapTerminalToBottom = (trigger: ScrollFollowTrigger = 'manual') => {
+      const terminal = terminalRef.current
+      const viewport = getViewportElement()
+      if (!terminal || !viewport || terminal.buffer.active.type === 'alternate') return
 
     // Do NOT call terminal.scrollToBottom() here. It fires _onScroll with
     // suppressScrollEvent:false, which schedules a deferred _innerRefresh via
@@ -661,20 +682,32 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     // the user has started scrolling up, fighting every gesture frame-by-frame.
     // Setting scrollTop directly triggers _handleScroll with suppressScrollEvent:true —
     // it correctly updates ydisp without scheduling any deferred snap.
-    viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight
-    shouldAutoFollowOutputRef.current = true
-    setIsAtBottom(true)
-  }
+      viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight
+      shouldAutoFollowOutputRef.current = true
+      isAtBottomRef.current = true
+      setIsAtBottom(true)
+      debugScrollFollow('snap-bottom', {
+        trigger,
+        scrollTop: viewport.scrollTop,
+        scrollHeight: viewport.scrollHeight,
+        clientHeight: viewport.clientHeight
+      })
+    }
 
-  const scheduleAutoFollowSnap = () => {
-    if (autoFollowFrameRef.current !== null) return
-    autoFollowOutputRenderUntilRef.current = Date.now() + 250
-    autoFollowFrameRef.current = requestAnimationFrame(() => {
-      autoFollowFrameRef.current = null
-      if (!shouldAutoFollowOutputRef.current) return
-      snapTerminalToBottom()
-    })
-  }
+    const scheduleAutoFollowSnap = () => {
+      if (autoFollowFrameRef.current !== null) return
+      autoFollowOutputRenderUntilRef.current = Date.now() + 250
+      debugScrollFollow('auto-follow-armed')
+      autoFollowFrameRef.current = requestAnimationFrame(() => {
+        autoFollowFrameRef.current = null
+        if (!shouldAutoFollowOutputRef.current) {
+          debugScrollFollow('auto-follow-cancelled')
+          return
+        }
+        debugScrollFollow('auto-follow-snap-frame')
+        snapTerminalToBottom('auto-follow-snap')
+      })
+    }
 
   const handleCloseDrawer = () => {
     setShowDrawer(false)
@@ -689,9 +722,9 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     setTimeout(() => setCopiedId(null), 1800)
   }
 
-  const handleScrollToBottom = () => {
-    const viewport = getViewportElement()
-    if (!viewport) return
+    const handleScrollToBottom = () => {
+      const viewport = getViewportElement()
+      if (!viewport) return
 
     if (scrollToBottomAnimRef.current !== null) {
       cancelAnimationFrame(scrollToBottomAnimRef.current)
@@ -699,6 +732,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     }
 
     shouldAutoFollowOutputRef.current = true
+    debugScrollFollow('button-scroll-start', { startPos: viewport.scrollTop })
     const DURATION = 300  // ms
     const startTime = performance.now()
     const startPos = viewport.scrollTop
@@ -712,11 +746,12 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       shouldAutoFollowOutputRef.current = true
       autoFollowOutputRenderUntilRef.current = Date.now() + 80
       viewport.scrollTop = startPos + (target - startPos) * eased
+      debugScrollFollow('button-scroll-step', { progress, eased, startPos, target })
 
       if (progress < 1) {
         scrollToBottomAnimRef.current = requestAnimationFrame(step)
       } else {
-        snapTerminalToBottom()
+        snapTerminalToBottom('button')
       }
     }
 
@@ -867,6 +902,29 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       source: 'raw' | 'raw-buffer' | 'write-parsed' | 'followup' | 'watchdog' | 'hidden-replay'
     ) => boolean = () => false
 
+    type ScrollFollowTrigger = 'auto-follow-snap' | 'button' | 'exit' | 'hidden-replay' | 'manual'
+
+    const debugScrollFollow = (event: string, details: Record<string, unknown> = {}) => {
+      if (!shouldDebugScrollFollow()) return
+      const payload = {
+        sessionId: session.id,
+        event,
+        proc: agentProcessRef.current,
+        agentState: agentStateRef.current,
+        agentSession: agentSessionRef.current,
+        rawTuiMode: rawTuiModeRef.current,
+        isVisible: isVisibleRef.current,
+        isAltScreen: isAltScreenRef.current,
+        isAtBottom: isAtBottomRef.current,
+        shouldAutoFollow: shouldAutoFollowOutputRef.current,
+        followWindowMsLeft: Math.max(0, autoFollowOutputRenderUntilRef.current - Date.now()),
+        scrollAnimActive: scrollToBottomAnimRef.current !== null,
+        ...details
+      }
+      console.debug('[scroll-follow]', payload)
+      window.api.debugLog('scroll-follow', payload)
+    }
+
     const replayHiddenOutput = () => {
       if (disposed || !isVisibleRef.current || hiddenOutputReplayFrameRef.current !== null) return
 
@@ -881,6 +939,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
           const marker = `\r\n\x1b[2m[Emu omitted ${omitted.toLocaleString()} characters of hidden output while this tab was inactive]\x1b[0m\r\n`
           if (shouldAutoFollowOutputRef.current) autoFollowOutputRenderUntilRef.current = Date.now() + 250
           terminal.write(marker)
+          debugScrollFollow('hidden-replay-marker', { omitted })
           replayedOutput = true
           recordPerfEvent('hiddenReplayWrites')
           recordPerfEvent('hiddenReplayBytes', marker.length)
@@ -904,6 +963,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
           terminal.write(chunk, () => {
             if (disposed) return
             detectPermissionPrompt(getPermissionScanText(AGENT_PERMISSION_TAIL_LINES), 'hidden-replay')
+            debugScrollFollow('hidden-replay-write', { chunkLength: chunk.length })
           })
           written += chunk.length
         }
@@ -917,6 +977,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         }
 
         if (replayedOutput && shouldAutoFollowOutputRef.current) {
+          debugScrollFollow('hidden-replay-snap-request')
           scheduleAutoFollowSnap()
         }
 
@@ -1046,6 +1107,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     const setAgentState = (state: AgentState, foregroundProcess: string | null = agentProcessRef.current) => {
       agentStateRef.current = state
       agentProcessRef.current = foregroundProcess
+      debugScrollFollow('agent-state', { state, foregroundProcess })
       onAgentStateChangeRef.current?.(state, foregroundProcess)
     }
 
@@ -1069,15 +1131,18 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       rawTuiStartedAtRef.current = Date.now()
       rawTuiExitingUntilRef.current = 0
       rawTuiShellPollCountRef.current = 0
+      debugScrollFollow('raw-tui-start', { mode })
       setInputOwner('xterm')
     }
 
     const endRawTuiMode = () => {
+      const mode = rawTuiModeRef.current
       rawTuiModeRef.current = null
       rawTuiStartedAtRef.current = 0
       rawTuiShellPollCountRef.current = 0
       currentInputRef.current = ''
       setComposerText('')
+      debugScrollFollow('raw-tui-end', { mode })
       setInputOwner(rawTuiReturnOwnerRef.current)
     }
 
@@ -1106,6 +1171,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       agentSessionRef.current = true
       agentTaskInFlightRef.current = true
       agentTaskStartedAtRef.current = Date.now()
+      debugScrollFollow('agent-running', { foregroundProcess })
       setAgentState('running', foregroundProcess)
       clearAgentIdleTimer()
     }
@@ -1115,6 +1181,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       agentSessionRef.current = false
       agentTaskInFlightRef.current = false
       agentTaskStartedAtRef.current = 0
+      debugScrollFollow('agent-cleared', { foregroundProcess })
       setAgentState('none', foregroundProcess)
     }
 
@@ -1260,6 +1327,12 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       agentProcessRef.current = proc
       const detectedProvider = getAgentProviderFromProcess(proc)
       if (detectedProvider) agentProviderRef.current = detectedProvider
+      debugScrollFollow('process-refresh', {
+        proc,
+        previousProcess,
+        detectedProvider,
+        isAgent
+      })
 
       if (rawTuiModeRef.current && !isAltScreenRef.current && isShellProcessName(proc)) {
         const rawTuiAge = Date.now() - rawTuiStartedAtRef.current
@@ -1317,6 +1390,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     terminal.buffer.onBufferChange(async (newBuffer) => {
       if (newBuffer.type === 'alternate') {
         isAltScreenRef.current = true
+        wheelAccumulatorRef.current = 0
         // Snapshot normal-buffer position — used as the navigation anchor for
         // commands typed inside TUI apps (alt buffer coords are not scrollable).
         altScreenEntryLineRef.current =
@@ -1340,9 +1414,23 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
           agentSessionRef.current = true
           if (agentStateRef.current === 'none') setAgentState('idle', proc)
         }
+
+        if (shouldDebugScrollFollow()) {
+          const enterPayload = {
+            sessionId: session.id,
+            proc,
+            provider: detectedProvider,
+            isAgent: isAgentProcessName(proc),
+            entryLine: altScreenEntryLineRef.current
+          }
+          console.debug('[scroll-follow:alt-screen-enter]', enterPayload)
+          window.api.debugLog('scroll-follow:alt-screen-enter', enterPayload)
+        }
       } else {
+        const prevAltScreen = isAltScreenRef.current
         isAltScreenRef.current = false
         endRawTuiMode()
+        wheelAccumulatorRef.current = 0
         currentInputRef.current = ''
         promptStartLineRef.current = -1
         promptStartColRef.current = -1
@@ -1351,6 +1439,23 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         if (outputFlushTimerRef.current) {
           clearTimeout(outputFlushTimerRef.current)
           outputFlushTimerRef.current = null
+        }
+
+        if (shouldDebugScrollFollow()) {
+          const exitPayload = {
+            sessionId: session.id,
+            proc: agentProcessRef.current,
+            provider: agentProviderRef.current,
+            agentSession: agentSessionRef.current
+          }
+          console.debug('[scroll-follow:alt-screen-exit]', exitPayload)
+          window.api.debugLog('scroll-follow:alt-screen-exit', exitPayload)
+        }
+
+        // If user was auto-following before alt-screen entry, snap to bottom
+        // on exit to reveal any output that arrived during alt-screen mode.
+        if (prevAltScreen && shouldAutoFollowOutputRef.current) {
+          snapTerminalToBottom('exit')
         }
       }
     })
@@ -1366,7 +1471,23 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       if (!viewportEl) return
       // < 10px from bottom counts as "at bottom" to handle sub-pixel rounding
       const atBottom = isViewportAtBottom(viewportEl)
-      if (!atBottom && Date.now() < autoFollowOutputRenderUntilRef.current) return
+      if (!atBottom && Date.now() < autoFollowOutputRenderUntilRef.current) {
+        debugScrollFollow('scroll-state-suppressed', {
+          scrollTop: viewportEl.scrollTop,
+          scrollHeight: viewportEl.scrollHeight,
+          clientHeight: viewportEl.clientHeight
+        })
+        return
+      }
+      if (isAtBottomRef.current !== atBottom) {
+        debugScrollFollow('scroll-state-change', {
+          atBottom,
+          scrollTop: viewportEl.scrollTop,
+          scrollHeight: viewportEl.scrollHeight,
+          clientHeight: viewportEl.clientHeight
+        })
+      }
+      isAtBottomRef.current = atBottom
       shouldAutoFollowOutputRef.current = atBottom
       setIsAtBottom(atBottom)
     }
@@ -1398,24 +1519,83 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       const rawTuiMode = rawTuiModeRef.current
       const scrollingUp = e.deltaY < 0
       if (Date.now() < rawTuiExitingUntilRef.current) return
+
+      if (shouldDebugScrollWheel()) {
+        const wheelPayload = {
+          sessionId: session.id,
+          deltaY: e.deltaY,
+          deltaMode: e.deltaMode,
+          isAltScreen,
+          rawTuiMode,
+          proc,
+          accumulator: wheelAccumulatorRef.current
+        }
+        console.debug('[scroll-wheel]', wheelPayload)
+        window.api.debugLog('scroll-wheel', wheelPayload)
+      }
+
       if (scrollingUp) {
         autoFollowOutputRenderUntilRef.current = 0
         shouldAutoFollowOutputRef.current = false
+        debugScrollFollow('wheel-scroll-up', { rawTuiMode, proc, isAltScreen })
         if (scrollToBottomAnimRef.current !== null) {
           cancelAnimationFrame(scrollToBottomAnimRef.current)
           scrollToBottomAnimRef.current = null
         }
       }
-      if (rawTuiMode === 'pager' || isPagerProcessName(proc)) {
-        // Use Ctrl+B / Ctrl+F instead of literal `b` / Space so momentum wheel
-        // events cannot leak visible spaces into the shell during pager exit.
-        window.api.ptyWrite(session.id, scrollingUp ? '\x02' : '\x06')
-      } else if (rawTuiMode === 'editor' || isEditorProcessName(proc)) {
-        window.api.ptyWrite(session.id, scrollingUp ? '\x02' : '\x06')
-      } else if (isAltScreen) {
-        // Alt-screen apps own the screen; the xterm viewport has no scrollback
-        // to move. Forward the wheel as app-native navigation.
-        window.api.ptyWrite(session.id, scrollingUp ? '\x1b[5~' : '\x1b[6~')
+      if (isAltScreen) {
+        // Alt-screen apps: accumulate wheel deltas and send proportional
+        // scroll commands.  Sending one full-page command per event (the
+        // old behavior) causes ~10+ page scrolls per trackpad flick because
+        // macOS generates many small-delta events per gesture.  Instead we
+        // accumulate pixels to lines and emit line-level commands so
+        // trackpad momentum decelerates naturally.
+        let deltaPx: number
+        if (e.deltaMode === 0) {
+          deltaPx = e.deltaY
+        } else if (e.deltaMode === 1) {
+          deltaPx = e.deltaY * pxPerLine
+        } else {
+          if (!viewportEl) return
+          deltaPx = e.deltaY > 0 ? viewportEl.clientHeight : -viewportEl.clientHeight
+        }
+        wheelAccumulatorRef.current += deltaPx
+        const absAccum = Math.abs(wheelAccumulatorRef.current)
+        if (absAccum >= pxPerLine) {
+          const lines = Math.floor(absAccum / pxPerLine)
+          const scrollingDown = wheelAccumulatorRef.current > 0
+          wheelAccumulatorRef.current = (absAccum % pxPerLine) * (scrollingDown ? 1 : -1)
+          const clamped = Math.min(lines, 60)
+          window.api.ptyWrite(session.id, scrollingDown ? '\x1b[B'.repeat(clamped) : '\x1b[A'.repeat(clamped))
+        }
+      } else if (rawTuiMode === 'pager' || isPagerProcessName(proc) || rawTuiMode === 'editor' || isEditorProcessName(proc)) {
+        // Pager/editor in normal buffer (unusual but possible): accumulate
+        // deltas and send Ctrl+B/Ctrl+F when a page threshold is exceeded,
+        // otherwise cursor up/down for fine control.
+        let deltaPx: number
+        if (e.deltaMode === 0) {
+          deltaPx = e.deltaY
+        } else if (e.deltaMode === 1) {
+          deltaPx = e.deltaY * pxPerLine
+        } else {
+          if (!viewportEl) return
+          deltaPx = e.deltaY > 0 ? viewportEl.clientHeight : -viewportEl.clientHeight
+        }
+        wheelAccumulatorRef.current += deltaPx
+        const absAccum = Math.abs(wheelAccumulatorRef.current)
+        if (absAccum >= pxPerLine) {
+          const lines = Math.floor(absAccum / pxPerLine)
+          const scrollingDown = wheelAccumulatorRef.current > 0
+          wheelAccumulatorRef.current = (absAccum % pxPerLine) * (scrollingDown ? 1 : -1)
+          const clamped = Math.min(lines, 60)
+          const pageThreshold = terminal.rows * 0.6
+          if (clamped >= pageThreshold) {
+            // Large accumulated scroll → page command
+            window.api.ptyWrite(session.id, scrollingDown ? '\x06' : '\x02')
+          } else {
+            window.api.ptyWrite(session.id, scrollingDown ? '\x1b[B'.repeat(clamped) : '\x1b[A'.repeat(clamped))
+          }
+        }
       } else {
         // Normal mode: pixel-precise scroll — preserves trackpad momentum fully.
         if (!viewportEl) return
@@ -1663,6 +1843,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       const context = permissionContext()
       return context.provider === 'claude' ||
         context.provider === 'codex' ||
+        context.provider === 'opencode' ||
         context.agentSession ||
         isAltScreenRef.current ||
         Boolean(rawTuiModeRef.current)
@@ -1735,11 +1916,17 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         const tailLines = useAgentScan ? AGENT_PERMISSION_TAIL_LINES : DEFAULT_PERMISSION_TAIL_LINES
         const shouldAutoFollowOutput = shouldAutoFollowOutputRef.current
         if (shouldAutoFollowOutput) autoFollowOutputRenderUntilRef.current = Date.now() + 250
+        debugScrollFollow('write-callback', {
+          shouldAutoFollowOutput,
+          tailLines,
+          bytes
+        })
         terminal.write(data, () => {
           if (disposed) return
           detectPermissionPrompt(getPermissionScanText(tailLines), 'write-parsed')
           if (shouldAutoFollowOutput && shouldAutoFollowOutputRef.current) {
-            snapTerminalToBottom()
+            debugScrollFollow('write-callback-snap')
+            snapTerminalToBottom('auto-follow-snap')
             scheduleAutoFollowSnap()
           }
           for (const delay of scanDelays) {
@@ -1793,7 +1980,8 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       if (shouldAutoFollowOutput) autoFollowOutputRenderUntilRef.current = Date.now() + 250
       terminal.write('\r\n\x1b[2m[Process exited]\x1b[0m\r\n', () => {
         if (shouldAutoFollowOutput && shouldAutoFollowOutputRef.current) {
-          snapTerminalToBottom()
+          debugScrollFollow('exit-snap')
+          snapTerminalToBottom('exit')
           scheduleAutoFollowSnap()
         }
       })
@@ -2215,7 +2403,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     }
     if (isVisible && fitAddonRef.current && terminalRef.current) {
       if (hiddenOutputBufferRef.current.length > 0 || hiddenOutputOmittedCharsRef.current > 0) {
-        snapTerminalToBottom()
+        snapTerminalToBottom('hidden-replay')
       }
       replayHiddenOutputRef.current?.()
       setTimeout(() => {

@@ -3,7 +3,7 @@ export interface PtyWriteChunk {
   delayAfterMs?: number
 }
 
-export type AgentPermissionProvider = 'claude' | 'codex'
+export type AgentPermissionProvider = 'claude' | 'codex' | 'opencode'
 
 export interface AgentPermissionPrompt {
   id: string
@@ -530,7 +530,7 @@ function parseGenericAgentPermissionPrompt(text: string, provider: AgentPermissi
 export function isAgentProcessName(processName: string | null): boolean {
   if (!processName) return false
   const normalized = processName.toLowerCase().replace(/\\/g, '/').split('/').pop()?.replace(/^-/, '') ?? ''
-  return /\b(claude|codex)\b/.test(normalized)
+  return /\b(claude|codex|opencode)\b/.test(normalized)
 }
 
 function normalizedProcessBasename(processName: string | null): string {
@@ -541,14 +541,15 @@ export function getAgentProviderFromProcess(processName: string | null): AgentPe
   const normalized = normalizedProcessBasename(processName)
   if (normalized.includes('claude')) return 'claude'
   if (normalized.includes('codex')) return 'codex'
+  if (normalized.includes('opencode')) return 'opencode'
   return null
 }
 
 export function isAgentLaunchCommand(command: string): boolean {
   const normalized = command.trim().toLowerCase()
   if (!normalized) return false
-  return /(^|[;&|]\s*)(claude|codex)([\s;&|]|$)/.test(normalized) ||
-    /(^|[;&|]\s*)(npx|npm exec|bunx|pnpm dlx|yarn dlx)\s+([@\w./-]*claude[-\w./]*|[@\w./-]*codex[-\w./]*)/.test(normalized)
+  return /(^|[;&|]\s*)(claude|codex|opencode)([\s;&|]|$)/.test(normalized) ||
+    /(^|[;&|]\s*)(npx|npm exec|bunx|pnpm dlx|yarn dlx)\s+([@\w./-]*claude[-\w./]*|[@\w./-]*codex[-\w./]*|[@\w./-]*opencode[-\w./]*)/.test(normalized)
 }
 
 export function getAgentProviderFromCommand(command: string): AgentPermissionProvider | null {
@@ -560,6 +561,10 @@ export function getAgentProviderFromCommand(command: string): AgentPermissionPro
   if (/(^|[;&|]\s*)(codex)([\s;&|]|$)/.test(normalized) ||
     /(^|[;&|]\s*)(npx|npm exec|bunx|pnpm dlx|yarn dlx)\s+([@\w./-]*codex[-\w./]*)/.test(normalized)) {
     return 'codex'
+  }
+  if (/(^|[;&|]\s*)(opencode)([\s;&|]|$)/.test(normalized) ||
+    /(^|[;&|]\s*)(npx|npm exec|bunx|pnpm dlx|yarn dlx)\s+([@\w./-]*opencode[-\w./]*)/.test(normalized)) {
+    return 'opencode'
   }
   return null
 }
@@ -578,6 +583,12 @@ export function inferProviderFromText(text: string): AgentPermissionProvider | n
     /\bbash\s*\(\s*command:/i.test(text)) {
     return 'claude'
   }
+  if (/\bopencode\b/.test(normalized) ||
+    /\bapprove\b.*\b(?:command|tool|bash|shell|action|write|file)\b/i.test(text) ||
+    /allow\s+(?:bash|shell|tool|command|action)\b/i.test(text) ||
+    /\byou can press\b.*\b(?:enter|space|y|n)\b/i.test(text)) {
+    return 'opencode'
+  }
   return null
 }
 
@@ -585,9 +596,11 @@ function detectSnapshot(text: string, providerHint: AgentPermissionProvider | nu
   const inferredProvider = inferProviderFromText(text)
   if (inferredProvider === 'codex') return parseCodexPermissionPrompt(text) ?? parseClaudePermissionPrompt(text, false)
   if (inferredProvider === 'claude') return parseClaudePermissionPrompt(text, true) ?? parseCodexPermissionPrompt(text)
+  if (inferredProvider === 'opencode') return parseGenericAgentPermissionPrompt(text, 'opencode') ?? parseCodexPermissionPrompt(text) ?? parseClaudePermissionPrompt(text, false)
   if (providerHint === 'codex') return parseCodexPermissionPrompt(text) ?? parseClaudePermissionPrompt(text, false) ?? parseGenericAgentPermissionPrompt(text, 'codex')
   if (providerHint === 'claude') return parseClaudePermissionPrompt(text, true) ?? parseCodexPermissionPrompt(text) ?? parseGenericAgentPermissionPrompt(text, 'claude')
-  return parseCodexPermissionPrompt(text) ?? parseClaudePermissionPrompt(text, false)
+  if (providerHint === 'opencode') return parseGenericAgentPermissionPrompt(text, 'opencode') ?? parseCodexPermissionPrompt(text) ?? parseClaudePermissionPrompt(text, false)
+  return parseCodexPermissionPrompt(text) ?? parseClaudePermissionPrompt(text, false) ?? parseGenericAgentPermissionPrompt(text, 'codex')
 }
 
 export function agentPermissionMissSnapshot(text: string, providerHint: AgentPermissionProvider | null): string | null {

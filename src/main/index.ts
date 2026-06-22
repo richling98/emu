@@ -717,7 +717,10 @@ function buildAgentPermissionOverlayHtml(): string {
     let busyPromptId = null
 
     function providerLabel(provider) {
-      return provider === 'claude' ? 'Claude Code' : 'Codex'
+      if (provider === 'claude') return 'Claude Code'
+      if (provider === 'codex') return 'Codex'
+      if (provider === 'opencode') return 'OpenCode'
+      return 'Agent'
     }
 
     function approvalLabel(prompt) {
@@ -1427,6 +1430,10 @@ function createWindow(): void {
   mainWindow.on('ready-to-show', () => {
     resetPageZoom()
     mainWindow.show()
+    // Auto-open DevTools in dev mode so scroll-debug console logs are visible
+    if (process.env.ELECTRON_RENDERER_URL) {
+      mainWindow.webContents.openDevTools({ mode: 'detach' })
+    }
   })
 
   // Intercept font zoom at the main process level so Electron's page zoom and
@@ -1540,6 +1547,10 @@ app.whenReady().then(() => {
     const stats = ptyPerfStats.get(sessionId)
     if (stats) stats.processPolls += 1
     return ptyProcesses.get(sessionId)?.process ?? null
+  })
+
+  ipcMain.on('debug:log', (_, tag: string, data: unknown) => {
+    console.log(`[renderer:${tag}]`, JSON.stringify(data, null, 0))
   })
 
   ipcMain.handle('perf:getStats', () => {

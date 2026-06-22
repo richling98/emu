@@ -54,6 +54,8 @@ contextBridge.exposeInMainWorld('api', {
   markdownImage: (input: unknown) => ipcRenderer.invoke('markdown:image', input),
   // Save pasted clipboard image data to a temporary file and return its path
   imageSaveTemp: (dataUrl: string, suggestedName?: string) => ipcRenderer.invoke('image:saveTemp', dataUrl, suggestedName),
+  // Debug logging — pipes renderer console to main process stdout
+  debugLog: (tag: string, data: unknown) => ipcRenderer.send('debug:log', tag, data),
   // Dev performance diagnostics
   perfGetStats: () => ipcRenderer.invoke('perf:getStats'),
   // Agent permission approval popup

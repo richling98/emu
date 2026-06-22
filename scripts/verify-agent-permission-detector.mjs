@@ -467,5 +467,29 @@ const explanatoryMenuSnippetFalsePositive = [
   '  3. No ... (esc)'
 ].join('\n')
 assert.equal(new AgentPermissionPromptDetector().append(explanatoryMenuSnippetFalsePositive, context), null)
+assert.equal(
+  new AgentPermissionPromptDetector().append(explanatoryMenuSnippetFalsePositive, {
+    sessionId: 'session-opencode-false-positive',
+    provider: 'opencode',
+    agentSession: true
+  }),
+  null,
+  'opencode fallback should not emit for explanatory menu snippets'
+)
+
+const opencodeProseFalsePositive = [
+  'opencode can ask you to approve a command before it writes a file.',
+  'This paragraph is documentation, not an active approval prompt.',
+  'You can press y or n when a real prompt appears.'
+].join('\n')
+assert.equal(
+  new AgentPermissionPromptDetector().append(opencodeProseFalsePositive, {
+    sessionId: 'session-opencode-prose',
+    provider: 'opencode',
+    agentSession: true
+  }),
+  null,
+  'opencode prose about approvals should not emit'
+)
 
 console.log('agent permission detector fixtures passed')
