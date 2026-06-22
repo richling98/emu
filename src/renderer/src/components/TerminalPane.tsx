@@ -71,6 +71,7 @@ function isEditorProcessName(processName: string | null): boolean {
 
 type InputOwner = 'composer' | 'xterm'
 type RawTuiMode = 'pager' | 'editor' | 'generic'
+type ScrollFollowTrigger = 'auto-follow-snap' | 'button' | 'exit' | 'hidden-replay' | 'manual'
 type DropTarget = 'terminal' | 'composer'
 type TerminalPerfEvent =
   | 'ptyDataEvents'
@@ -523,7 +524,9 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
   const [terminalDropRect, setTerminalDropRect] = useState<DropHighlightRect | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [isAtBottom, setIsAtBottom] = useState(true)
+  const [isAltAgentReviewingHistory, setIsAltAgentReviewingHistory] = useState(false)
   const isAtBottomRef = useRef(true)
+  const isAltAgentReviewingHistoryRef = useRef(false)
   const shouldAutoFollowOutputRef = useRef(true)
   const autoFollowFrameRef = useRef<number | null>(null)
   const autoFollowOutputRenderUntilRef = useRef(0)
@@ -578,6 +581,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
   useEffect(() => { onPerfEventRef.current = onPerfEvent }, [onPerfEvent])
   useEffect(() => { workspaceNameRef.current = workspaceName }, [workspaceName])
   useEffect(() => { isAtBottomRef.current = isAtBottom }, [isAtBottom])
+  useEffect(() => { isAltAgentReviewingHistoryRef.current = isAltAgentReviewingHistory }, [isAltAgentReviewingHistory])
 
   useEffect(() => {
     void window.api.agentPermissionSessionMetadata({
@@ -671,6 +675,36 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     return distanceFromBottom(viewport) < 10
   }
 
+  const debugScrollFollow = (event: string, details: Record<string, unknown> = {}) => {
+    if (!shouldDebugScrollFollow()) return
+    const payload = {
+      sessionId: session.id,
+      event,
+      proc: agentProcessRef.current,
+      agentState: agentStateRef.current,
+      agentSession: agentSessionRef.current,
+      rawTuiMode: rawTuiModeRef.current,
+      isVisible: isVisibleRef.current,
+      isAltScreen: isAltScreenRef.current,
+      isAtBottom: isAtBottomRef.current,
+      shouldAutoFollow: shouldAutoFollowOutputRef.current,
+      followWindowMsLeft: Math.max(0, autoFollowOutputRenderUntilRef.current - Date.now()),
+      scrollAnimActive: scrollToBottomAnimRef.current !== null,
+      ...details
+    }
+    console.debug('[scroll-follow]', payload)
+  }
+
+  const isOpencodeAltScreen = () => {
+    return terminalRef.current?.buffer.active.type === 'alternate' &&
+      (agentProviderRef.current === 'opencode' || getAgentProviderFromProcess(agentProcessRef.current) === 'opencode')
+  }
+
+  const resetAltAgentScrollReview = () => {
+    isAltAgentReviewingHistoryRef.current = false
+    setIsAltAgentReviewingHistory(false)
+  }
+
     const snapTerminalToBottom = (trigger: ScrollFollowTrigger = 'manual') => {
       const terminal = terminalRef.current
       const viewport = getViewportElement()
@@ -724,12 +758,23 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
 
     const handleScrollToBottom = () => {
       const viewport = getViewportElement()
-      if (!viewport) return
 
-    if (scrollToBottomAnimRef.current !== null) {
-      cancelAnimationFrame(scrollToBottomAnimRef.current)
-      scrollToBottomAnimRef.current = null
-    }
+      if (scrollToBottomAnimRef.current !== null) {
+        cancelAnimationFrame(scrollToBottomAnimRef.current)
+        scrollToBottomAnimRef.current = null
+      }
+
+      if (isOpencodeAltScreen()) {
+        window.api.ptyWrite(session.id, '\x1b[6~'.repeat(8))
+        resetAltAgentScrollReview()
+        shouldAutoFollowOutputRef.current = true
+        isAtBottomRef.current = true
+        setIsAtBottom(true)
+        terminalRef.current?.focus()
+        return
+      }
+
+      if (!viewport) return
 
     shouldAutoFollowOutputRef.current = true
     debugScrollFollow('button-scroll-start', { startPos: viewport.scrollTop })
@@ -901,29 +946,6 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       text: string,
       source: 'raw' | 'raw-buffer' | 'write-parsed' | 'followup' | 'watchdog' | 'hidden-replay'
     ) => boolean = () => false
-
-    type ScrollFollowTrigger = 'auto-follow-snap' | 'button' | 'exit' | 'hidden-replay' | 'manual'
-
-    const debugScrollFollow = (event: string, details: Record<string, unknown> = {}) => {
-      if (!shouldDebugScrollFollow()) return
-      const payload = {
-        sessionId: session.id,
-        event,
-        proc: agentProcessRef.current,
-        agentState: agentStateRef.current,
-        agentSession: agentSessionRef.current,
-        rawTuiMode: rawTuiModeRef.current,
-        isVisible: isVisibleRef.current,
-        isAltScreen: isAltScreenRef.current,
-        isAtBottom: isAtBottomRef.current,
-        shouldAutoFollow: shouldAutoFollowOutputRef.current,
-        followWindowMsLeft: Math.max(0, autoFollowOutputRenderUntilRef.current - Date.now()),
-        scrollAnimActive: scrollToBottomAnimRef.current !== null,
-        ...details
-      }
-      console.debug('[scroll-follow]', payload)
-      window.api.debugLog('scroll-follow', payload)
-    }
 
     const replayHiddenOutput = () => {
       if (disposed || !isVisibleRef.current || hiddenOutputReplayFrameRef.current !== null) return
@@ -1324,9 +1346,13 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
 
       const isAgent = isAgentProcessName(proc)
       const previousProcess = agentProcessRef.current
+      const previousProvider = agentProviderRef.current
       agentProcessRef.current = proc
       const detectedProvider = getAgentProviderFromProcess(proc)
       if (detectedProvider) agentProviderRef.current = detectedProvider
+      if (previousProvider === 'opencode' && detectedProvider && detectedProvider !== 'opencode') {
+        resetAltAgentScrollReview()
+      }
       debugScrollFollow('process-refresh', {
         proc,
         previousProcess,
@@ -1391,6 +1417,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       if (newBuffer.type === 'alternate') {
         isAltScreenRef.current = true
         wheelAccumulatorRef.current = 0
+        resetAltAgentScrollReview()
         // Snapshot normal-buffer position — used as the navigation anchor for
         // commands typed inside TUI apps (alt buffer coords are not scrollable).
         altScreenEntryLineRef.current =
@@ -1424,13 +1451,13 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
             entryLine: altScreenEntryLineRef.current
           }
           console.debug('[scroll-follow:alt-screen-enter]', enterPayload)
-          window.api.debugLog('scroll-follow:alt-screen-enter', enterPayload)
         }
       } else {
         const prevAltScreen = isAltScreenRef.current
         isAltScreenRef.current = false
         endRawTuiMode()
         wheelAccumulatorRef.current = 0
+        resetAltAgentScrollReview()
         currentInputRef.current = ''
         promptStartLineRef.current = -1
         promptStartColRef.current = -1
@@ -1449,7 +1476,6 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
             agentSession: agentSessionRef.current
           }
           console.debug('[scroll-follow:alt-screen-exit]', exitPayload)
-          window.api.debugLog('scroll-follow:alt-screen-exit', exitPayload)
         }
 
         // If user was auto-following before alt-screen entry, snap to bottom
@@ -1469,6 +1495,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     const viewportEl = containerRef.current.querySelector('.xterm-viewport') as HTMLElement | null
     const updateScrollState = () => {
       if (!viewportEl) return
+      if (isOpencodeAltScreen() && isAltAgentReviewingHistoryRef.current) return
       // < 10px from bottom counts as "at bottom" to handle sub-pixel rounding
       const atBottom = isViewportAtBottom(viewportEl)
       if (!atBottom && Date.now() < autoFollowOutputRenderUntilRef.current) {
@@ -1509,8 +1536,6 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     // xterm.js's own scroll listener picks them up and re-renders when a full
     // line boundary is crossed — natural deceleration instead of a hard cutoff.
     const handleWheel = (e: WheelEvent) => {
-      e.preventDefault()
-      e.stopPropagation()
       const fontSize = terminal.options.fontSize ?? 14
       const lineHeight = terminal.options.lineHeight ?? 1.0
       const pxPerLine = fontSize * lineHeight
@@ -1518,6 +1543,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       const proc = agentProcessRef.current
       const rawTuiMode = rawTuiModeRef.current
       const scrollingUp = e.deltaY < 0
+      const isOpencode = isAltScreen && (agentProviderRef.current === 'opencode' || getAgentProviderFromProcess(proc) === 'opencode')
       if (Date.now() < rawTuiExitingUntilRef.current) return
 
       if (shouldDebugScrollWheel()) {
@@ -1531,8 +1557,23 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
           accumulator: wheelAccumulatorRef.current
         }
         console.debug('[scroll-wheel]', wheelPayload)
-        window.api.debugLog('scroll-wheel', wheelPayload)
       }
+
+      if (isOpencode) {
+        if (scrollingUp) {
+          autoFollowOutputRenderUntilRef.current = 0
+          shouldAutoFollowOutputRef.current = false
+          isAtBottomRef.current = false
+          isAltAgentReviewingHistoryRef.current = true
+          setIsAtBottom(false)
+          setIsAltAgentReviewingHistory(true)
+          debugScrollFollow('opencode-native-wheel-up', { rawTuiMode, proc, isAltScreen })
+        }
+        return
+      }
+
+      e.preventDefault()
+      e.stopPropagation()
 
       if (scrollingUp) {
         autoFollowOutputRenderUntilRef.current = 0
@@ -1924,7 +1965,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         terminal.write(data, () => {
           if (disposed) return
           detectPermissionPrompt(getPermissionScanText(tailLines), 'write-parsed')
-          if (shouldAutoFollowOutput && shouldAutoFollowOutputRef.current) {
+          if (shouldAutoFollowOutput && shouldAutoFollowOutputRef.current && !isAltAgentReviewingHistoryRef.current) {
             debugScrollFollow('write-callback-snap')
             snapTerminalToBottom('auto-follow-snap')
             scheduleAutoFollowSnap()
@@ -2467,8 +2508,13 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         onPasteImages={addComposerImageFiles}
         onRemoveImage={removeComposerImage}
       />
-      {!isAtBottom && (
-        <button className="scroll-to-bottom-btn" onClick={handleScrollToBottom} title="Scroll to bottom">
+      {(!isAtBottom || isAltAgentReviewingHistory) && (
+        <button
+          className="scroll-to-bottom-btn"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={handleScrollToBottom}
+          title="Scroll to bottom"
+        >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="6 9 12 15 18 9" />
           </svg>

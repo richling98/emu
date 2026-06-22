@@ -148,7 +148,6 @@ interface Window {
     markdownImage: (input: MarkdownOpenInput) => Promise<MarkdownImageResult>
     ptyGetProcess: (sessionId: string) => Promise<string | null>
     imageSaveTemp: (dataUrl: string, suggestedName?: string) => Promise<string>
-    debugLog: (tag: string, data: unknown) => void
     perfGetStats: () => Promise<PerfStatsSnapshot>
     agentPermissionSessionMetadata: (metadata: AgentPermissionSessionMetadata) => Promise<void>
     agentPermissionPromptShow: (prompt: AgentPermissionPrompt) => Promise<void>
