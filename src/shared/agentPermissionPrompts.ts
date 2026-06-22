@@ -19,6 +19,22 @@ export interface AgentPermissionPrompt {
   denyAction: PtyWriteChunk[]
 }
 
+export type AgentPermissionMissReason =
+  | 'no_permission_shape'
+  | 'provider_mis_inference'
+  | 'no_subject'
+  | 'missing_approve_choice'
+  | 'missing_deny_choice'
+  | 'missing_wait_hint'
+  | 'parser_rejected'
+
+export interface AgentPermissionMissDiagnostic {
+  reason: AgentPermissionMissReason
+  snapshot: string
+  providerHint: AgentPermissionProvider | null
+  inferredProvider: AgentPermissionProvider | null
+}
+
 interface DetectionContext {
   sessionId: string
   provider: AgentPermissionProvider | null
@@ -105,6 +121,10 @@ function logicalPromptLines(lines: string[]): string[] {
   return logicalLines
 }
 
+function normalizedLogicalPromptLines(text: string): string[] {
+  return logicalPromptLines(snapshotLines(text))
+}
+
 function extractCodexPromptBlock(lines: string[]): string[] | null {
   let start = -1
   for (let index = lines.length - 1; index >= 0; index--) {
@@ -128,7 +148,7 @@ function extractCodexPromptBlock(lines: string[]): string[] | null {
 }
 
 function isWaitHintLine(line: string): boolean {
-  return /press enter to confirm|enter to submit|esc to cancel/i.test(normalizeLine(line))
+  return /press enter to confirm|enter (?:to )?(?:submit|confirm)|esc (?:to )?(?:cancel|dismiss)|esc dismiss|↵ select/i.test(normalizeLine(line))
 }
 
 function isSelectedChoiceLine(line: string): boolean {
@@ -527,6 +547,105 @@ function parseGenericAgentPermissionPrompt(text: string, provider: AgentPermissi
   }
 }
 
+function isOpencodeApproveButton(line: string): boolean {
+  return /\ballow (?:once|always)\b/i.test(normalizeLine(line))
+}
+
+function isOpencodeDenyButton(line: string): boolean {
+  return /\b(?:deny|reject)\b/i.test(normalizeLine(line))
+}
+
+function isOpencodeProceedChoice(line: string): boolean {
+  return /^proceed\b/i.test(choiceText(line))
+}
+
+function isOpencodeQuestionPrompt(line: string): boolean {
+  return /^can i use\b.+\?$/i.test(normalizeLine(line))
+}
+
+function isOpencodePermissionSubject(line: string): boolean {
+  if (isOpencodeQuestionPrompt(line)) return true
+  return /^(shell|bash|edit|write|read|web fetch|web search|task|skill|tool)\b/i.test(normalizeLine(line)) ||
+    /^#\s+\S+/.test(normalizeLine(line)) ||
+    /^\$\s+\S+/.test(normalizeLine(line)) ||
+    /\b(requested|command|tool|file|edit|write|shell|bash)\b/i.test(normalizeLine(line))
+}
+
+function isOpencodePromptStart(line: string): boolean {
+  const normalized = normalizeLine(line)
+  return /^[^\w$#]*permission required\b/i.test(normalized) || isOpencodeQuestionPrompt(normalized)
+}
+
+function isOpencodePermissionHeading(line: string): boolean {
+  return /^[^\w$#]*permission required\b/i.test(normalizeLine(line))
+}
+
+function hasOpencodeWaitEvidence(block: string[]): boolean {
+  return block.some(isWaitHintLine) || block.some(isSelectedChoiceLine)
+}
+
+function hasOpencodePromptShape(lines: string[]): boolean {
+  const hasStart = lines.some(isOpencodePromptStart)
+  const hasApprove = lines.some((line) => isOpencodeApproveButton(line) || (isMenuChoiceLine(line) && isOpencodeProceedChoice(line)))
+  const hasReject = lines.some(isOpencodeDenyButton)
+  const hasQuestion = lines.some(isOpencodeQuestionPrompt)
+  return hasApprove && (hasReject || hasQuestion) && (hasStart || lines.some(isOpencodePermissionSubject))
+}
+
+function opencodeSummaryFromBlock(block: string[]): string {
+  const normalized = block.map(normalizeLine).filter(Boolean)
+  const command = normalized.find((line) => /^\$\s+\S+/.test(line))
+  if (command) return `Run: ${command.replace(/^\$\s+/, '')}`.slice(0, 150)
+
+  const subject = normalized.find((line) =>
+    !isOpencodeApproveButton(line) &&
+    !isOpencodeDenyButton(line) &&
+    isOpencodePermissionSubject(line)
+  )
+  return (subject ?? 'Approval needed').slice(0, 150)
+}
+
+function parseOpencodePermissionPrompt(text: string): ParsedPermissionPrompt | null {
+  const lines = normalizedLogicalPromptLines(text)
+  let approveIndex = -1
+  let denyIndex = -1
+  let proceedIndex = -1
+
+  for (let index = lines.length - 1; index >= 0; index--) {
+    if (approveIndex === -1 && isOpencodeApproveButton(lines[index])) approveIndex = index
+    if (denyIndex === -1 && isOpencodeDenyButton(lines[index])) denyIndex = index
+    if (proceedIndex === -1 && isMenuChoiceLine(lines[index]) && isOpencodeProceedChoice(lines[index])) proceedIndex = index
+  }
+  const hasButtonPrompt = approveIndex !== -1 && denyIndex !== -1
+  const hasQuestionPrompt = proceedIndex !== -1 && lines.some(isOpencodeQuestionPrompt) && lines.some(isWaitHintLine)
+  if (!hasButtonPrompt && !hasQuestionPrompt) return null
+
+  const anchor = hasButtonPrompt ? Math.min(approveIndex, denyIndex) : proceedIndex
+  const start = Math.max(0, anchor - 8)
+  const block = lines.slice(start)
+  if (!block.some(isOpencodePermissionSubject)) return null
+  if (!hasOpencodeWaitEvidence(block)) return null
+
+  const normalized = block.map(normalizeLine).filter(Boolean)
+  const rawExcerpt = normalized.join('\n').slice(0, MAX_EXCERPT_CHARS)
+  const fingerprintSource = normalized
+    .filter((line) => !isOpencodePermissionHeading(line) && !isOpencodeApproveButton(line) && !isOpencodeDenyButton(line) && !isWaitHintLine(line))
+    .join('\n')
+
+  return {
+    provider: 'opencode',
+    summary: opencodeSummaryFromBlock(block),
+    detail: normalized
+      .filter((line) => !isOpencodePermissionHeading(line) && !isOpencodeApproveButton(line) && !isOpencodeDenyButton(line) && !isWaitHintLine(line))
+      .join('\n')
+      .slice(0, 220),
+    rawExcerpt,
+    fingerprint: `opencode:approval:${stableToken(fingerprintSource).slice(0, MAX_FINGERPRINT_CHARS)}`,
+    approveAction: hasQuestionPrompt ? menuActionForChoice([{ kind: 'approve', selected: true, hotkey: null }], 'approve') : [{ data: '\r' }],
+    denyAction: [{ data: '\x1b' }]
+  }
+}
+
 export function isAgentProcessName(processName: string | null): boolean {
   if (!processName) return false
   const normalized = processName.toLowerCase().replace(/\\/g, '/').split('/').pop()?.replace(/^-/, '') ?? ''
@@ -571,6 +690,17 @@ export function getAgentProviderFromCommand(command: string): AgentPermissionPro
 
 export function inferProviderFromText(text: string): AgentPermissionProvider | null {
   const normalized = text.toLowerCase()
+  const lines = normalizedLogicalPromptLines(text)
+  if (hasOpencodePromptShape(lines) ||
+    /\bopencode\b/.test(normalized) ||
+    /\ballow\s+(?:once|always)\b/i.test(text) ||
+    /\b(?:deny|reject)\b/i.test(text) && /\ballow\s+(?:once|always)\b/i.test(text) ||
+    /can i use\b.+\?/i.test(text) ||
+    /\bapprove\b.*\b(?:command|tool|bash|shell|action|write|file)\b/i.test(text) ||
+    /allow\s+(?:bash|shell|tool|command|action)\b/i.test(text) ||
+    /\byou can press\b.*\b(?:enter|space|y|n)\b/i.test(text)) {
+    return 'opencode'
+  }
   if (/\bcodex\b/.test(normalized) ||
     /would you like to run the following command\?/i.test(text) ||
     /allow\s+.+?\s+to\s+(?:run|call|use)\s+tool\s+["“][^"”]+["”]\??/i.test(text) ||
@@ -583,40 +713,65 @@ export function inferProviderFromText(text: string): AgentPermissionProvider | n
     /\bbash\s*\(\s*command:/i.test(text)) {
     return 'claude'
   }
-  if (/\bopencode\b/.test(normalized) ||
-    /\bapprove\b.*\b(?:command|tool|bash|shell|action|write|file)\b/i.test(text) ||
-    /allow\s+(?:bash|shell|tool|command|action)\b/i.test(text) ||
-    /\byou can press\b.*\b(?:enter|space|y|n)\b/i.test(text)) {
-    return 'opencode'
-  }
   return null
 }
 
 function detectSnapshot(text: string, providerHint: AgentPermissionProvider | null): ParsedPermissionPrompt | null {
+  const opencodeParsed = parseOpencodePermissionPrompt(text)
+  if (opencodeParsed) return opencodeParsed
+  if (providerHint === 'opencode') return parseOpencodePermissionPrompt(text) ?? parseCodexPermissionPrompt(text) ?? parseClaudePermissionPrompt(text, false)
   const inferredProvider = inferProviderFromText(text)
   if (inferredProvider === 'codex') return parseCodexPermissionPrompt(text) ?? parseClaudePermissionPrompt(text, false)
   if (inferredProvider === 'claude') return parseClaudePermissionPrompt(text, true) ?? parseCodexPermissionPrompt(text)
-  if (inferredProvider === 'opencode') return parseGenericAgentPermissionPrompt(text, 'opencode') ?? parseCodexPermissionPrompt(text) ?? parseClaudePermissionPrompt(text, false)
+  if (inferredProvider === 'opencode') return parseOpencodePermissionPrompt(text) ?? parseCodexPermissionPrompt(text) ?? parseClaudePermissionPrompt(text, false)
   if (providerHint === 'codex') return parseCodexPermissionPrompt(text) ?? parseClaudePermissionPrompt(text, false) ?? parseGenericAgentPermissionPrompt(text, 'codex')
   if (providerHint === 'claude') return parseClaudePermissionPrompt(text, true) ?? parseCodexPermissionPrompt(text) ?? parseGenericAgentPermissionPrompt(text, 'claude')
-  if (providerHint === 'opencode') return parseGenericAgentPermissionPrompt(text, 'opencode') ?? parseCodexPermissionPrompt(text) ?? parseClaudePermissionPrompt(text, false)
   return parseCodexPermissionPrompt(text) ?? parseClaudePermissionPrompt(text, false) ?? parseGenericAgentPermissionPrompt(text, 'codex')
 }
 
 export function agentPermissionMissSnapshot(text: string, providerHint: AgentPermissionProvider | null): string | null {
+  return agentPermissionMissDiagnostic(text, providerHint)?.snapshot ?? null
+}
+
+function opencodeMissReason(lines: string[], providerHint: AgentPermissionProvider | null, inferredProvider: AgentPermissionProvider | null): AgentPermissionMissReason | null {
+  const hasOpencodeSignal = providerHint === 'opencode' || inferredProvider === 'opencode' || hasOpencodePromptShape(lines) || lines.some(isOpencodePromptStart)
+  if (!hasOpencodeSignal) return null
+
+  const hasSubject = lines.some(isOpencodePermissionSubject)
+  const hasApprove = lines.some((line) => isOpencodeApproveButton(line) || (isMenuChoiceLine(line) && isOpencodeProceedChoice(line)))
+  const hasDeny = lines.some(isOpencodeDenyButton)
+  const hasQuestion = lines.some(isOpencodeQuestionPrompt)
+  const hasWait = hasOpencodeWaitEvidence(lines)
+
+  if (!hasSubject) return 'no_subject'
+  if (!hasApprove) return 'missing_approve_choice'
+  if (!hasDeny && !hasQuestion) return 'missing_deny_choice'
+  if (!hasWait) return 'missing_wait_hint'
+  if (providerHint && inferredProvider && providerHint !== inferredProvider) return 'provider_mis_inference'
+  return 'parser_rejected'
+}
+
+export function agentPermissionMissDiagnostic(text: string, providerHint: AgentPermissionProvider | null): AgentPermissionMissDiagnostic | null {
   if (detectSnapshot(text, providerHint)) return null
 
-  const lines = logicalPromptLines(snapshotLines(text))
+  const lines = normalizedLogicalPromptLines(text)
   const normalized = lines.map(normalizeLine).filter(Boolean)
   const joined = normalized.join('\n')
   const choiceCount = lines.filter(isMenuChoiceLine).length
-  const hasMenuShape = choiceCount >= 2 || normalized.some((line) => isWaitHintLine(line))
+  const hasOpencodeButtonShape = lines.some(isOpencodeApproveButton) || lines.some(isOpencodeDenyButton) || lines.some(isOpencodePromptStart)
+  const hasMenuShape = choiceCount >= 2 || normalized.some((line) => isWaitHintLine(line)) || hasOpencodeButtonShape
+  const inferredProvider = inferProviderFromText(text)
   const hasPermissionSignal = Boolean(providerHint) ||
-    Boolean(inferProviderFromText(text)) ||
+    Boolean(inferredProvider) ||
     /\b(permission|approval|approve|allow|proceed|command|tool|skill|bash|shell|cancel)\b/i.test(joined)
 
   if (!hasMenuShape || !hasPermissionSignal) return null
-  return joined.slice(-MAX_EXCERPT_CHARS)
+  return {
+    reason: opencodeMissReason(lines, providerHint, inferredProvider) ?? 'parser_rejected',
+    snapshot: joined.slice(-MAX_EXCERPT_CHARS),
+    providerHint,
+    inferredProvider
+  }
 }
 
 export class AgentPermissionPromptDetector {
@@ -654,7 +809,9 @@ export class AgentPermissionPromptDetector {
 export const __agentPermissionPromptTest = {
   parseCodexPermissionPrompt,
   parseClaudePermissionPrompt,
+  parseOpencodePermissionPrompt,
   normalizeTerminalText,
   logicalPromptLines,
-  agentPermissionMissSnapshot
+  agentPermissionMissSnapshot,
+  agentPermissionMissDiagnostic
 }

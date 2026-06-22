@@ -6,6 +6,8 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import type { AgentState, TerminalTab } from '../App'
 import {
   AgentPermissionPromptDetector,
+  agentPermissionMissDiagnostic,
+  agentPermissionMissSnapshot,
   getAgentProviderFromCommand,
   getAgentProviderFromProcess,
   isAgentLaunchCommand,
@@ -1850,15 +1852,22 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         agentSession: context.agentSession
       })
       if (shouldDebugAgentPermission()) {
+        const missDiagnostic = permissionPrompt ? null : agentPermissionMissDiagnostic(text, context.provider)
         console.debug('[agent-permission:detect]', {
           sessionId: session.id,
           source,
           provider: context.provider,
+          inferredProvider: missDiagnostic?.inferredProvider ?? null,
           agentSession: context.agentSession,
           altScreen: isAltScreenRef.current,
           rawTuiMode: rawTuiModeRef.current,
           matched: Boolean(permissionPrompt),
+          parsedProvider: permissionPrompt?.provider ?? null,
+          opencodeMatched: permissionPrompt?.provider === 'opencode',
           summary: permissionPrompt?.summary ?? null,
+          missReason: missDiagnostic?.reason ?? null,
+          missSnapshot: permissionPrompt ? null : missDiagnostic?.snapshot ?? agentPermissionMissSnapshot(text, context.provider),
+          overlayIpcSent: Boolean(permissionPrompt),
           textTail: text.slice(-2_000)
         })
       }

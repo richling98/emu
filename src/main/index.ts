@@ -8,6 +8,7 @@ import os from 'os'
 import { fileURLToPath } from 'url'
 import {
   AgentPermissionPromptDetector,
+  agentPermissionMissDiagnostic,
   agentPermissionMissSnapshot,
   getAgentProviderFromCommand,
   getAgentProviderFromProcess,
@@ -198,12 +199,13 @@ function redactAgentPermissionMissSnapshot(text: string): string {
 
 function logAgentPermissionMiss(sessionId: string, state: AgentPermissionSessionState): void {
   if (!DEBUG_AGENT_PERMISSION) return
-  const snapshot = agentPermissionMissSnapshot(state.rawTail, state.provider)
+  const diagnostic = agentPermissionMissDiagnostic(state.rawTail, state.provider)
+  const snapshot = diagnostic?.snapshot ?? agentPermissionMissSnapshot(state.rawTail, state.provider)
   if (!snapshot || snapshot === state.lastMissSnapshot) return
 
   state.lastMissSnapshot = snapshot
   const entry = [
-    `[${new Date().toISOString()}] session=${sessionId} provider=${state.provider ?? 'unknown'}`,
+    `[${new Date().toISOString()}] session=${sessionId} provider=${state.provider ?? 'unknown'} inferred=${diagnostic?.inferredProvider ?? 'unknown'} reason=${diagnostic?.reason ?? 'unknown'}`,
     redactAgentPermissionMissSnapshot(snapshot),
     ''
   ].join('\n')
@@ -278,8 +280,13 @@ function scanAgentPermissionPtyOutput(sessionId: string, data: string, processNa
   debugAgentPermission('main-pty-scan', {
     sessionId,
     provider: state.provider,
+    providerFromProcess,
+    providerFromText,
     agentSession: state.agentSession,
     matched: Boolean(prompt),
+    parsedProvider: prompt?.provider ?? null,
+    queued: Boolean(prompt),
+    suppressionReason: prompt ? null : agentPermissionMissDiagnostic(state.rawTail, state.provider)?.reason ?? 'no_prompt_match',
     fingerprint: prompt?.fingerprint ?? null,
     summary: prompt?.summary ?? null,
     textTail: state.rawTail.slice(-2_000)

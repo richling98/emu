@@ -492,4 +492,230 @@ assert.equal(
   'opencode prose about approvals should not emit'
 )
 
+const opencodeButtonPrompt = [
+  'Shell',
+  '$ npm run dev',
+  '',
+  'Deny',
+  'Allow Always',
+  'Allow Once',
+  '',
+  'enter confirm   esc dismiss'
+].join('\n')
+const parsedOpencodeButtonPrompt = new AgentPermissionPromptDetector().append(opencodeButtonPrompt, {
+  sessionId: 'session-opencode-buttons',
+  provider: 'opencode',
+  agentSession: true
+})
+assert(parsedOpencodeButtonPrompt, 'opencode button prompt should parse')
+assert.equal(parsedOpencodeButtonPrompt.provider, 'opencode')
+assert.equal(parsedOpencodeButtonPrompt.summary, 'Run: npm run dev')
+assert.equal(parsedOpencodeButtonPrompt.fingerprint, 'opencode:approval:shell $ npm run dev')
+assert.deepEqual(parsedOpencodeButtonPrompt.approveAction, [{ data: '\r' }])
+assert.deepEqual(parsedOpencodeButtonPrompt.denyAction, [{ data: '\x1b' }])
+
+const opencodeButtonPromptNoWaitHint = [
+  'Shell',
+  '$ npm run dev',
+  '',
+  'Deny',
+  'Allow Always',
+  'Allow Once'
+].join('\n')
+assert.equal(
+  new AgentPermissionPromptDetector().append(opencodeButtonPromptNoWaitHint, {
+    sessionId: 'session-opencode-buttons-no-wait',
+    provider: 'opencode',
+    agentSession: true
+  }),
+  null,
+  'opencode button snippets without wait evidence should not parse'
+)
+const opencodeNoWaitDiagnostic = __agentPermissionPromptTest.agentPermissionMissDiagnostic(opencodeButtonPromptNoWaitHint, 'opencode')
+assert(opencodeNoWaitDiagnostic, 'opencode button misses should include diagnostics')
+assert.equal(opencodeNoWaitDiagnostic.reason, 'missing_wait_hint')
+
+const opencodeQuestionPrompt = [
+  'Can I use file reads/searches and non-destructive Git commands to find the repo, inspect the project, and update the README accurately?',
+  '',
+  '1. Proceed',
+  '   Use reads/searches and safe git commands for README work.',
+  '2. Ask each step',
+  '   Ask before each individual read/search/command.',
+  '3. Type your own answer',
+  '',
+  '↑↓ select   enter submit   esc dismiss'
+].join('\n')
+const parsedOpencodeQuestionPrompt = new AgentPermissionPromptDetector().append(opencodeQuestionPrompt, {
+  sessionId: 'session-opencode-question',
+  provider: 'opencode',
+  agentSession: true
+})
+assert(parsedOpencodeQuestionPrompt, 'opencode question prompt should parse')
+assert.equal(parsedOpencodeQuestionPrompt.provider, 'opencode')
+assert.equal(
+  parsedOpencodeQuestionPrompt.summary,
+  'Can I use file reads/searches and non-destructive Git commands to find the repo, inspect the project, and update the README accurately?'
+)
+assert.deepEqual(parsedOpencodeQuestionPrompt.approveAction, [{ data: '\r' }])
+assert.deepEqual(parsedOpencodeQuestionPrompt.denyAction, [{ data: '\x1b' }])
+assert(parsedOpencodeQuestionPrompt.fingerprint.startsWith('opencode:approval:can i use file reads/searches'))
+
+const opencodePermissionRequiredPrompt = [
+  '△ Permission required',
+  '# Check if browse binary exists',
+  '',
+  '$ if test -x ~/.claude/skills/gstack/browse/dist/browse; then echo "READY_USER"; else echo "NEEDS_SETUP"; fi',
+  '',
+  'Allow once   Allow always   Reject',
+  'ctrl+f fullscreen  ↵ select  enter confirm'
+].join('\n')
+const parsedOpencodePermissionRequiredPrompt = new AgentPermissionPromptDetector().append(opencodePermissionRequiredPrompt, {
+  sessionId: 'session-opencode-permission-required',
+  provider: 'opencode',
+  agentSession: true
+})
+assert(parsedOpencodePermissionRequiredPrompt, 'opencode permission-required prompt should parse')
+assert.equal(parsedOpencodePermissionRequiredPrompt.provider, 'opencode')
+assert.equal(
+  parsedOpencodePermissionRequiredPrompt.summary,
+  'Run: if test -x ~/.claude/skills/gstack/browse/dist/browse; then echo "READY_USER"; else echo "NEEDS_SETUP"; fi'
+)
+assert.deepEqual(parsedOpencodePermissionRequiredPrompt.approveAction, [{ data: '\r' }])
+assert.deepEqual(parsedOpencodePermissionRequiredPrompt.denyAction, [{ data: '\x1b' }])
+
+const opencodeHeadingOnlyRepaint = [
+  '△ Permission required',
+  '',
+  'Allow once   Allow always   Reject',
+  'ctrl+f fullscreen  ↵ select  enter confirm'
+].join('\n')
+assert.equal(
+  new AgentPermissionPromptDetector().append(opencodeHeadingOnlyRepaint, {
+    sessionId: 'session-opencode-heading-only',
+    provider: 'opencode',
+    agentSession: true
+  }),
+  null,
+  'opencode heading/buttons repaint without a subject should not parse'
+)
+const opencodeHeadingOnlyDiagnostic = __agentPermissionPromptTest.agentPermissionMissDiagnostic(opencodeHeadingOnlyRepaint, 'opencode')
+assert(opencodeHeadingOnlyDiagnostic, 'opencode heading-only misses should include diagnostics')
+assert.equal(opencodeHeadingOnlyDiagnostic.reason, 'no_subject')
+
+const opencodeDescriptionOnlyRepaint = [
+  '△ Permission required',
+  '# Check if browse binary exists',
+  '',
+  'Allow once   Allow always   Reject',
+  'ctrl+f fullscreen  ↵ select  enter confirm'
+].join('\n')
+const parsedOpencodeDescriptionOnlyRepaint = new AgentPermissionPromptDetector().append(opencodeDescriptionOnlyRepaint, {
+  sessionId: 'session-opencode-description-only',
+  provider: 'opencode',
+  agentSession: true
+})
+assert(parsedOpencodeDescriptionOnlyRepaint, 'opencode description/buttons repaint should parse even when command body is off-screen')
+assert.equal(parsedOpencodeDescriptionOnlyRepaint.summary, '# Check if browse binary exists')
+assert.equal(parsedOpencodeDescriptionOnlyRepaint.fingerprint, 'opencode:approval:# check if browse binary exists')
+
+const chainedOpencodeDetector = new AgentPermissionPromptDetector()
+const firstChainedOpencode = chainedOpencodeDetector.append(opencodePermissionRequiredPrompt, {
+  sessionId: 'session-opencode-chained',
+  provider: 'opencode',
+  agentSession: true
+})
+const secondChainedOpencodePrompt = opencodePermissionRequiredPrompt
+  .replace('# Check if browse binary exists', '# List browse skill directory')
+  .replace('if test -x ~/.claude/skills/gstack/browse/dist/browse; then echo "READY_USER"; else echo "NEEDS_SETUP"; fi', 'ls ~/.claude/skills/gstack/browse')
+const secondChainedOpencode = chainedOpencodeDetector.append(secondChainedOpencodePrompt, {
+  sessionId: 'session-opencode-chained',
+  provider: 'opencode',
+  agentSession: true
+})
+assert(firstChainedOpencode, 'first chained opencode prompt should emit')
+assert(secondChainedOpencode, 'second chained opencode prompt with a new subject should emit')
+assert.notEqual(firstChainedOpencode.fingerprint, secondChainedOpencode.fingerprint)
+
+const parsedOpencodePermissionRequiredPromptAgain = new AgentPermissionPromptDetector().append(opencodePermissionRequiredPrompt, {
+  sessionId: 'session-opencode-permission-required-stability',
+  provider: 'opencode',
+  agentSession: true
+})
+assert.equal(
+  parsedOpencodePermissionRequiredPromptAgain?.fingerprint,
+  parsedOpencodePermissionRequiredPrompt.fingerprint,
+  'opencode permission-required fingerprint should be stable'
+)
+
+const parsedOpencodePermissionRequiredWithoutProvider = new AgentPermissionPromptDetector().append(opencodePermissionRequiredPrompt, {
+  sessionId: 'session-opencode-permission-required-no-provider',
+  provider: null,
+  agentSession: true
+})
+assert(parsedOpencodePermissionRequiredWithoutProvider, 'opencode permission-required prompt should parse without provider hint')
+assert.equal(parsedOpencodePermissionRequiredWithoutProvider.provider, 'opencode')
+
+const parsedOpencodePermissionRequiredWithClaudeHint = new AgentPermissionPromptDetector().append(opencodePermissionRequiredPrompt, {
+  sessionId: 'session-opencode-permission-required-claude-hint',
+  provider: 'claude',
+  agentSession: true
+})
+assert(parsedOpencodePermissionRequiredWithClaudeHint, 'opencode prompt with .claude command body should beat stale Claude hint')
+assert.equal(parsedOpencodePermissionRequiredWithClaudeHint.provider, 'opencode')
+
+const opencodePermissionRequiredMultilineCommandPrompt = [
+  '△ Permission required',
+  '# Navigate to TechCrunch startups page',
+  '',
+  '$ B=~/.claude/skills/gstack/browse/dist/browse',
+  '$B goto https://techcrunch.com/category/startups/',
+  '',
+  'Allow once   Allow always   Reject',
+  'ctrl+f fullscreen  ↵ select  enter confirm'
+].join('\n')
+const parsedOpencodePermissionRequiredMultilineCommandPrompt = new AgentPermissionPromptDetector().append(opencodePermissionRequiredMultilineCommandPrompt, {
+  sessionId: 'session-opencode-permission-required-multiline',
+  provider: 'opencode',
+  agentSession: true
+})
+assert(parsedOpencodePermissionRequiredMultilineCommandPrompt, 'opencode permission-required multiline command prompt should parse')
+assert.equal(parsedOpencodePermissionRequiredMultilineCommandPrompt.summary, 'Run: B=~/.claude/skills/gstack/browse/dist/browse')
+
+const opencodeWrappedButtonPrompt = [
+  '△ Permission required',
+  '# Check if browse binary exists',
+  '',
+  '$ if test -x ~/.claude/skills/gstack/browse/dist/browse; then echo "READY_USER"; else echo "NEEDS_SETUP"; fi',
+  '',
+  'Allow once',
+  'Allow always',
+  'Reject',
+  'ctrl+f fullscreen  ↵ select  enter confirm'
+].join('\n')
+const parsedOpencodeWrappedButtonPrompt = new AgentPermissionPromptDetector().append(opencodeWrappedButtonPrompt, {
+  sessionId: 'session-opencode-wrapped-buttons',
+  provider: null,
+  agentSession: true
+})
+assert(parsedOpencodeWrappedButtonPrompt, 'opencode permission-required prompt with split button rows should parse')
+assert.equal(parsedOpencodeWrappedButtonPrompt.provider, 'opencode')
+assert.deepEqual(parsedOpencodeWrappedButtonPrompt.approveAction, [{ data: '\r' }])
+assert.deepEqual(parsedOpencodeWrappedButtonPrompt.denyAction, [{ data: '\x1b' }])
+
+const opencodePermissionRequiredProseFalsePositive = [
+  'The documentation says Permission required appears before command execution.',
+  'Users may see Allow once, Allow always, and Reject buttons.',
+  'This is explanatory prose and has no active wait footer.'
+].join('\n')
+assert.equal(
+  new AgentPermissionPromptDetector().append(opencodePermissionRequiredProseFalsePositive, {
+    sessionId: 'session-opencode-permission-prose',
+    provider: 'opencode',
+    agentSession: true
+  }),
+  null,
+  'opencode prose mentioning real buttons should not emit without wait evidence'
+)
+
 console.log('agent permission detector fixtures passed')
