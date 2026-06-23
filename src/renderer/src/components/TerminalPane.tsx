@@ -29,7 +29,9 @@ import '@xterm/xterm/css/xterm.css'
 import './TerminalPane.css'
 
 const DEFAULT_FONT_SIZE = 13
-const AGENT_IDLE_CHECK_DELAY_MS = 900
+const AGENT_BUSY_ACTIVITY_GRACE_MS = 15_000
+const AGENT_BUSY_SCREEN_CHECK_MS = 1_000
+const AGENT_BUSY_MAX_WITHOUT_EVIDENCE_MS = 2 * 60 * 1000
 const AGENT_PROCESS_POLL_MS = 4_000
 const HIDDEN_AGENT_PROCESS_POLL_MS = 16_000
 const AGENT_SUBMIT_SINGLE_LINE_SETTLE_MS = 180
@@ -263,6 +265,30 @@ function looksLikeAgentActiveTail(text: string): boolean {
   ].some((pattern) => pattern.test(normalized))
 }
 
+function looksLikeAgentBusy(text: string): boolean {
+  const normalized = text
+    .split('\n')
+    .slice(-12)
+    .map((line) => line.replace(/\s+/g, ' ').trim().toLowerCase())
+    .join('\n')
+
+  return [
+    /\bthinking\b/,
+    /\bworking\b/,
+    /\brunning\b/,
+    /\bexecuting\b/,
+    /\bcalling\b/,
+    /\bsearching\b/,
+    /\breading\b/,
+    /\bwriting\b/,
+    /\bediting\b/,
+    /\besc(?:ape)? to interrupt\b/,
+    /\bctrl-c to interrupt\b/,
+    /\bpress esc to interrupt\b/,
+    /\btool\b.*\b(use|call|running|executing)\b/
+  ].some((pattern) => pattern.test(normalized))
+}
+
 // Strip ANSI escape sequences — used only for the one-line outputPreview capture.
 // Full output (outputFull) is read from xterm.js's rendered buffer, not raw bytes.
 function stripAnsi(str: string): string {
@@ -479,9 +505,11 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
   const agentProcessRef = useRef<string | null>(null)
   const agentProviderRef = useRef<AgentPermissionProvider | null>(getAgentProviderFromProcess(session.foregroundProcess))
   const agentSessionRef = useRef(false)
-  const agentTaskInFlightRef = useRef(false)
   const agentTaskStartedAtRef = useRef(0)
-  const agentIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const agentLastBusyEvidenceAtRef = useRef(0)
+  const agentLastOutputAtRef = useRef(0)
+  const agentBusyCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const agentShellPollStreakRef = useRef(0)
   const agentProcessPollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const agentPermissionDetectorRef = useRef(new AgentPermissionPromptDetector())
   const agentPermissionRawBufferRef = useRef('')
@@ -1029,11 +1057,18 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       console.debug('[rich-submit]', event, { sessionId: session.id, ...details })
     }
 
-    const clearAgentIdleTimer = () => {
-      if (agentIdleTimerRef.current) {
-        clearTimeout(agentIdleTimerRef.current)
-        agentIdleTimerRef.current = null
+    let runAgentBusyCheck: () => void = () => {}
+
+    const clearAgentBusyCheckTimer = () => {
+      if (agentBusyCheckTimerRef.current) {
+        clearTimeout(agentBusyCheckTimerRef.current)
+        agentBusyCheckTimerRef.current = null
       }
+    }
+
+    const ensureAgentBusyCheckTimer = () => {
+      if (disposed || agentBusyCheckTimerRef.current) return
+      agentBusyCheckTimerRef.current = window.setTimeout(runAgentBusyCheck, AGENT_BUSY_SCREEN_CHECK_MS)
     }
 
     const clearComposerSubmitTimers = () => {
@@ -1184,29 +1219,57 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     }
 
     const markAgentIdle = (foregroundProcess: string | null = agentProcessRef.current) => {
-      clearAgentIdleTimer()
-      agentTaskInFlightRef.current = false
+      clearAgentBusyCheckTimer()
       agentTaskStartedAtRef.current = 0
+      agentLastBusyEvidenceAtRef.current = 0
+      agentLastOutputAtRef.current = 0
       if (!agentSessionRef.current && !isAgentProcessName(foregroundProcess)) return
       setAgentState('idle', foregroundProcess)
     }
 
     const markAgentRunning = (foregroundProcess: string | null = agentProcessRef.current) => {
+      const now = Date.now()
       agentSessionRef.current = true
-      agentTaskInFlightRef.current = true
-      agentTaskStartedAtRef.current = Date.now()
+      agentTaskStartedAtRef.current = now
+      agentLastBusyEvidenceAtRef.current = now
+      agentLastOutputAtRef.current = now
       debugScrollFollow('agent-running', { foregroundProcess })
       setAgentState('running', foregroundProcess)
-      clearAgentIdleTimer()
+      ensureAgentBusyCheckTimer()
     }
 
     const clearAgentSession = (foregroundProcess: string | null = agentProcessRef.current) => {
-      clearAgentIdleTimer()
+      clearAgentBusyCheckTimer()
       agentSessionRef.current = false
-      agentTaskInFlightRef.current = false
       agentTaskStartedAtRef.current = 0
+      agentLastBusyEvidenceAtRef.current = 0
+      agentLastOutputAtRef.current = 0
+      agentShellPollStreakRef.current = 0
       debugScrollFollow('agent-cleared', { foregroundProcess })
       setAgentState('none', foregroundProcess)
+    }
+
+    runAgentBusyCheck = () => {
+      agentBusyCheckTimerRef.current = null
+      if (disposed || agentStateRef.current !== 'running') return
+
+      const now = Date.now()
+      const hasBusyText = looksLikeAgentBusy(getTerminalTailText(terminal, 16))
+      const lastOutputOrStartAt = Math.max(agentLastOutputAtRef.current, agentTaskStartedAtRef.current)
+      // Busy text helps during quiet thinking, but stale text cannot hold yellow forever.
+      const busyTextStillFresh = now - lastOutputOrStartAt < AGENT_BUSY_MAX_WITHOUT_EVIDENCE_MS
+      if (hasBusyText && busyTextStillFresh) {
+        agentLastBusyEvidenceAtRef.current = now
+      }
+
+      const noEvidenceForMs = now - agentLastBusyEvidenceAtRef.current
+      if (noEvidenceForMs >= AGENT_BUSY_ACTIVITY_GRACE_MS) {
+        recordPerfEvent('agentIdleChecks')
+        markAgentIdle(agentProcessRef.current)
+        return
+      }
+
+      ensureAgentBusyCheckTimer()
     }
 
     const recordCommittedCommand = (rawCommand: string) => {
@@ -1328,19 +1391,6 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       })
     }
 
-    const scheduleAgentIdleCheck = () => {
-      if (!agentTaskInFlightRef.current) return
-      clearAgentIdleTimer()
-      agentIdleTimerRef.current = setTimeout(() => {
-        agentIdleTimerRef.current = null
-        if (!agentTaskInFlightRef.current) return
-        recordPerfEvent('agentIdleChecks')
-        if (looksLikeAgentIdlePrompt(getTerminalTailText(terminal))) {
-          markAgentIdle(agentProcessRef.current)
-        }
-      }, AGENT_IDLE_CHECK_DELAY_MS)
-    }
-
     const refreshAgentProcess = async () => {
       recordPerfEvent('processPolls')
       const proc = await window.api.ptyGetProcess(session.id)
@@ -1375,21 +1425,29 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
 
       if (isAgent) {
         agentSessionRef.current = true
+        agentShellPollStreakRef.current = 0
         if (agentStateRef.current === 'none') {
           setAgentState('idle', proc)
         } else if (previousProcess !== proc) {
           setAgentState(agentStateRef.current, proc)
         }
-      } else if (isShellProcessName(proc) && (
-        agentStateRef.current !== 'running' ||
-        isAgentProcessName(previousProcess) ||
-        Date.now() - agentTaskStartedAtRef.current > AGENT_PROCESS_POLL_MS
-      )) {
-        clearAgentSession(proc)
+      } else if (isShellProcessName(proc)) {
+        if (agentStateRef.current === 'running') {
+          agentShellPollStreakRef.current = 0
+        } else {
+          agentShellPollStreakRef.current += 1
+          if (agentShellPollStreakRef.current >= 2) {
+            clearAgentSession(proc)
+          }
+        }
       } else if (!agentSessionRef.current && agentStateRef.current !== 'none') {
+        agentShellPollStreakRef.current = 0
         clearAgentSession(proc)
       } else if (previousProcess !== proc && agentStateRef.current !== 'none') {
+        agentShellPollStreakRef.current = 0
         setAgentState(agentStateRef.current, proc)
+      } else {
+        agentShellPollStreakRef.current = 0
       }
     }
 
@@ -1948,6 +2006,12 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         recordPerfEvent('hiddenPtyDataBytes', bytes)
       }
       touchSessionActivity()
+      if (agentSessionRef.current && agentStateRef.current === 'running') {
+        const now = Date.now()
+        agentLastOutputAtRef.current = now
+        agentLastBusyEvidenceAtRef.current = now
+        ensureAgentBusyCheckTimer()
+      }
       const cwd = extractEmuCwd(data)
       if (cwd) {
         currentWorkingDirectoryRef.current = cwd
@@ -1993,8 +2057,6 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       } else {
         appendHiddenOutput(data)
       }
-      scheduleAgentIdleCheck()
-
       if (rawTuiModeRef.current && !isAltScreenRef.current) {
         window.setTimeout(() => {
           recordPerfEvent('rawTuiPromptChecks')
@@ -2378,7 +2440,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
 
     return () => {
       disposed = true
-      clearAgentIdleTimer()
+      clearAgentBusyCheckTimer()
       clearAgentPermissionWatchdog()
       if (autoFollowFrameRef.current !== null) {
         cancelAnimationFrame(autoFollowFrameRef.current)

@@ -39,9 +39,9 @@ function getSessionDotStatus(session: Session, now: Date): SessionDotStatus {
 }
 
 function getSessionDotTitle(status: SessionDotStatus): string {
-  if (status === 'running') return 'Claude/Codex task active'
+  if (status === 'running') return 'Agent task active'
   if (status === 'stale') return 'No activity for 5 minutes'
-  return 'Task complete or idle'
+  return 'Task complete or agent idle'
 }
 
 const COLLAPSE_THRESHOLD = 190
