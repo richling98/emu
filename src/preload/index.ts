@@ -74,5 +74,26 @@ contextBridge.exposeInMainWorld('api', {
     const listener = (_: Electron.IpcRendererEvent, status: unknown) => callback(status)
     ipcRenderer.on('updates:status', listener)
     return () => ipcRenderer.removeListener('updates:status', listener)
+  },
+  // Task-complete notification
+  showTaskComplete: (info: { tabName: string; sessionId: string; workspaceId: string }) =>
+    ipcRenderer.invoke('task-complete:show', info),
+  taskCompleteVisit: (sessionId: string) => ipcRenderer.invoke('task-complete:visit', sessionId),
+  taskCompleteOverlayAction: (action: { type: string; notificationId?: string }) =>
+    ipcRenderer.invoke('task-complete:action', action),
+  onTaskCompleteOverlayState: (callback: (state: { tabName: string; sessionId: string; workspaceName: string } | null) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, state: unknown) => callback(state as { tabName: string; sessionId: string; workspaceName: string })
+    ipcRenderer.on('task-complete:state', listener)
+    return () => ipcRenderer.removeListener('task-complete:state', listener)
+  },
+  onTaskCompleteChime: (callback: () => void) => {
+    const listener = () => callback()
+    ipcRenderer.on('task-complete:chime', listener)
+    return () => ipcRenderer.removeListener('task-complete:chime', listener)
+  },
+  onTaskCompleteVisit: (callback: (sessionId: string) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, sessionId: string) => callback(sessionId)
+    ipcRenderer.on('task-complete:visit', listener)
+    return () => ipcRenderer.removeListener('task-complete:visit', listener)
   }
 })

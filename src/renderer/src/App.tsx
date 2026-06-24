@@ -268,6 +268,10 @@ export default function App() {
     return () => window.removeEventListener('keydown', handlePerfToggle, true)
   }, [])
 
+  const restoreActiveTerminalFocus = useCallback(() => {
+    setTerminalFocusSignal((value) => value + 1)
+  }, [])
+
   // Lights up the Settings gear with a dot when a newer Emu version is found —
   // either by the silent launch-time check or a check from inside Settings.
   useEffect(() => {
@@ -276,6 +280,18 @@ export default function App() {
       else if (status.status === 'not-available') setUpdateAvailable(false)
     })
   }, [])
+
+  // Handle task-complete "Visit" action — focus window and select the completed tab
+  useEffect(() => {
+    if (!window.api?.onTaskCompleteVisit) return
+    return window.api.onTaskCompleteVisit((sessionId: string) => {
+      const workspace = sessionsRef.current.find((s) => s.tabs.some((t) => t.id === sessionId))
+      if (!workspace) return
+      setSelectedId(workspace.id)
+      setActivePaneId(sessionId)
+      restoreActiveTerminalFocus()
+    })
+  }, [restoreActiveTerminalFocus])
 
   useEffect(() => {
     if (!showPerfOverlay) return
@@ -631,10 +647,6 @@ export default function App() {
     setActivePaneId(tabId)
     setOpenHistoryFor(tabId)
   }, [getSelectedTabIdForWorkspace, touchTab])
-
-  const restoreActiveTerminalFocus = useCallback(() => {
-    setTerminalFocusSignal((value) => value + 1)
-  }, [])
 
   const handleOpenMarkdown = useCallback((result: MarkdownOpenResult) => {
     setMarkdownDocument((current) => {

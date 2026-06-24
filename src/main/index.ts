@@ -1,4 +1,10 @@
 import { app, shell, BrowserWindow, ipcMain, nativeImage, screen } from 'electron'
+
+// Prevent Chromium GPU process crash on macOS (exit_code=15 at startup).
+// Running the GPU in-process sidesteps the separate GPU helper that crashes
+// on some macOS configurations, and the app has no Angular/WebGL dependencies.
+app.disableHardwareAcceleration()
+app.commandLine.appendSwitch('in-process-gpu')
 import { autoUpdater } from 'electron-updater'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'path'
 import fs from 'fs'
@@ -442,7 +448,7 @@ function sanitizeAgentPermissionPrompt(input: unknown): AgentPermissionPrompt | 
   const candidate = input as Partial<AgentPermissionPrompt>
   if (typeof candidate.id !== 'string' || candidate.id.length > 120) return null
   if (typeof candidate.sessionId !== 'string' || candidate.sessionId.length > 120) return null
-  if (candidate.provider !== 'claude' && candidate.provider !== 'codex') return null
+  if (candidate.provider !== 'claude' && candidate.provider !== 'codex' && candidate.provider !== 'opencode') return null
   if (typeof candidate.fingerprint !== 'string' || candidate.fingerprint.length > 900) return null
   if (typeof candidate.summary !== 'string' || !candidate.summary.trim()) return null
   if (typeof candidate.detail !== 'string') return null
@@ -550,6 +556,484 @@ function closeAgentPermissionOverlayIfEmpty(): void {
   if (agentPermissionOverlayWindow && !agentPermissionOverlayWindow.isDestroyed()) {
     agentPermissionOverlayWindow.close()
   }
+}
+
+// ── Task-complete notification overlay ────────────────────────────────────
+const TASK_COMPLETE_OVERLAY_WIDTH = 390
+const TASK_COMPLETE_OVERLAY_HEIGHT = 68
+const TASK_COMPLETE_AUTO_DISMISS_MS = 8_000
+
+interface PendingTaskCompleteNotification {
+  id: string
+  sessionId: string
+  tabName: string
+  workspaceName: string
+  status: 'pending' | 'resolved' | 'auto-dismissed'
+  createdAt: number
+}
+
+interface TaskCompleteOverlayNotification {
+  id: string
+  sessionId: string
+  tabName: string
+  workspaceName: string
+}
+
+interface TaskCompleteOverlayState {
+  notifications: TaskCompleteOverlayNotification[]
+  activeNotificationId: string | null
+}
+
+type TaskCompleteOverlayAction =
+  | { type: 'previous' | 'next' }
+  | { type: 'visit'; notificationId: string }
+
+let taskCompleteOverlayWindow: BrowserWindow | null = null
+let taskCompleteAutoDismissTimer: ReturnType<typeof setTimeout> | null = null
+let taskCompleteNotificationIdCounter = 0
+const pendingTaskCompleteNotifications: PendingTaskCompleteNotification[] = []
+let activeTaskCompleteNotificationId: string | null = null
+
+function buildTaskCompleteOverlayHtml(): string {
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline';">
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      width: 100vw; height: 100vh;
+      overflow: hidden;
+      background: transparent;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      user-select: none;
+    }
+    .overlay {
+      width: 100vw; height: 100vh;
+      padding: 0 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #f8fafc;
+      background: rgba(29, 29, 31, 0.85);
+      border: 0.5px solid rgba(255, 255, 255, 0.15);
+      border-radius: 12px;
+      box-shadow: 0 14px 38px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+      backdrop-filter: blur(34px) saturate(180%);
+      -webkit-backdrop-filter: blur(34px) saturate(180%);
+      -webkit-app-region: drag;
+    }
+    .check {
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      background: rgba(52, 199, 89, 0.9);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    .message {
+      flex: 1;
+      min-width: 0;
+      font-size: 13px;
+      font-weight: 500;
+      color: rgba(255, 255, 255, 0.95);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .queue {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      flex-shrink: 0;
+      -webkit-app-region: no-drag;
+    }
+    .count {
+      font-size: 10.5px;
+      line-height: 1;
+      color: rgba(235, 235, 245, 0.62);
+      white-space: nowrap;
+      padding-right: 3px;
+    }
+    .icon {
+      width: 20px; height: 20px;
+      border: 0.5px solid rgba(255, 255, 255, 0.14);
+      border-radius: 5px;
+      background: rgba(255, 255, 255, 0.09);
+      color: rgba(255, 255, 255, 0.9);
+      font-size: 11px;
+      line-height: 1;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-app-region: no-drag;
+      padding: 0;
+    }
+    .icon:hover { background: rgba(255, 255, 255, 0.16); }
+    .visit-btn {
+      height: 26px;
+      padding: 0 12px;
+      border: 0.5px solid rgba(255, 255, 255, 0.15);
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      background: rgba(52, 199, 89, 0.95);
+      border-color: rgba(52, 199, 89, 0.9);
+      color: #062b12;
+      -webkit-app-region: no-drag;
+      flex-shrink: 0;
+    }
+    .visit-btn:hover {
+      background: rgba(62, 214, 104, 0.98);
+    }
+  </style>
+</head>
+<body>
+  <section class="overlay">
+    <div class="check">✓</div>
+    <div class="message" id="message">Done</div>
+    <div class="queue" id="queue" style="display:none">
+      <span class="count" id="count"></span>
+      <button class="icon" id="previous" type="button" title="Previous">&lt;</button>
+      <button class="icon" id="next" type="button" title="Next">&gt;</button>
+    </div>
+    <button class="visit-btn" id="visitBtn">Visit</button>
+  </section>
+  <script>
+    var cachedAudioContext = null
+    var state = { notifications: [], activeNotificationId: null }
+
+    function getAudioContext() {
+      if (!cachedAudioContext) {
+        var AudioContextCtor = window.AudioContext || window.webkitAudioContext
+        cachedAudioContext = new AudioContextCtor()
+      }
+      return cachedAudioContext
+    }
+
+    function playGentleDing() {
+      try {
+        var ctx = getAudioContext()
+        if (ctx.state === 'suspended') ctx.resume().catch(function() {})
+
+        var master = ctx.createGain()
+        master.gain.value = 0.45
+        master.connect(ctx.destination)
+
+        var osc1 = ctx.createOscillator()
+        var g1 = ctx.createGain()
+        osc1.type = 'sine'
+        osc1.frequency.setValueAtTime(523.25, ctx.currentTime)
+        g1.gain.setValueAtTime(0.001, ctx.currentTime)
+        g1.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.02)
+        g1.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4)
+        osc1.connect(g1)
+        g1.connect(master)
+        osc1.start(ctx.currentTime)
+        osc1.stop(ctx.currentTime + 0.45)
+
+        var osc2 = ctx.createOscillator()
+        var g2 = ctx.createGain()
+        osc2.type = 'sine'
+        osc2.frequency.setValueAtTime(659.25, ctx.currentTime)
+        g2.gain.setValueAtTime(0.001, ctx.currentTime + 0.1)
+        g2.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.12)
+        g2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.55)
+        osc2.connect(g2)
+        g2.connect(master)
+        osc2.start(ctx.currentTime + 0.1)
+        osc2.stop(ctx.currentTime + 0.6)
+      } catch (e) {
+        console.error('chime error:', e)
+      }
+    }
+
+    function activeIndex() {
+      var idx = state.notifications.findIndex(function(n) { return n.id === state.activeNotificationId })
+      return idx >= 0 ? idx : 0
+    }
+
+    function activeNotification() {
+      return state.notifications[activeIndex()] || null
+    }
+
+    function render() {
+      var notif = activeNotification()
+      var msg = document.getElementById('message')
+      var queue = document.getElementById('queue')
+      var count = document.getElementById('count')
+
+      if (!notif) {
+        msg.textContent = 'Done'
+        queue.style.display = 'none'
+        return
+      }
+
+      msg.textContent = notif.workspaceName + ' is done!'
+
+      var hasMultiple = state.notifications.length > 1
+      queue.style.display = hasMultiple ? 'flex' : 'none'
+      if (hasMultiple) {
+        count.textContent = (activeIndex() + 1) + ' of ' + state.notifications.length
+      }
+    }
+
+    try {
+      document.getElementById('visitBtn').addEventListener('click', function() {
+        var notif = activeNotification()
+        if (notif) {
+          window.api.taskCompleteOverlayAction({ type: 'visit', notificationId: notif.id }).catch(function() {})
+        }
+      })
+
+      document.getElementById('previous').addEventListener('click', function() {
+        window.api.taskCompleteOverlayAction({ type: 'previous' }).catch(function() {})
+      })
+
+      document.getElementById('next').addEventListener('click', function() {
+        window.api.taskCompleteOverlayAction({ type: 'next' }).catch(function() {})
+      })
+
+      window.api.onTaskCompleteOverlayState(function(nextState) {
+        if (!nextState) return
+        state = nextState
+        render()
+      })
+
+      window.api.onTaskCompleteChime(function() {
+        playGentleDing()
+      })
+    } catch (e) {
+      console.error('overlay init error:', e)
+    }
+  </script>
+</body>
+</html>`
+}
+
+function ensureTaskCompleteOverlayWindow(): BrowserWindow {
+  if (taskCompleteOverlayWindow && !taskCompleteOverlayWindow.isDestroyed()) {
+    return taskCompleteOverlayWindow
+  }
+
+  taskCompleteOverlayWindow = new BrowserWindow({
+    width: TASK_COMPLETE_OVERLAY_WIDTH,
+    height: TASK_COMPLETE_OVERLAY_HEIGHT,
+    frame: false,
+    resizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    show: false,
+    focusable: true,
+    transparent: true,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  })
+
+  taskCompleteOverlayWindow.setAlwaysOnTop(true, 'screen-saver')
+  taskCompleteOverlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+
+  taskCompleteOverlayWindow.on('closed', () => {
+    taskCompleteOverlayWindow = null
+  })
+
+  taskCompleteOverlayWindow.webContents.on('console-message', (_event, level, message) => {
+    if (level >= 2) console.error(`[task-overlay] ${message}`)
+  })
+  taskCompleteOverlayWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  taskCompleteOverlayWindow.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildTaskCompleteOverlayHtml())}`
+  )
+
+  return taskCompleteOverlayWindow
+}
+
+function positionTaskCompleteOverlay(): void {
+  const overlay = ensureTaskCompleteOverlayWindow()
+  const mainWindow = getMainWindow()
+  const display = mainWindow && !mainWindow.isDestroyed() && !mainWindow.isMinimized()
+    ? screen.getDisplayMatching(mainWindow.getBounds())
+    : screen.getPrimaryDisplay()
+  const { workArea } = display
+  const x = Math.round(workArea.x + workArea.width - TASK_COMPLETE_OVERLAY_WIDTH - AGENT_PERMISSION_OVERLAY_MARGIN)
+  const y = Math.round(workArea.y + AGENT_PERMISSION_OVERLAY_MARGIN)
+  overlay.setBounds({ x, y, width: TASK_COMPLETE_OVERLAY_WIDTH, height: TASK_COMPLETE_OVERLAY_HEIGHT })
+}
+
+function playGentleDingChime(overlay: BrowserWindow): void {
+  if (overlay.isDestroyed()) return
+  overlay.webContents.send('task-complete:chime')
+}
+
+function serializeTaskCompleteState(): TaskCompleteOverlayState {
+  const notifications = pendingTaskCompleteNotifications
+    .filter((entry) => entry.status === 'pending')
+    .map<TaskCompleteOverlayNotification>((entry) => ({
+      id: entry.id,
+      sessionId: entry.sessionId,
+      tabName: entry.tabName,
+      workspaceName: entry.workspaceName
+    }))
+  return { notifications, activeNotificationId: activeTaskCompleteNotificationId }
+}
+
+function getActiveTaskCompleteNotification(): PendingTaskCompleteNotification | null {
+  if (!activeTaskCompleteNotificationId) return null
+  return pendingTaskCompleteNotifications.find((entry) =>
+    entry.status === 'pending' && entry.id === activeTaskCompleteNotificationId
+  ) ?? null
+}
+
+function pruneResolvedTaskCompleteNotifications(): void {
+  for (let i = pendingTaskCompleteNotifications.length - 1; i >= 0; i--) {
+    if (pendingTaskCompleteNotifications[i].status !== 'pending') {
+      pendingTaskCompleteNotifications.splice(i, 1)
+    }
+  }
+}
+
+function sendTaskCompleteState(): void {
+  if (!taskCompleteOverlayWindow || taskCompleteOverlayWindow.isDestroyed()) return
+  taskCompleteOverlayWindow.webContents.send('task-complete:state', serializeTaskCompleteState())
+}
+
+function closeTaskCompleteOverlay(): void {
+  clearTimeout(taskCompleteAutoDismissTimer)
+  taskCompleteAutoDismissTimer = null
+  if (taskCompleteOverlayWindow && !taskCompleteOverlayWindow.isDestroyed()) {
+    taskCompleteOverlayWindow.close()
+  }
+}
+
+function closeTaskCompleteOverlayIfEmpty(): void {
+  const hasPending = pendingTaskCompleteNotifications.some((entry) => entry.status === 'pending')
+  if (hasPending) return
+  activeTaskCompleteNotificationId = null
+  closeTaskCompleteOverlay()
+}
+
+function resetTaskCompleteAutoDismissTimer(): void {
+  clearTimeout(taskCompleteAutoDismissTimer)
+  taskCompleteAutoDismissTimer = setTimeout(() => {
+    const active = getActiveTaskCompleteNotification()
+    if (!active) {
+      closeTaskCompleteOverlay()
+      return
+    }
+    active.status = 'auto-dismissed'
+    const pending = pendingTaskCompleteNotifications.filter((e) => e.status === 'pending')
+    const next = pending[0] ?? null
+    activeTaskCompleteNotificationId = next?.id ?? null
+    pruneResolvedTaskCompleteNotifications()
+    if (activeTaskCompleteNotificationId) {
+      sendTaskCompleteState()
+      resetTaskCompleteAutoDismissTimer()
+    } else {
+      closeTaskCompleteOverlay()
+    }
+  }, TASK_COMPLETE_AUTO_DISMISS_MS)
+}
+
+function addTaskCompleteNotification(sessionId: string, tabName: string, workspaceName: string): void {
+  const id = `tc-${++taskCompleteNotificationIdCounter}`
+  pendingTaskCompleteNotifications.push({
+    id,
+    sessionId,
+    tabName,
+    workspaceName,
+    status: 'pending',
+    createdAt: Date.now()
+  })
+  if (!activeTaskCompleteNotificationId) {
+    activeTaskCompleteNotificationId = id
+  }
+  ensureTaskCompleteOverlayVisible(true)
+}
+
+function navigateTaskCompleteNotification(direction: 'previous' | 'next'): void {
+  const pending = pendingTaskCompleteNotifications.filter((entry) => entry.status === 'pending')
+  if (pending.length === 0) {
+    closeTaskCompleteOverlayIfEmpty()
+    return
+  }
+  const currentIndex = pending.findIndex((entry) => entry.id === activeTaskCompleteNotificationId)
+  const fallbackIndex = currentIndex === -1 ? 0 : currentIndex
+  const nextIndex = direction === 'next'
+    ? (fallbackIndex + 1) % pending.length
+    : (fallbackIndex - 1 + pending.length) % pending.length
+  activeTaskCompleteNotificationId = pending[nextIndex].id
+  sendTaskCompleteState()
+  resetTaskCompleteAutoDismissTimer()
+}
+
+function resolveTaskCompleteNotification(notificationId: string): void {
+  const entry = pendingTaskCompleteNotifications.find((e) => e.id === notificationId && e.status === 'pending')
+  if (!entry) return
+
+  const sessionId = entry.sessionId
+  entry.status = 'resolved'
+
+  const pending = pendingTaskCompleteNotifications.filter((e) => e.status === 'pending')
+  const next = pending[0] ?? null
+  activeTaskCompleteNotificationId = next?.id ?? null
+
+  pruneResolvedTaskCompleteNotifications()
+  closeTaskCompleteOverlayIfEmpty()
+  sendTaskCompleteState()
+
+  if (activeTaskCompleteNotificationId) {
+    resetTaskCompleteAutoDismissTimer()
+  }
+
+  const mainWindow = getMainWindow()
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+    mainWindow.webContents.send('task-complete:visit', sessionId)
+  }
+}
+
+function ensureTaskCompleteOverlayVisible(playChime: boolean): void {
+  const overlay = ensureTaskCompleteOverlayWindow()
+  positionTaskCompleteOverlay()
+
+  const send = () => {
+    if (overlay.isDestroyed()) return
+    sendTaskCompleteState()
+    if (!overlay.isVisible()) overlay.showInactive()
+    overlay.moveTop()
+    if (playChime) playGentleDingChime(overlay)
+  }
+
+  if (overlay.webContents.isLoading()) {
+    overlay.webContents.once('did-finish-load', send)
+  } else {
+    send()
+  }
+
+  resetTaskCompleteAutoDismissTimer()
+}
+
+function getMainWindow(): BrowserWindow | null {
+  return BrowserWindow.getAllWindows().find((window) =>
+    window !== agentPermissionOverlayWindow &&
+    window !== taskCompleteOverlayWindow &&
+    !window.isDestroyed()
+  ) ?? null
 }
 
 function pruneInactiveAgentPermissionPrompts(): void {
@@ -1631,6 +2115,47 @@ app.whenReady().then(() => {
     await resolveAgentPermissionPrompt(input.promptId, input.type)
   })
 
+  // Task-complete notification
+  const taskCompleteDebounceTimestamps = new Map<string, number>()
+  const TASK_COMPLETE_DEBOUNCE_MS = 30_000
+
+  ipcMain.handle('task-complete:show', (event, info: {
+    tabName: string
+    sessionId: string
+    workspaceId: string
+  }) => {
+    if (!info || typeof info.tabName !== 'string' || typeof info.sessionId !== 'string') return
+
+    const debounceKey = `${info.sessionId}:${info.workspaceId ?? ''}`
+    const now = Date.now()
+    const lastShown = taskCompleteDebounceTimestamps.get(debounceKey)
+    if (lastShown && now - lastShown < TASK_COMPLETE_DEBOUNCE_MS) return
+    taskCompleteDebounceTimestamps.set(debounceKey, now)
+
+    addTaskCompleteNotification(info.sessionId, info.tabName, info.workspaceId ?? info.tabName)
+  })
+
+  ipcMain.handle('task-complete:visit', (_, sessionId: string) => {
+    if (typeof sessionId !== 'string') return
+
+    const mainWindow = getMainWindow()
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.show()
+      mainWindow.focus()
+      mainWindow.webContents.send('task-complete:visit', sessionId)
+    }
+  })
+
+  ipcMain.handle('task-complete:action', (_, action: TaskCompleteOverlayAction) => {
+    if (!action || typeof action !== 'object') return
+    if (action.type === 'previous' || action.type === 'next') {
+      navigateTaskCompleteNotification(action.type)
+    } else if (action.type === 'visit' && typeof action.notificationId === 'string') {
+      resolveTaskCompleteNotification(action.notificationId)
+    }
+  })
+
   // Write input to PTY
   ipcMain.on('pty:write', (_, sessionId: string, data: string) => {
     const stats = ptyPerfStats.get(sessionId)
@@ -1669,6 +2194,14 @@ app.whenReady().then(() => {
 
   createWindow()
 
+  // Periodic cleanup of task-complete debounce map
+  setInterval(() => {
+    const cutoff = Date.now() - TASK_COMPLETE_DEBOUNCE_MS * 2
+    for (const [key, ts] of taskCompleteDebounceTimestamps) {
+      if (ts < cutoff) taskCompleteDebounceTimestamps.delete(key)
+    }
+  }, 60_000)
+
   // Silent background check a few seconds after launch, so the Settings gear
   // icon can show an "update available" dot without the user opening Settings.
   if (app.isPackaged) {
@@ -1678,7 +2211,10 @@ app.whenReady().then(() => {
   }
 
   app.on('activate', function () {
-    const appWindows = BrowserWindow.getAllWindows().filter((window) => window !== agentPermissionOverlayWindow)
+    const appWindows = BrowserWindow.getAllWindows().filter((window) =>
+      window !== agentPermissionOverlayWindow &&
+      window !== taskCompleteOverlayWindow
+    )
     if (appWindows.length === 0) createWindow()
   })
 })

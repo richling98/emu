@@ -548,11 +548,12 @@ function parseGenericAgentPermissionPrompt(text: string, provider: AgentPermissi
 }
 
 function isOpencodeApproveButton(line: string): boolean {
-  return /\ballow (?:once|always)\b/i.test(normalizeLine(line))
+  const normalized = normalizeLine(line)
+  return /\ballow(?:\s+(?:once|always))?\b/i.test(normalized) || /^approve$/i.test(normalized)
 }
 
 function isOpencodeDenyButton(line: string): boolean {
-  return /\b(?:deny|reject)\b/i.test(normalizeLine(line))
+  return /(?:^|\s)(?:deny|reject)(?:\s|$)/i.test(normalizeLine(line))
 }
 
 function isOpencodeProceedChoice(line: string): boolean {
@@ -623,14 +624,15 @@ function parseOpencodePermissionPrompt(text: string): ParsedPermissionPrompt | n
   const anchor = hasButtonPrompt ? Math.min(approveIndex, denyIndex) : proceedIndex
   const start = Math.max(0, anchor - 8)
   const block = lines.slice(start)
-  if (!block.some(isOpencodePermissionSubject)) return null
-  if (!hasOpencodeWaitEvidence(block)) return null
+  const hasExplicitPermissionModal = hasButtonPrompt && block.some(isOpencodePermissionHeading)
+  if (!block.some(isOpencodePermissionSubject) && !hasExplicitPermissionModal) return null
+  if (!hasOpencodeWaitEvidence(block) && !hasExplicitPermissionModal && !hasQuestionPrompt) return null
 
   const normalized = block.map(normalizeLine).filter(Boolean)
   const rawExcerpt = normalized.join('\n').slice(0, MAX_EXCERPT_CHARS)
   const fingerprintSource = normalized
     .filter((line) => !isOpencodePermissionHeading(line) && !isOpencodeApproveButton(line) && !isOpencodeDenyButton(line) && !isWaitHintLine(line))
-    .join('\n')
+    .join('\n') || (normalized.some(isOpencodePermissionHeading) ? 'permission required' : 'opencode permission')
 
   return {
     provider: 'opencode',

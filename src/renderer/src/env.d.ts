@@ -158,5 +158,12 @@ interface Window {
     checkForUpdates: () => Promise<UpdateStatus>
     downloadUpdate: () => Promise<void>
     onUpdateStatus: (callback: (status: UpdateStatus) => void) => () => void
+    // Task-complete notification
+    showTaskComplete: (info: { tabName: string; sessionId: string; workspaceId: string }) => Promise<void>
+    taskCompleteVisit: (sessionId: string) => Promise<void>
+    taskCompleteOverlayAction: (action: { type: string; notificationId?: string }) => Promise<void>
+    onTaskCompleteOverlayState: (callback: (state: { notifications: Array<{ id: string; sessionId: string; tabName: string; workspaceName: string }>; activeNotificationId: string | null } | null) => void) => () => void
+    onTaskCompleteChime: (callback: () => void) => () => void
+    onTaskCompleteVisit: (callback: (sessionId: string) => void) => () => void
   }
 }

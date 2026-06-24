@@ -529,11 +529,30 @@ assert.equal(
     agentSession: true
   }),
   null,
-  'opencode button snippets without wait evidence should not parse'
+  'opencode button snippets without a permission heading or wait evidence should not parse'
 )
 const opencodeNoWaitDiagnostic = __agentPermissionPromptTest.agentPermissionMissDiagnostic(opencodeButtonPromptNoWaitHint, 'opencode')
 assert(opencodeNoWaitDiagnostic, 'opencode button misses should include diagnostics')
 assert.equal(opencodeNoWaitDiagnostic.reason, 'missing_wait_hint')
+
+const opencodePermissionRequiredNoFooterPrompt = [
+  '△ Permission required',
+  '# Update local files',
+  '',
+  '$ apply_patch <<\'PATCH\'',
+  '',
+  'Deny',
+  'Allow Always',
+  'Allow Once'
+].join('\n')
+const parsedOpencodePermissionRequiredNoFooter = new AgentPermissionPromptDetector().append(opencodePermissionRequiredNoFooterPrompt, {
+  sessionId: 'session-opencode-permission-no-footer',
+  provider: 'opencode',
+  agentSession: true
+})
+assert(parsedOpencodePermissionRequiredNoFooter, 'explicit opencode permission modal should parse even when footer is off-screen')
+assert.equal(parsedOpencodePermissionRequiredNoFooter.provider, 'opencode')
+assert.equal(parsedOpencodePermissionRequiredNoFooter.summary, 'Run: apply_patch <<\'PATCH\'')
 
 const opencodeQuestionPrompt = [
   'Can I use file reads/searches and non-destructive Git commands to find the repo, inspect the project, and update the README accurately?',
@@ -590,18 +609,14 @@ const opencodeHeadingOnlyRepaint = [
   'Allow once   Allow always   Reject',
   'ctrl+f fullscreen  ↵ select  enter confirm'
 ].join('\n')
-assert.equal(
-  new AgentPermissionPromptDetector().append(opencodeHeadingOnlyRepaint, {
-    sessionId: 'session-opencode-heading-only',
-    provider: 'opencode',
-    agentSession: true
-  }),
-  null,
-  'opencode heading/buttons repaint without a subject should not parse'
-)
-const opencodeHeadingOnlyDiagnostic = __agentPermissionPromptTest.agentPermissionMissDiagnostic(opencodeHeadingOnlyRepaint, 'opencode')
-assert(opencodeHeadingOnlyDiagnostic, 'opencode heading-only misses should include diagnostics')
-assert.equal(opencodeHeadingOnlyDiagnostic.reason, 'no_subject')
+const parsedOpencodeHeadingOnlyRepaint = new AgentPermissionPromptDetector().append(opencodeHeadingOnlyRepaint, {
+  sessionId: 'session-opencode-heading-only',
+  provider: 'opencode',
+  agentSession: true
+})
+assert(parsedOpencodeHeadingOnlyRepaint, 'opencode heading/buttons repaint should still surface a popup')
+assert.equal(parsedOpencodeHeadingOnlyRepaint.summary, 'Approval needed')
+assert.equal(parsedOpencodeHeadingOnlyRepaint.fingerprint, 'opencode:approval:permission required')
 
 const opencodeDescriptionOnlyRepaint = [
   '△ Permission required',

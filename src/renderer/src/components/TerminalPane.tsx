@@ -1164,10 +1164,20 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     }
 
     const setAgentState = (state: AgentState, foregroundProcess: string | null = agentProcessRef.current) => {
+      const previousState = agentStateRef.current
       agentStateRef.current = state
       agentProcessRef.current = foregroundProcess
       debugScrollFollow('agent-state', { state, foregroundProcess })
       onAgentStateChangeRef.current?.(state, foregroundProcess)
+      // Fire task-complete notification when transitioning from running to idle
+      if (previousState === 'running' && state === 'idle') {
+        const tabName = session.name || 'Tab'
+        window.api.showTaskComplete({
+          tabName,
+          sessionId: session.id,
+          workspaceId: workspaceNameRef.current ?? session.id
+        }).catch(() => {})
+      }
     }
 
     const setInputOwner = (owner: InputOwner) => {
