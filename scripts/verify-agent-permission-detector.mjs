@@ -733,4 +733,152 @@ assert.equal(
   'opencode prose mentioning real buttons should not emit without wait evidence'
 )
 
+const opencodeBrowseSkillStalePermissionFalsePositive = [
+  '△ Permission required',
+  '# Check if browse binary exists',
+  '',
+  '$ if test -x ~/.claude/skills/gstack/browse/dist/browse; then echo "READY_USER"; else echo "NEEDS_SETUP"; fi',
+  '',
+  'Allow once   Allow always   Reject',
+  'ctrl+f fullscreen  ↵ select  enter confirm',
+  '+ Thought: 255ms -> Skill "browse"',
+  '+ Thought: 182ms $ if test -x ~/.claude/skills/gstack/browse/dist/browse...',
+  'READY_USER'
+].join('\n')
+assert.equal(
+  new AgentPermissionPromptDetector().append(opencodeBrowseSkillStalePermissionFalsePositive, {
+    sessionId: 'session-opencode-browse-stale-permission',
+    provider: 'opencode',
+    agentSession: true
+  }),
+  null,
+  'resolved opencode browse permission followed by transcript output should not emit again'
+)
+
+const opencodeHeadingOnlyRepaintStaleFalsePositive = [
+  '△ Permission required',
+  '',
+  'Allow once   Allow always   Reject',
+  'ctrl+f fullscreen  ↵ select  enter confirm',
+  '+ Thought: continuing with browse task',
+  'Open   Collapse   Close'
+].join('\n')
+assert.equal(
+  new AgentPermissionPromptDetector().append(opencodeHeadingOnlyRepaintStaleFalsePositive, {
+    sessionId: 'session-opencode-heading-stale',
+    provider: 'opencode',
+    agentSession: true
+  }),
+  null,
+  'opencode heading-only permission repaint should not emit after normal output follows'
+)
+
+const codexQuotedApprovalTranscriptFalsePositive = [
+  'Documentation example:',
+  'Would you like to run the following command?',
+  '$ npm run dev',
+  '› 1. Yes, proceed (y)',
+  '  2. No, and tell Codex what to do differently (esc)',
+  'Press enter to confirm or esc to cancel',
+  '',
+  'The build then continued and printed normal output.',
+  'Compiled successfully.'
+].join('\n')
+assert.equal(
+  new AgentPermissionPromptDetector().append(codexQuotedApprovalTranscriptFalsePositive, {
+    sessionId: 'session-codex-quoted-transcript',
+    provider: 'codex',
+    agentSession: true
+  }),
+  null,
+  'Codex approval prompt quoted in transcript followed by output should not emit'
+)
+
+const claudeBashPermissionTranscriptFalsePositive = [
+  'Claude needs permission to use Bash',
+  'Bash(command: "npm test")',
+  'Do you want to allow this command?',
+  '› 1. Yes (y)',
+  '  2. No (esc)',
+  '',
+  'I will continue after approval. Here is the next step...'
+].join('\n')
+assert.equal(
+  new AgentPermissionPromptDetector().append(claudeBashPermissionTranscriptFalsePositive, {
+    sessionId: 'session-claude-bash-transcript',
+    provider: 'claude',
+    agentSession: true
+  }),
+  null,
+  'Claude permission block followed by assistant narration should not emit'
+)
+
+const claudeSkillPromptDocumentationFalsePositive = [
+  'For example, Claude may show:',
+  'Use skill "browse"?',
+  'Do you want to proceed?',
+  '1. Yes',
+  '2. No',
+  '',
+  'This paragraph is documentation, not an active terminal UI.'
+].join('\n')
+assert.equal(
+  new AgentPermissionPromptDetector().append(claudeSkillPromptDocumentationFalsePositive, {
+    sessionId: 'session-claude-skill-docs',
+    provider: 'claude',
+    agentSession: true
+  }),
+  null,
+  'Claude skill prompt documentation should not emit as active approval'
+)
+
+const opencodeWebFetchTraceBeforeControlsFalsePositive = [
+  '△ Permission required',
+  '+ Thought: 508ms % WebFetch https://duckduckgo.com/?q=airaw+2025',
+  'Allow once   Allow always   Reject',
+  'ctrl+f fullscreen  ↵ select  enter confirm'
+].join('\n')
+assert.equal(
+  new AgentPermissionPromptDetector().append(opencodeWebFetchTraceBeforeControlsFalsePositive, {
+    sessionId: 'session-opencode-webfetch-before-controls',
+    provider: 'opencode',
+    agentSession: true
+  }),
+  null,
+  'opencode WebFetch activity trace before stale controls should not emit approval'
+)
+
+const opencodeGenericWebFetchApprovalNeededFalsePositive = [
+  '+ Thought: 319ms % WebFetch https://www.airaw.io/some-page',
+  'Deny',
+  'Approve'
+].join('\n')
+assert.equal(
+  new AgentPermissionPromptDetector().append(opencodeGenericWebFetchApprovalNeededFalsePositive, {
+    sessionId: 'session-opencode-generic-webfetch-approval-needed',
+    provider: 'opencode',
+    agentSession: true
+  }),
+  null,
+  'generic Approval needed should not emit from WebFetch activity trace plus controls'
+)
+
+const codexBrowsePromptThenWebFetchTraceFalsePositive = [
+  'Would you like to run the following command?',
+  '$ browse https://example.com',
+  '› 1. Yes, proceed (y)',
+  '  2. No, and tell Codex what to do differently (esc)',
+  'Press enter to confirm or esc to cancel',
+  '+ Thought: 300ms % WebFetch https://example.com'
+].join('\n')
+assert.equal(
+  new AgentPermissionPromptDetector().append(codexBrowsePromptThenWebFetchTraceFalsePositive, {
+    sessionId: 'session-codex-browse-prompt-then-webfetch',
+    provider: 'codex',
+    agentSession: true
+  }),
+  null,
+  'resolved Codex browse prompt followed by WebFetch trace should not emit'
+)
+
 console.log('agent permission detector fixtures passed')

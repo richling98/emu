@@ -144,6 +144,7 @@ function extractCodexPromptBlock(lines: string[]): string[] | null {
   const hasWaitHint = block.some(isWaitHintLine)
   const hasWaitEvidence = hasWaitHint || (hasReason && block.some(isSelectedChoiceLine))
   if (!hasProceed || !hasDeny || !hasWaitEvidence) return null
+  if (hasSubstantialOutputAfterControls(block, 'codex')) return null
   return block
 }
 
@@ -158,6 +159,49 @@ function isSelectedChoiceLine(line: string): boolean {
 function isMenuChoiceLine(line: string): boolean {
   const trimmed = line.trimStart().replace(/^[>›❯]\s*/, '')
   return /^\d+[.)]\s+/.test(trimmed) || /^\[[^\]]+\]\s+/.test(trimmed)
+}
+
+function isGenericPromptControlLine(line: string): boolean {
+  return isMenuChoiceLine(line) || isWaitHintLine(line) || isSelectedChoiceLine(line)
+}
+
+function isOpencodeControlLine(line: string): boolean {
+  return isGenericPromptControlLine(line) || isOpencodeApproveButton(line) || isOpencodeDenyButton(line)
+}
+
+function lastPermissionControlIndex(block: string[], provider: AgentPermissionProvider): number {
+  let last = -1
+  for (let index = 0; index < block.length; index++) {
+    const line = block[index]
+    if (provider === 'opencode' ? isOpencodeControlLine(line) : isGenericPromptControlLine(line)) {
+      last = index
+    }
+  }
+  return last
+}
+
+function hasSubstantialOutputAfterControls(block: string[], provider: AgentPermissionProvider): boolean {
+  const lastControl = lastPermissionControlIndex(block, provider)
+  if (lastControl === -1) return true
+  for (const line of block.slice(lastControl + 1)) {
+    const normalized = normalizeLine(line)
+    if (!normalized) continue
+    if (provider === 'opencode' ? isOpencodeControlLine(line) : isGenericPromptControlLine(line)) continue
+    return true
+  }
+  return false
+}
+
+function isAgentActivityTraceLine(line: string): boolean {
+  const normalized = normalizeLine(line)
+  return /\bThought:\s*\d+ms\b/i.test(normalized) ||
+    /\b(?:WebFetch|WebSearch)\s+https?:\/\//i.test(normalized) ||
+    /%\s*(?:WebFetch|WebSearch)\s+https?:\/\//i.test(normalized) ||
+    /^(?:open|collapse|close)(?:\s+(?:open|collapse|close))*$/i.test(normalized)
+}
+
+function hasAgentActivityTraceLine(block: string[]): boolean {
+  return block.some(isAgentActivityTraceLine)
 }
 
 function commandLinesFromCodexBlock(block: string[]): string[] {
@@ -257,6 +301,7 @@ function extractCodexToolPromptBlock(lines: string[]): string[] | null {
   const hasDeny = choices.some((choice) => choice.kind === 'deny')
   const hasWaitHint = block.some(isWaitHintLine) || choices.some((choice) => choice.selected)
   if (!hasApprove || !hasDeny || !hasWaitHint) return null
+  if (hasSubstantialOutputAfterControls(block, 'codex')) return null
   return block
 }
 
@@ -471,6 +516,7 @@ function extractClaudePromptBlock(lines: string[], providerConfirmed: boolean): 
   const hasApprove = choices.some((choice) => choice.kind === 'approve')
   const hasDeny = choices.some((choice) => choice.kind === 'deny')
   if (!hasApprove || !hasDeny) return null
+  if (hasSubstantialOutputAfterControls(choiceBlock, 'claude')) return null
   return block
 }
 
@@ -502,46 +548,6 @@ function parseClaudePermissionPrompt(text: string, providerConfirmed = true): Pa
     detail: detail.slice(0, 220),
     rawExcerpt: normalized.join('\n').slice(0, MAX_EXCERPT_CHARS),
     fingerprint: `claude:${stableToken(fingerprintSource).slice(0, 180)}`,
-    approveAction: menuActionForChoice(choices, 'approve', block),
-    denyAction: menuActionForChoice(choices, 'deny', block)
-  }
-}
-
-function parseGenericAgentPermissionPrompt(text: string, provider: AgentPermissionProvider): ParsedPermissionPrompt | null {
-  const lines = logicalPromptLines(snapshotLines(text))
-  let promptIndex = -1
-  for (let index = lines.length - 1; index >= 0; index--) {
-    const normalized = normalizeLine(lines[index])
-    if (isClaudePromptStart(normalized) || codexToolSubject(normalized) || /would you like to run the following command\?/i.test(normalized)) {
-      promptIndex = index
-      break
-    }
-  }
-  if (promptIndex === -1) return null
-
-  const block = lines.slice(Math.max(0, promptIndex - 8))
-  const choiceBlock = lines.slice(promptIndex)
-  const choices = approvalChoices(choiceBlock)
-  const hasApprove = choices.some((choice) => choice.kind === 'approve')
-  const hasDeny = choices.some((choice) => choice.kind === 'deny')
-  const hasWaitHint = choiceBlock.some(isWaitHintLine) || choices.some((choice) => choice.selected)
-  if (!hasApprove || !hasDeny || !hasWaitHint) return null
-
-  const normalized = block.map(normalizeLine).filter(Boolean)
-  const subject = normalized.find((line) =>
-    !isApproveChoice(line) &&
-    !isDenyChoice(line) &&
-    !isWaitHintLine(line) &&
-    /\b(allow|approve|approval|permission|command|tool|skill|bash|shell|edit|write|file|network|mcp|proceed)\b/i.test(line)
-  ) ?? normalized[0]
-  if (!subject) return null
-
-  return {
-    provider,
-    summary: 'Approval needed',
-    detail: subject.slice(0, 220),
-    rawExcerpt: normalized.join('\n').slice(0, MAX_EXCERPT_CHARS),
-    fingerprint: `${provider}:approval:${stableToken(normalized.join('\n')).slice(0, MAX_FINGERPRINT_CHARS)}`,
     approveAction: menuActionForChoice(choices, 'approve', block),
     denyAction: menuActionForChoice(choices, 'deny', block)
   }
@@ -601,6 +607,7 @@ function opencodeSummaryFromBlock(block: string[]): string {
   const subject = normalized.find((line) =>
     !isOpencodeApproveButton(line) &&
     !isOpencodeDenyButton(line) &&
+    !isAgentActivityTraceLine(line) &&
     isOpencodePermissionSubject(line)
   )
   return (subject ?? 'Approval needed').slice(0, 150)
@@ -627,18 +634,21 @@ function parseOpencodePermissionPrompt(text: string): ParsedPermissionPrompt | n
   const hasExplicitPermissionModal = hasButtonPrompt && block.some(isOpencodePermissionHeading)
   if (!block.some(isOpencodePermissionSubject) && !hasExplicitPermissionModal) return null
   if (!hasOpencodeWaitEvidence(block) && !hasExplicitPermissionModal && !hasQuestionPrompt) return null
+  if (hasSubstantialOutputAfterControls(block, 'opencode')) return null
+  const hasStrongSubject = block.some((line) => isOpencodePermissionSubject(line) && !isAgentActivityTraceLine(line))
+  if (hasExplicitPermissionModal && !hasStrongSubject && hasAgentActivityTraceLine(block)) return null
 
   const normalized = block.map(normalizeLine).filter(Boolean)
   const rawExcerpt = normalized.join('\n').slice(0, MAX_EXCERPT_CHARS)
   const fingerprintSource = normalized
-    .filter((line) => !isOpencodePermissionHeading(line) && !isOpencodeApproveButton(line) && !isOpencodeDenyButton(line) && !isWaitHintLine(line))
+    .filter((line) => !isOpencodePermissionHeading(line) && !isOpencodeApproveButton(line) && !isOpencodeDenyButton(line) && !isWaitHintLine(line) && !isAgentActivityTraceLine(line))
     .join('\n') || (normalized.some(isOpencodePermissionHeading) ? 'permission required' : 'opencode permission')
 
   return {
     provider: 'opencode',
     summary: opencodeSummaryFromBlock(block),
     detail: normalized
-      .filter((line) => !isOpencodePermissionHeading(line) && !isOpencodeApproveButton(line) && !isOpencodeDenyButton(line) && !isWaitHintLine(line))
+      .filter((line) => !isOpencodePermissionHeading(line) && !isOpencodeApproveButton(line) && !isOpencodeDenyButton(line) && !isWaitHintLine(line) && !isAgentActivityTraceLine(line))
       .join('\n')
       .slice(0, 220),
     rawExcerpt,
@@ -726,9 +736,9 @@ function detectSnapshot(text: string, providerHint: AgentPermissionProvider | nu
   if (inferredProvider === 'codex') return parseCodexPermissionPrompt(text) ?? parseClaudePermissionPrompt(text, false)
   if (inferredProvider === 'claude') return parseClaudePermissionPrompt(text, true) ?? parseCodexPermissionPrompt(text)
   if (inferredProvider === 'opencode') return parseOpencodePermissionPrompt(text) ?? parseCodexPermissionPrompt(text) ?? parseClaudePermissionPrompt(text, false)
-  if (providerHint === 'codex') return parseCodexPermissionPrompt(text) ?? parseClaudePermissionPrompt(text, false) ?? parseGenericAgentPermissionPrompt(text, 'codex')
-  if (providerHint === 'claude') return parseClaudePermissionPrompt(text, true) ?? parseCodexPermissionPrompt(text) ?? parseGenericAgentPermissionPrompt(text, 'claude')
-  return parseCodexPermissionPrompt(text) ?? parseClaudePermissionPrompt(text, false) ?? parseGenericAgentPermissionPrompt(text, 'codex')
+  if (providerHint === 'codex') return parseCodexPermissionPrompt(text) ?? parseClaudePermissionPrompt(text, false)
+  if (providerHint === 'claude') return parseClaudePermissionPrompt(text, true) ?? parseCodexPermissionPrompt(text)
+  return parseCodexPermissionPrompt(text) ?? parseClaudePermissionPrompt(text, false)
 }
 
 export function agentPermissionMissSnapshot(text: string, providerHint: AgentPermissionProvider | null): string | null {
@@ -776,13 +786,33 @@ export function agentPermissionMissDiagnostic(text: string, providerHint: AgentP
   }
 }
 
+// Fast keyword gate: ran before `inferProviderFromText`/`detectSnapshot` so that
+// the 95%+ of PTY chunks with no permission-related vocabulary skip the expensive
+// ANSI-stripping + line-splitting + multi-regex pipeline entirely. A single
+// case-insensitive alternation is cheaper than lowercasing + repeated includes.
+// False positives here do not change correctness — they just fall through to
+// the existing detection pipeline; false negatives cannot happen for a real
+// permission prompt because every parser's vocabulary overlaps this set.
+const PERMISSION_KEYWORD_FAST_RE =
+  /\b(?:allow|deny|approve|approval|permission|proceed|confirm|tool use|would you like)\b/i
+
+function hasPermissionKeywordFast(text: string): boolean {
+  return PERMISSION_KEYWORD_FAST_RE.test(text)
+}
+
 export class AgentPermissionPromptDetector {
   private lastFingerprint: string | null = null
 
   append(data: string, context: DetectionContext): AgentPermissionPrompt | null {
-    if (!context.agentSession && !inferProviderFromText(data)) {
-      this.lastFingerprint = null
-      return null
+    if (!context.agentSession) {
+      if (!hasPermissionKeywordFast(data)) {
+        this.lastFingerprint = null
+        return null
+      }
+      if (!inferProviderFromText(data)) {
+        this.lastFingerprint = null
+        return null
+      }
     }
 
     const parsed = detectSnapshot(data, context.provider)
