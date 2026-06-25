@@ -1,10 +1,15 @@
 import { app, shell, BrowserWindow, ipcMain, nativeImage, screen } from 'electron'
 
-// Prevent Chromium GPU process crash on macOS (exit_code=15 at startup).
-// Running the GPU in-process sidesteps the separate GPU helper that crashes
-// on some macOS configurations, and the app has no Angular/WebGL dependencies.
-app.disableHardwareAcceleration()
-app.commandLine.appendSwitch('in-process-gpu')
+// GPU acceleration: default ON (out-of-process GPU process). Compositor paint
+// and WebGL rasterization move off the renderer main thread into a dedicated
+// Chromium GPU process, which reduces renderer CPU usage under load. Users
+// hitting a GPU-process crash or rendering glitch (historical exit_code=15 on
+// some macOS configurations) can pass `--disable-gpu` to fall back to the
+// legacy software-rasterization + in-process-GPU mode.
+if (app.commandLine.hasSwitch('disable-gpu')) {
+  app.disableHardwareAcceleration()
+  app.commandLine.appendSwitch('in-process-gpu')
+}
 import { autoUpdater } from 'electron-updater'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'path'
 import fs from 'fs'
@@ -1963,6 +1968,15 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.emu.terminal')
+
+  app.on('child-process-gone', (_event, details) => {
+    if (details.type !== 'GPU') return
+    console.error('[emu:gpu-process-crashed]', {
+      reason: details.reason,
+      exitCode: details.exitCode,
+      name: details.name ?? null
+    })
+  })
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)

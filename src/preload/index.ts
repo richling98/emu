@@ -7,7 +7,9 @@ function hasFlagValue(name: string, value: string): boolean {
 contextBridge.exposeInMainWorld('api', {
   diagnosticsConfig: {
     webglEnabled: hasFlagValue('--emu-enable-webgl', '1') || hasFlagValue('--thinking-enable-webgl', '1'),
-    vibrancyDisabled: hasFlagValue('--emu-disable-vibrancy', '1') || hasFlagValue('--thinking-disable-vibrancy', '1')
+    vibrancyDisabled: hasFlagValue('--emu-disable-vibrancy', '1') || hasFlagValue('--thinking-disable-vibrancy', '1'),
+    gpuForceInProcess: process.argv.some((a) => a === '--in-process-gpu'),
+    gpuDisabled: process.argv.some((a) => a === '--disable-gpu')
   },
   // Create a new PTY session
   ptyCreate: (sessionId: string, options?: { cwd?: string | null; workspaceName?: string | null }) => ipcRenderer.invoke('pty:create', sessionId, options),

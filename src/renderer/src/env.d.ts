@@ -119,6 +119,8 @@ interface PerfStatsSnapshot {
 interface DiagnosticsConfig {
   webglEnabled: boolean
   vibrancyDisabled: boolean
+  gpuForceInProcess: boolean
+  gpuDisabled: boolean
 }
 
 type UpdateStatus =
