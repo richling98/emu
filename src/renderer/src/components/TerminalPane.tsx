@@ -32,8 +32,8 @@ const DEFAULT_FONT_SIZE = 13
 const AGENT_BUSY_ACTIVITY_GRACE_MS = 15_000
 const AGENT_BUSY_SCREEN_CHECK_MS = 1_000
 const AGENT_BUSY_MAX_WITHOUT_EVIDENCE_MS = 2 * 60 * 1000
-const AGENT_PROCESS_POLL_MS = 4_000
-const HIDDEN_AGENT_PROCESS_POLL_MS = 16_000
+const AGENT_PROCESS_POLL_MS = 6_000
+const HIDDEN_AGENT_PROCESS_POLL_MS = 24_000
 const AGENT_SUBMIT_SINGLE_LINE_SETTLE_MS = 180
 const AGENT_SUBMIT_BRACKETED_PASTE_SETTLE_MS = 650
 const AGENT_SUBMIT_RETRY_WAIT_MS = 650
@@ -42,14 +42,21 @@ const AGENT_SUBMIT_ECHO_WAIT_MAX_MS = 1_200
 const MAX_COMMAND_OUTPUT_CHARS = 200_000
 const COMMAND_OUTPUT_HEAD_CHARS = 100_000
 const COMMAND_OUTPUT_TAIL_CHARS = 100_000
-const HIDDEN_OUTPUT_BUFFER_MAX_CHARS = 2 * 1024 * 1024
+const HIDDEN_OUTPUT_BUFFER_MAX_CHARS = 512 * 1024
 const HIDDEN_OUTPUT_REPLAY_CHARS_PER_FRAME = 128 * 1024
 const DEFAULT_PERMISSION_TAIL_LINES = 28
 const AGENT_PERMISSION_TAIL_LINES = 80
 const AGENT_PERMISSION_RAW_BUFFER_MAX_CHARS = 32 * 1024
-const CLAUDE_PERMISSION_SCAN_DELAYS_MS = [0, 50, 150, 300] as const
 const AGENT_PERMISSION_WATCHDOG_INTERVAL_MS = 500
 const AGENT_PERMISSION_WATCHDOG_DURATION_MS = 30_000
+const MAX_COMMAND_HISTORY_ENTRIES = 500
+
+function appendCommandHistoryEntry(prev: HistoryEntry[], entry: HistoryEntry): HistoryEntry[] {
+  const next = prev.concat(entry)
+  return next.length > MAX_COMMAND_HISTORY_ENTRIES
+    ? next.slice(next.length - MAX_COMMAND_HISTORY_ENTRIES)
+    : next
+}
 
 function shouldUseWebglRenderer(): boolean {
   return window.api.diagnosticsConfig.webglEnabled
@@ -974,7 +981,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     let getPermissionScanText: (tailLines?: number) => string = () => ''
     let detectPermissionPrompt: (
       text: string,
-      source: 'raw' | 'raw-buffer' | 'write-parsed' | 'followup' | 'watchdog' | 'hidden-replay'
+      source: 'raw-buffer' | 'write-parsed' | 'watchdog' | 'hidden-replay'
     ) => boolean = () => false
 
     const replayHiddenOutput = () => {
@@ -1328,7 +1335,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
 
       promptStartLineRef.current = -1
       promptStartColRef.current = -1
-      setCommandHistory(prev => [...prev, entry])
+      setCommandHistory(prev => appendCommandHistoryEntry(prev, entry))
     }
 
     commitComposerRef.current = (text: string) => {
@@ -1911,7 +1918,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
 
     detectPermissionPrompt = (
       text: string,
-      source: 'raw' | 'raw-buffer' | 'write-parsed' | 'followup' | 'watchdog' | 'hidden-replay'
+      source: 'raw-buffer' | 'write-parsed' | 'watchdog' | 'hidden-replay'
     ): boolean => {
       const context = permissionContext()
       const permissionPrompt = agentPermissionDetectorRef.current.append(text, {
@@ -1933,6 +1940,9 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
           parsedProvider: permissionPrompt?.provider ?? null,
           opencodeMatched: permissionPrompt?.provider === 'opencode',
           summary: permissionPrompt?.summary ?? null,
+          detail: permissionPrompt?.detail ?? null,
+          fingerprint: permissionPrompt?.fingerprint ?? null,
+          rawExcerpt: permissionPrompt?.rawExcerpt ?? null,
           missReason: missDiagnostic?.reason ?? null,
           missSnapshot: permissionPrompt ? null : missDiagnostic?.snapshot ?? agentPermissionMissSnapshot(text, context.provider),
           overlayIpcSent: Boolean(permissionPrompt),
@@ -2027,16 +2037,16 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         currentWorkingDirectoryRef.current = cwd
         onCurrentCwdChangeRef.current?.(cwd)
       }
-      detectPermissionPrompt(data, 'raw')
-      detectPermissionPrompt(appendPermissionRawBuffer(data), 'raw-buffer')
+      const permissionRawBuffer = appendPermissionRawBuffer(data)
+      if (!isVisibleRef.current) {
+        detectPermissionPrompt(permissionRawBuffer, 'raw-buffer')
+      }
       const shouldWriteImmediately = isVisibleRef.current ||
         isAltScreenRef.current ||
         Boolean(rawTuiModeRef.current) ||
         shouldUseAgentPermissionScan()
       if (shouldWriteImmediately) {
-        const provider = agentProviderRef.current ?? getAgentProviderFromProcess(agentProcessRef.current)
         const useAgentScan = shouldUseAgentPermissionScan()
-        const scanDelays = provider === 'claude' || useAgentScan ? CLAUDE_PERMISSION_SCAN_DELAYS_MS : [0]
         const tailLines = useAgentScan ? AGENT_PERMISSION_TAIL_LINES : DEFAULT_PERMISSION_TAIL_LINES
         const shouldAutoFollowOutput = shouldAutoFollowOutputRef.current
         if (shouldAutoFollowOutput) autoFollowOutputRenderUntilRef.current = Date.now() + 250
@@ -2052,13 +2062,6 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
             debugScrollFollow('write-callback-snap')
             snapTerminalToBottom('auto-follow-snap')
             scheduleAutoFollowSnap()
-          }
-          for (const delay of scanDelays) {
-            if (delay === 0) continue
-            window.setTimeout(() => {
-              if (disposed) return
-              detectPermissionPrompt(getPermissionScanText(tailLines), 'followup')
-            }, delay)
           }
         })
         recordPerfEvent('terminalWriteCalls')
@@ -2262,7 +2265,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
           }
           promptStartLineRef.current = -1  // reset for next command
           promptStartColRef.current = -1
-          setCommandHistory(prev => [...prev, entry])
+          setCommandHistory(prev => appendCommandHistoryEntry(prev, entry))
         }
       } else {
         // Accumulate input on both main screen and alt screen.
