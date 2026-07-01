@@ -1518,7 +1518,11 @@ function addAgentPermissionPrompt(prompt: AgentPermissionPrompt, ownerWindowId: 
     }
     duplicate.ownerWindowId = ownerWindowId
     if (!getActiveAgentPermissionPrompt()) activeAgentPermissionPromptId = duplicate.prompt.id
-    ensureAgentPermissionOverlayVisible('duplicate-refresh', false)
+    if (!agentPermissionOverlayWindow || agentPermissionOverlayWindow.isDestroyed() || !agentPermissionOverlayWindow.isVisible()) {
+      ensureAgentPermissionOverlayVisible('duplicate-refresh', false)
+    } else {
+      sendAgentPermissionState()
+    }
     debugAgentPermission('prompt-deduped', {
       sessionId: promptWithWorkspaceName.sessionId,
       provider: promptWithWorkspaceName.provider,

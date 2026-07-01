@@ -195,6 +195,7 @@ function hasSubstantialOutputAfterControls(block: string[], provider: AgentPermi
 function isAgentActivityTraceLine(line: string): boolean {
   const normalized = normalizeLine(line)
   return /\bThought:\s*\d+ms\b/i.test(normalized) ||
+    /^[^\w$#]*(?:Read|Edit|Write|Glob|Grep|List|WebFetch|WebSearch)\b\s+(?:\/|https?:|\.|~)/i.test(normalized) ||
     /\b(?:WebFetch|WebSearch)\s+https?:\/\//i.test(normalized) ||
     /%\s*(?:WebFetch|WebSearch)\s+https?:\/\//i.test(normalized) ||
     /^(?:open|collapse|close)(?:\s+(?:open|collapse|close))*$/i.test(normalized)
@@ -202,6 +203,16 @@ function isAgentActivityTraceLine(line: string): boolean {
 
 function hasAgentActivityTraceLine(block: string[]): boolean {
   return block.some(isAgentActivityTraceLine)
+}
+
+function isOpencodePermissionChromeLine(line: string): boolean {
+  const normalized = normalizeLine(line)
+  return !normalized ||
+    isOpencodePermissionHeading(line) ||
+    isOpencodeApproveButton(line) ||
+    isOpencodeDenyButton(line) ||
+    isWaitHintLine(line) ||
+    isSelectedChoiceLine(line)
 }
 
 function commandLinesFromCodexBlock(block: string[]): string[] {
@@ -572,10 +583,37 @@ function isOpencodeQuestionPrompt(line: string): boolean {
 
 function isOpencodePermissionSubject(line: string): boolean {
   if (isOpencodeQuestionPrompt(line)) return true
-  return /^(shell|bash|edit|write|read|web fetch|web search|task|skill|tool)\b/i.test(normalizeLine(line)) ||
-    /^#\s+\S+/.test(normalizeLine(line)) ||
-    /^\$\s+\S+/.test(normalizeLine(line)) ||
-    /\b(requested|command|tool|file|edit|write|shell|bash)\b/i.test(normalizeLine(line))
+  const normalized = normalizeLine(line).replace(/^[^\w$#]+/, '')
+  return /^access\s+external\s+directory\b/i.test(normalized) ||
+    /^(shell|bash|edit|write|read|web fetch|web search|task|skill|tool)\b/i.test(normalized) ||
+    /^#\s+\S+/.test(normalized) ||
+    /^\$\s+\S+/.test(normalized) ||
+    /\b(requested|command|tool|file|edit|write|shell|bash)\b/i.test(normalized)
+}
+
+function isOpencodeStrongPermissionSubject(line: string): boolean {
+  const normalized = normalizeLine(line).replace(/^[^\w$#]+/, '')
+  return isOpencodeQuestionPrompt(normalized) ||
+    /^#\s+\S+/.test(normalized) ||
+    /^\$\s+\S+/.test(normalized) ||
+    /^access\s+external\s+directory\b/i.test(normalized)
+}
+
+function opencodeAccessExternalDirectorySubject(block: string[]): string | null {
+  const normalized = block.map(normalizeLine).filter(Boolean)
+  for (let index = 0; index < normalized.length; index++) {
+    const line = normalized[index].replace(/^[^\w$#]+/, '')
+    if (!/^access\s+external\s+directory\b/i.test(line)) continue
+
+    const parts = [line]
+    for (const next of normalized.slice(index + 1)) {
+      if (/^patterns$/i.test(next) || /^-\s+/.test(next) || isOpencodeControlLine(next)) break
+      if (/^[\w./~:@-]+$/.test(next)) parts.push(next)
+      else break
+    }
+    return parts.join(' ').replace(/\s+/g, ' ').replace(/\/\s+/g, '/').trim()
+  }
+  return null
 }
 
 function isOpencodePromptStart(line: string): boolean {
@@ -603,6 +641,17 @@ function opencodeSummaryFromBlock(block: string[]): string {
   const normalized = block.map(normalizeLine).filter(Boolean)
   const command = normalized.find((line) => /^\$\s+\S+/.test(line))
   if (command) return `Run: ${command.replace(/^\$\s+/, '')}`.slice(0, 150)
+
+  const accessDirectory = opencodeAccessExternalDirectorySubject(block)
+  if (accessDirectory) return accessDirectory.slice(0, 150)
+
+  const strongSubject = normalized.find((line) =>
+    !isOpencodeApproveButton(line) &&
+    !isOpencodeDenyButton(line) &&
+    !isAgentActivityTraceLine(line) &&
+    isOpencodeStrongPermissionSubject(line)
+  )
+  if (strongSubject) return strongSubject.replace(/^[^\w$#]+/, '').slice(0, 150)
 
   const subject = normalized.find((line) =>
     !isOpencodeApproveButton(line) &&
@@ -635,14 +684,17 @@ function parseOpencodePermissionPrompt(text: string): ParsedPermissionPrompt | n
   if (!block.some(isOpencodePermissionSubject) && !hasExplicitPermissionModal) return null
   if (!hasOpencodeWaitEvidence(block) && !hasExplicitPermissionModal && !hasQuestionPrompt) return null
   if (hasSubstantialOutputAfterControls(block, 'opencode')) return null
-  const hasStrongSubject = block.some((line) => isOpencodePermissionSubject(line) && !isAgentActivityTraceLine(line))
+  const hasStrongSubject = block.some((line) => isOpencodeStrongPermissionSubject(line) && !isAgentActivityTraceLine(line))
   if (hasExplicitPermissionModal && !hasStrongSubject && hasAgentActivityTraceLine(block)) return null
+  if (hasExplicitPermissionModal && !hasStrongSubject && block.some((line) => !isOpencodePermissionChromeLine(line))) return null
 
   const normalized = block.map(normalizeLine).filter(Boolean)
   const rawExcerpt = normalized.join('\n').slice(0, MAX_EXCERPT_CHARS)
-  const fingerprintSource = normalized
+  const filteredFingerprintSource = normalized
     .filter((line) => !isOpencodePermissionHeading(line) && !isOpencodeApproveButton(line) && !isOpencodeDenyButton(line) && !isWaitHintLine(line) && !isAgentActivityTraceLine(line))
-    .join('\n') || (normalized.some(isOpencodePermissionHeading) ? 'permission required' : 'opencode permission')
+    .join('\n')
+  const fingerprintSource = opencodeAccessExternalDirectorySubject(block) ??
+    (filteredFingerprintSource || (normalized.some(isOpencodePermissionHeading) ? 'permission required' : 'opencode permission'))
 
   return {
     provider: 'opencode',

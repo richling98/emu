@@ -618,6 +618,68 @@ assert(parsedOpencodeHeadingOnlyRepaint, 'opencode heading/buttons repaint shoul
 assert.equal(parsedOpencodeHeadingOnlyRepaint.summary, 'Approval needed')
 assert.equal(parsedOpencodeHeadingOnlyRepaint.fingerprint, 'opencode:approval:permission required')
 
+const opencodeHeadingWithLeftoverScriptTextFalsePositive = [
+  '△ Permission required',
+  'EOF cp /tmp/test_state_pause.json data/dqmv_state.json && ./run-dev.sh',
+  '',
+  'Allow once   Allow always   Reject',
+  'ctrl+f fullscreen  ↵ select  enter confirm'
+].join('\n')
+assert.equal(
+  new AgentPermissionPromptDetector().append(opencodeHeadingWithLeftoverScriptTextFalsePositive, {
+    sessionId: 'session-opencode-leftover-script-text',
+    provider: 'opencode',
+    agentSession: true
+  }),
+  null,
+  'generic opencode heading/buttons repaint should not emit when leftover script text is mistaken for prompt detail'
+)
+
+const opencodeHeadingWithReadTraceFalsePositive = [
+  '△ Permission required',
+  '⠂ Read /var/folders/94/mh4002897111zbkw3q_qsd7w0000gn/T/TemporaryItems/screenshot.png',
+  '',
+  'Allow once   Allow always   Reject',
+  'ctrl+f fullscreen  ↵ select  enter confirm'
+].join('\n')
+assert.equal(
+  new AgentPermissionPromptDetector().append(opencodeHeadingWithReadTraceFalsePositive, {
+    sessionId: 'session-opencode-read-trace',
+    provider: 'opencode',
+    agentSession: true
+  }),
+  null,
+  'opencode activity trace lines above stale controls should not emit generic approval popups'
+)
+
+const opencodeExternalDirectoryPermissionWithReadTrace = [
+  '⠂ Read /var/folders/94/mh4002897111zbkw3q_qsd7w0000gn/T/TemporaryItems/NSIRD_screencaptureui_xmWxNq/Screenshot.png',
+  '△ Permission required',
+  '← Access external directory /var/folders/94/mh4002897111zbkw3q_qsd7w0000gn/T/TemporaryItems/',
+  'NSIRD_screencaptureui_xmWxNq',
+  '',
+  'Patterns',
+  '- /var/folders/94/mh4002897111zbkw3q_qsd7w0000gn/T/TemporaryItems/NSIRD_screencaptureui_xmWxNq/*',
+  '',
+  'Allow once   Allow always   Reject',
+  'ctrl+f fullscreen  ↵ select  enter confirm'
+].join('\n')
+const parsedOpencodeExternalDirectoryPermissionWithReadTrace = new AgentPermissionPromptDetector().append(opencodeExternalDirectoryPermissionWithReadTrace, {
+  sessionId: 'session-opencode-access-external-directory',
+  provider: 'opencode',
+  agentSession: true
+})
+assert(parsedOpencodeExternalDirectoryPermissionWithReadTrace, 'opencode external-directory permission should parse even with nearby read trace')
+assert.equal(
+  parsedOpencodeExternalDirectoryPermissionWithReadTrace.summary,
+  'Access external directory /var/folders/94/mh4002897111zbkw3q_qsd7w0000gn/T/TemporaryItems/NSIRD_screencaptureui_xmWxNq'
+)
+assert.equal(
+  parsedOpencodeExternalDirectoryPermissionWithReadTrace.fingerprint,
+  'opencode:approval:access external directory /var/folders/94/mh4002897111zbkw3q_qsd7w0000gn/t/temporaryitems/nsird_screencaptureui_xmwxnq'
+)
+assert(!parsedOpencodeExternalDirectoryPermissionWithReadTrace.detail.includes('Read /var/folders'), 'read trace should not become permission detail')
+
 const opencodeDescriptionOnlyRepaint = [
   '△ Permission required',
   '# Check if browse binary exists',
