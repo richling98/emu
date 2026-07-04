@@ -18,14 +18,6 @@ import * as pty from 'node-pty'
 import os from 'os'
 import { fileURLToPath } from 'url'
 import {
-  AgentPermissionPromptDetector,
-  agentPermissionMissDiagnostic,
-  agentPermissionMissSnapshot,
-  getAgentProviderFromCommand,
-  getAgentProviderFromProcess,
-  inferProviderFromText,
-  isAgentLaunchCommand,
-  isAgentProcessName,
   type AgentPermissionPrompt,
   type AgentPermissionProvider,
   type PtyWriteChunk
@@ -148,7 +140,6 @@ const MAX_MARKDOWN_BYTES = 5 * 1024 * 1024
 const MAX_MARKDOWN_IMAGE_BYTES = 10 * 1024 * 1024
 const PTY_OUTPUT_BATCH_MS = 12
 const PTY_OUTPUT_BATCH_MAX_BYTES = 256 * 1024
-const AGENT_PERMISSION_RAW_TAIL_MAX_CHARS = 32 * 1024
 const MARKDOWN_EXTENSIONS = new Set(['.md', '.markdown', '.mdown', '.mkd'])
 const MARKDOWN_IMAGE_MIME_BY_EXT = new Map([
   ['.png', 'image/png'],
@@ -161,7 +152,6 @@ const AGENT_PERMISSION_OVERLAY_WIDTH = 390
 const AGENT_PERMISSION_OVERLAY_HEIGHT = 168
 const AGENT_PERMISSION_OVERLAY_MARGIN = 16
 const AGENT_PERMISSION_RESOLVED_SUPPRESSION_MS = 2_000
-const AGENT_PERMISSION_MISS_LOG_PATH = '/tmp/emu-agent-permission-misses.log'
 const DEBUG_AGENT_PERMISSION = process.env.EMU_DEBUG_AGENT_PERMISSION === '1' ||
   process.env.THINKING_DEBUG_AGENT_PERMISSION === '1'
 
@@ -186,143 +176,9 @@ type UpdateStatusPayload =
 let updateCheckInFlight = false
 let updateDownloadInFlight = false
 
-interface AgentPermissionSessionState {
-  detector: AgentPermissionPromptDetector
-  provider: AgentPermissionProvider | null
-  agentSession: boolean
-  rawTail: string
-  lastMissSnapshot: string | null
-}
-
-const agentPermissionSessionStates = new Map<string, AgentPermissionSessionState>()
-
 function debugAgentPermission(event: string, details: Record<string, unknown> = {}): void {
   if (!DEBUG_AGENT_PERMISSION) return
   console.info('[agent-permission:main]', { event, ...details })
-}
-
-function redactAgentPermissionMissSnapshot(text: string): string {
-  return text
-    .replace(/\b(?:sk|pk|ghp|github_pat|xox[abprs])_[A-Za-z0-9_=-]{12,}\b/g, '[redacted-token]')
-    .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, '[redacted-email]')
-    .slice(-2_000)
-}
-
-function logAgentPermissionMiss(sessionId: string, state: AgentPermissionSessionState): void {
-  if (!DEBUG_AGENT_PERMISSION) return
-  const diagnostic = agentPermissionMissDiagnostic(state.rawTail, state.provider)
-  const snapshot = diagnostic?.snapshot ?? agentPermissionMissSnapshot(state.rawTail, state.provider)
-  if (!snapshot || snapshot === state.lastMissSnapshot) return
-
-  state.lastMissSnapshot = snapshot
-  const entry = [
-    `[${new Date().toISOString()}] session=${sessionId} provider=${state.provider ?? 'unknown'} inferred=${diagnostic?.inferredProvider ?? 'unknown'} reason=${diagnostic?.reason ?? 'unknown'}`,
-    redactAgentPermissionMissSnapshot(snapshot),
-    ''
-  ].join('\n')
-  fs.appendFile(AGENT_PERMISSION_MISS_LOG_PATH, `${entry}\n`, () => {})
-}
-
-function getAgentPermissionSessionState(sessionId: string): AgentPermissionSessionState {
-  let state = agentPermissionSessionStates.get(sessionId)
-  if (!state) {
-    state = {
-      detector: new AgentPermissionPromptDetector(),
-      provider: null,
-      agentSession: false,
-      rawTail: '',
-      lastMissSnapshot: null
-    }
-    agentPermissionSessionStates.set(sessionId, state)
-  }
-  return state
-}
-
-function trimAgentPermissionRawTail(text: string): string {
-  if (text.length <= AGENT_PERMISSION_RAW_TAIL_MAX_CHARS) return text
-  return text.slice(-AGENT_PERMISSION_RAW_TAIL_MAX_CHARS)
-}
-
-function markAgentPermissionSessionFromCommand(sessionId: string, data: string): void {
-  const provider = getAgentProviderFromCommand(data)
-  if (!provider && !isAgentLaunchCommand(data)) return
-
-  const state = getAgentPermissionSessionState(sessionId)
-  if (provider) state.provider = provider
-  state.agentSession = true
-  debugAgentPermission('main-session-agent-marked', {
-    sessionId,
-    provider: state.provider,
-    source: 'pty-write'
-  })
-}
-
-function scanAgentPermissionPtyOutput(sessionId: string, data: string, processName: string | null): void {
-  const state = getAgentPermissionSessionState(sessionId)
-  const providerFromProcess = getAgentProviderFromProcess(processName)
-  const providerFromText = inferProviderFromText(data)
-
-  if (providerFromProcess && providerFromProcess !== state.provider) {
-    state.provider = providerFromProcess
-    debugAgentPermission('main-session-provider-updated', {
-      sessionId,
-      provider: state.provider,
-      source: 'foreground-process'
-    })
-  } else if (!state.provider && providerFromText) {
-    state.provider = providerFromText
-    debugAgentPermission('main-session-provider-updated', {
-      sessionId,
-      provider: state.provider,
-      source: 'pty-output'
-    })
-  }
-
-  if (isAgentProcessName(processName) || providerFromProcess || providerFromText) {
-    state.agentSession = true
-  }
-
-  state.rawTail = trimAgentPermissionRawTail(`${state.rawTail}${data}`)
-  const prompt = state.detector.append(state.rawTail, {
-    sessionId,
-    provider: state.provider,
-    agentSession: state.agentSession
-  })
-  debugAgentPermission('main-pty-scan', {
-    sessionId,
-    provider: state.provider,
-    providerFromProcess,
-    providerFromText,
-    agentSession: state.agentSession,
-    matched: Boolean(prompt),
-    parsedProvider: prompt?.provider ?? null,
-    queued: Boolean(prompt),
-    suppressionReason: prompt ? null : agentPermissionMissDiagnostic(state.rawTail, state.provider)?.reason ?? 'no_prompt_match',
-    fingerprint: prompt?.fingerprint ?? null,
-    summary: prompt?.summary ?? null,
-    textTail: state.rawTail.slice(-2_000)
-  })
-
-  if (!prompt) {
-    logAgentPermissionMiss(sessionId, state)
-    return
-  }
-
-  state.provider = prompt.provider
-  state.agentSession = true
-  state.lastMissSnapshot = null
-  debugAgentPermission('main-pty-scan-matched', {
-    sessionId,
-    provider: prompt.provider,
-    fingerprint: prompt.fingerprint,
-    summary: prompt.summary
-  })
-  addAgentPermissionPrompt(prompt, ptyOwnerWindowIds.get(sessionId) ?? null)
-}
-
-function clearAgentPermissionSessionState(sessionId: string): void {
-  agentPermissionSessionStates.delete(sessionId)
-  agentPermissionSessionWorkspaceNames.delete(sessionId)
 }
 
 function createPtyPerfStats(sessionId: string, pid: number): PtyPerfStats {
@@ -401,7 +257,7 @@ function normalizePtyWriteChunks(input: unknown): PtyWriteChunk[] | null {
     if (!write || typeof write !== 'object') return null
     const data = (write as { data?: unknown }).data
     const delayAfterMs = (write as { delayAfterMs?: unknown }).delayAfterMs
-    if (typeof data !== 'string' || data.length > 2000) return null
+    if (typeof data !== 'string' || data.length > 524_288) return null
     writes.push({
       data,
       delayAfterMs: typeof delayAfterMs === 'number'
@@ -2026,7 +1882,6 @@ app.whenReady().then(() => {
         stats.dataBytes += bytes
         stats.lastDataAt = Date.now()
       }
-      scanAgentPermissionPtyOutput(sessionId, data, ptyProcess.process ?? null)
       queuePtyOutput(sessionId, event.sender, data, bytes)
     })
 
@@ -2035,7 +1890,7 @@ app.whenReady().then(() => {
       ptyProcesses.delete(sessionId)
       ptyPerfStats.delete(sessionId)
       ptyOwnerWindowIds.delete(sessionId)
-      clearAgentPermissionSessionState(sessionId)
+      agentPermissionSessionWorkspaceNames.delete(sessionId)
       dismissAgentPermissionPromptsForSession(sessionId)
       if (!event.sender.isDestroyed()) {
         event.sender.send(`pty:exit:${sessionId}`)
@@ -2181,14 +2036,12 @@ app.whenReady().then(() => {
       stats.ptyWriteEvents += 1
       stats.ptyWriteBytes += byteLength(data)
     }
-    markAgentPermissionSessionFromCommand(sessionId, data)
     ptyProcesses.get(sessionId)?.write(data)
   })
 
   ipcMain.handle('pty:writeSequence', async (_, sessionId: string, writes: PtyWriteChunk[]): Promise<PtyWriteSequenceResult> => {
     const normalizedWrites = normalizePtyWriteChunks(writes)
     if (!normalizedWrites) return { ok: false, reason: 'invalid-input' }
-    for (const write of normalizedWrites) markAgentPermissionSessionFromCommand(sessionId, write.data)
     return writePtySequence(sessionId, normalizedWrites)
   })
 
@@ -2206,7 +2059,7 @@ app.whenReady().then(() => {
     ptyProcesses.delete(sessionId)
     ptyPerfStats.delete(sessionId)
     ptyOwnerWindowIds.delete(sessionId)
-    clearAgentPermissionSessionState(sessionId)
+    agentPermissionSessionWorkspaceNames.delete(sessionId)
     dismissAgentPermissionPromptsForSession(sessionId)
   })
 
