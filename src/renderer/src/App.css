@@ -106,7 +106,6 @@
   position: relative;
   background: var(--bg-base);
   overflow: hidden;
-  transition: background 0.3s ease;
 }
 
 .terminal-area--markdown-expanded {
