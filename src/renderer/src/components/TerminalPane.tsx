@@ -50,6 +50,9 @@ const AGENT_PERMISSION_RAW_BUFFER_MAX_CHARS = 32 * 1024
 const AGENT_PERMISSION_WATCHDOG_INTERVAL_MS = 500
 const AGENT_PERMISSION_WATCHDOG_DURATION_MS = 30_000
 const MAX_COMMAND_HISTORY_ENTRIES = 500
+const AGENT_HISTORY_SEARCH_MAX_ATTEMPTS = 13
+const AGENT_HISTORY_SEARCH_SETTLE_MS = 90
+const NAVIGATION_STATUS_MS = 2_600
 
 function appendCommandHistoryEntry(prev: HistoryEntry[], entry: HistoryEntry): HistoryEntry[] {
   const next = prev.concat(entry)
@@ -84,6 +87,7 @@ type InputOwner = 'composer' | 'xterm'
 type RawTuiMode = 'pager' | 'editor' | 'generic'
 type ScrollFollowTrigger = 'auto-follow-snap' | 'button' | 'exit' | 'hidden-replay' | 'manual'
 type DropTarget = 'terminal' | 'composer'
+type AgentHistorySearchDirection = 'up' | 'down' | 'both'
 type TerminalPerfEvent =
   | 'ptyDataEvents'
   | 'ptyDataBytes'
@@ -406,6 +410,10 @@ function normalizeSubmitLastLineFingerprint(text: string): string {
   return lastLine.slice(-180)
 }
 
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 function buildComposerCommitPayload(text: string, imagePaths: string): ComposerCommitPayload | null {
   const commandText = [normalizeComposerCommitText(text), imagePaths].filter(Boolean).join(' ').trim()
   if (!commandText) return null
@@ -527,12 +535,12 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
   const waitingForPreviewRef = useRef<string | null>(null)
 
   // Track alternate-screen state (vim, claude code, etc. use \x1b[?1049h / \x1b[?1049l).
-  // While in alt-screen, buffer.active refers to the ALTERNATE buffer — its baseY/cursorY
-  // are completely different coordinates from the main scrollback.  We still track commands
-  // typed inside TUI apps, but we anchor them to the main buffer line where the TUI launched
-  // so navigation always ends up at a valid, scrollable position.
+  // The normal buffer is frozen while a TUI owns the alternate screen. Agent prompts
+  // recorded there cannot be line-addressed reliably, so they navigate by searching
+  // visible agent text instead of by using this launch-line anchor.
   const isAltScreenRef = useRef(false)
   const altScreenEntryLineRef = useRef(-1) // main-buffer line when alt-screen was entered
+  const altScreenSessionIdRef = useRef<string | null>(null)
 
   // Record the buffer line where the user began typing the CURRENT command — i.e. the moment
   // currentInputRef transitions from empty to non-empty.  This is the start of the prompt line,
@@ -562,8 +570,11 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [isAtBottom, setIsAtBottom] = useState(true)
   const [isAltAgentReviewingHistory, setIsAltAgentReviewingHistory] = useState(false)
+  const [navigationStatus, setNavigationStatus] = useState<string | null>(null)
   const isAtBottomRef = useRef(true)
   const isAltAgentReviewingHistoryRef = useRef(false)
+  const navigationStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const navigationSearchTokenRef = useRef(0)
   const shouldAutoFollowOutputRef = useRef(true)
   const autoFollowFrameRef = useRef<number | null>(null)
   const autoFollowOutputRenderUntilRef = useRef(0)
@@ -659,11 +670,12 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         e.preventDefault()
         const history = commandHistoryRef.current
         if (history.length === 0) return
+        const previous = promptNavIndexRef.current
         const next = promptNavIndexRef.current <= 0
           ? history.length - 1
           : promptNavIndexRef.current - 1
         promptNavIndexRef.current = next
-        scrollToPromptLine(history[next].line)
+        void jumpToHistoryEntry(history[next], next < previous ? 'up' : 'down')
         return
       }
 
@@ -673,9 +685,10 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         if (history.length === 0) return
         if (promptNavIndexRef.current < history.length - 1 && promptNavIndexRef.current >= 0) {
           promptNavIndexRef.current++
-          scrollToPromptLine(history[promptNavIndexRef.current].line)
+          void jumpToHistoryEntry(history[promptNavIndexRef.current], 'down')
         } else {
           promptNavIndexRef.current = -1
+          navigationSearchTokenRef.current += 1
           terminalRef.current?.scrollToBottom()
         }
         return
@@ -698,6 +711,94 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
   // this just shows a couple lines of prior context above the prompt, which is natural.
   const scrollToPromptLine = (line: number) => {
     terminalRef.current?.scrollToLine(Math.max(0, line - 3))
+  }
+
+  const showNavigationStatus = (message: string) => {
+    if (navigationStatusTimerRef.current) clearTimeout(navigationStatusTimerRef.current)
+    setNavigationStatus(message)
+    navigationStatusTimerRef.current = setTimeout(() => {
+      navigationStatusTimerRef.current = null
+      setNavigationStatus(null)
+    }, NAVIGATION_STATUS_MS)
+  }
+
+  const normalBufferHasLine = (terminal: Terminal, line: number) => {
+    return line >= 0 && Boolean(terminal.buffer.normal.getLine(line))
+  }
+
+  const visibleTextContainsHistoryEntry = (terminal: Terminal, entry: HistoryEntry) => {
+    const visibleText = getTerminalVisibleText(terminal)
+    return terminalTailContainsSubmitFingerprint(visibleText, entry.commandLastLineFingerprint) ||
+      terminalTailContainsSubmitFingerprint(visibleText, entry.commandFingerprint)
+  }
+
+  const jumpToNormalBufferEntry = (terminal: Terminal, entry: HistoryEntry) => {
+    if (!normalBufferHasLine(terminal, entry.line)) {
+      showNavigationStatus('That prompt has scrolled out of history.')
+      return
+    }
+    scrollToPromptLine(entry.line)
+  }
+
+  const jumpToAgentAltScreenEntry = async (
+    terminal: Terminal,
+    entry: HistoryEntry,
+    direction: AgentHistorySearchDirection
+  ) => {
+    if (terminal.buffer.active.type !== 'alternate') {
+      showNavigationStatus('That prompt is inside an agent screen that is no longer active.')
+      return
+    }
+    if (entry.altScreenSessionId && entry.altScreenSessionId !== altScreenSessionIdRef.current) {
+      showNavigationStatus('That prompt belongs to a previous agent screen.')
+      return
+    }
+    if (!entry.commandFingerprint && !entry.commandLastLineFingerprint) {
+      showNavigationStatus('That prompt is missing navigation metadata.')
+      return
+    }
+
+    const token = ++navigationSearchTokenRef.current
+    const directions: Array<'up' | 'down'> = direction === 'both' ? ['up', 'down'] : [direction]
+    resetAltAgentScrollReview()
+    shouldAutoFollowOutputRef.current = false
+    isAtBottomRef.current = false
+    setIsAtBottom(false)
+
+    for (const searchDirection of directions) {
+      const pageSequence = searchDirection === 'up' ? '\x1b[5~' : '\x1b[6~'
+      for (let attempt = 0; attempt <= AGENT_HISTORY_SEARCH_MAX_ATTEMPTS; attempt++) {
+        if (token !== navigationSearchTokenRef.current) return
+        if (terminal.buffer.active.type !== 'alternate') {
+          showNavigationStatus('The agent screen closed before navigation finished.')
+          return
+        }
+        if (visibleTextContainsHistoryEntry(terminal, entry)) return
+        if (attempt === AGENT_HISTORY_SEARCH_MAX_ATTEMPTS) break
+        window.api.ptyWrite(session.id, pageSequence)
+        await wait(AGENT_HISTORY_SEARCH_SETTLE_MS)
+      }
+    }
+
+    showNavigationStatus('Could not find that prompt in the agent history.')
+  }
+
+  const jumpToHistoryEntry = async (
+    entry: HistoryEntry,
+    direction: AgentHistorySearchDirection = 'both'
+  ) => {
+    const terminal = terminalRef.current
+    if (!terminal) return
+    navigationSearchTokenRef.current += 1
+    if (navigationStatusTimerRef.current) {
+      clearTimeout(navigationStatusTimerRef.current)
+      navigationStatusTimerRef.current = null
+    }
+    if (entry.navigationMode === 'agent-alt-screen') {
+      await jumpToAgentAltScreenEntry(terminal, entry, direction)
+      return
+    }
+    jumpToNormalBufferEntry(terminal, entry)
   }
 
   const getViewportElement = () => {
@@ -1316,6 +1417,13 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       const line = isAltScreenRef.current
         ? altScreenEntryLineRef.current
         : terminal.buffer.active.baseY + terminal.buffer.active.cursorY
+      const provider = agentProviderRef.current ?? getAgentProviderFromProcess(agentProcessRef.current)
+      const isAgentAltScreen = isAltScreenRef.current && (
+        Boolean(provider) || agentSessionRef.current || isAgentProcessName(agentProcessRef.current)
+      )
+      const navigationMode = isAgentAltScreen
+        ? 'agent-alt-screen'
+        : 'normal-buffer'
       const id = crypto.randomUUID()
       const entry: HistoryEntry = {
         id,
@@ -1324,7 +1432,12 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         outputFull: '',
         line,
         commandStartCol: terminal.buffer.active.cursorX,
-        timestamp: new Date()
+        timestamp: new Date(),
+        navigationMode,
+        commandFingerprint: normalizeSubmitFingerprint(cmd),
+        commandLastLineFingerprint: normalizeSubmitLastLineFingerprint(cmd),
+        agentProvider: provider,
+        altScreenSessionId: navigationMode === 'agent-alt-screen' ? altScreenSessionIdRef.current : null
       }
 
       if (!isAltScreenRef.current) {
@@ -1493,6 +1606,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     terminal.buffer.onBufferChange(async (newBuffer) => {
       if (newBuffer.type === 'alternate') {
         isAltScreenRef.current = true
+        altScreenSessionIdRef.current = crypto.randomUUID()
         wheelAccumulatorRef.current = 0
         resetAltAgentScrollReview()
         // Snapshot normal-buffer position — used as the navigation anchor for
@@ -1532,6 +1646,8 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       } else {
         const prevAltScreen = isAltScreenRef.current
         isAltScreenRef.current = false
+        altScreenSessionIdRef.current = null
+        navigationSearchTokenRef.current += 1
         endRawTuiMode()
         wheelAccumulatorRef.current = 0
         resetAltAgentScrollReview()
@@ -2215,10 +2331,10 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       // Enter, matching standard macOS Terminal behaviour.
 
       // Track command history — record command on Enter.
-      // Commands typed in TUI apps (Claude Code, vim, etc.) are still recorded, but their
-      // navigation line is anchored to the main-buffer position where the TUI was launched
-      // (altScreenEntryLineRef) rather than the alt-screen cursor, which lives in a separate
-      // coordinate space and would produce garbage scroll targets on the main screen.
+      // Agent commands typed in alt-screen apps are still recorded, but they navigate by
+      // searching for command fingerprints in the visible TUI text. The launch-line anchor
+      // remains only as a fallback/session marker because alt-screen coordinates are not
+      // stable xterm normal-buffer scroll targets.
       if (data === '\r') {
         if (!isAltScreenRef.current) {
           flushOutputBuffer()  // flush previous command's output immediately
@@ -2237,16 +2353,24 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
             clearAgentSession(agentProcessRef.current)
           }
 
-          // Alt-screen commands anchor to where the TUI launched in the main buffer.
           // Regular commands use promptStartLineRef — the line where the user began typing,
           // which is always the prompt line (first line of the command).  Falling back to
           // the Enter-time cursor position handles the rare case where we missed the first
           // keystroke (e.g. pasted text with no prior keystrokes tracked).
+          // Agent alt-screen commands keep the launch-line anchor but use fingerprint
+          // search for actual navigation.
           const line = isAltScreenRef.current
             ? altScreenEntryLineRef.current
             : promptStartLineRef.current >= 0
               ? promptStartLineRef.current
               : terminal.buffer.active.baseY + terminal.buffer.active.cursorY
+          const provider = agentProviderRef.current ?? getAgentProviderFromProcess(agentProcessRef.current)
+          const isAgentAltScreen = isAltScreenRef.current && (
+            Boolean(provider) || agentSessionRef.current || isAgentProcessName(agentProcessRef.current)
+          )
+          const navigationMode = isAgentAltScreen
+            ? 'agent-alt-screen'
+            : 'normal-buffer'
           const id = crypto.randomUUID()
           const entry: HistoryEntry = {
             id,
@@ -2255,7 +2379,12 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
             outputFull: '',
             line,
             commandStartCol: promptStartColRef.current >= 0 ? promptStartColRef.current : 0,
-            timestamp: new Date()
+            timestamp: new Date(),
+            navigationMode,
+            commandFingerprint: normalizeSubmitFingerprint(cmd),
+            commandLastLineFingerprint: normalizeSubmitLastLineFingerprint(cmd),
+            agentProvider: provider,
+            altScreenSessionId: navigationMode === 'agent-alt-screen' ? altScreenSessionIdRef.current : null
           }
           if (!isAltScreenRef.current) {
             // Output capture only makes sense for main-screen commands
@@ -2463,6 +2592,11 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         cancelAnimationFrame(scrollToBottomAnimRef.current)
         scrollToBottomAnimRef.current = null
       }
+      navigationSearchTokenRef.current += 1
+      if (navigationStatusTimerRef.current) {
+        clearTimeout(navigationStatusTimerRef.current)
+        navigationStatusTimerRef.current = null
+      }
       if (agentProcessPollRef.current) {
         clearTimeout(agentProcessPollRef.current)
         agentProcessPollRef.current = null
@@ -2615,10 +2749,15 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
           </div>
         </div>
       )}
+      {navigationStatus && (
+        <div className="terminal-navigation-status">
+          {navigationStatus}
+        </div>
+      )}
       {showDrawer && (
         <CommandHistoryDrawer
           entries={commandHistory}
-          onJump={(line) => scrollToPromptLine(line)}
+          onJump={(entry) => { void jumpToHistoryEntry(entry) }}
           onClose={handleCloseDrawer}
           onCopy={handleCopyOutput}
           copiedId={copiedId}

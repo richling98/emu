@@ -9,11 +9,16 @@ export interface HistoryEntry {
   line: number
   commandStartCol?: number
   timestamp: Date
+  navigationMode: 'normal-buffer' | 'agent-alt-screen'
+  commandFingerprint: string
+  commandLastLineFingerprint: string
+  agentProvider?: string | null
+  altScreenSessionId?: string | null
 }
 
 interface Props {
   entries: HistoryEntry[]
-  onJump: (line: number) => void
+  onJump: (entry: HistoryEntry) => void
   onClose: () => void
   onCopy: (entryId: string) => void
   copiedId: string | null
@@ -58,7 +63,7 @@ export default function CommandHistoryDrawer({ entries, onJump, onClose, onCopy,
             <div
               key={entry.id}
               className="chd-entry"
-              onClick={() => { onJump(entry.line); onClose() }}
+              onClick={() => { onJump(entry); onClose() }}
             >
               <div className="chd-entry-top">
                 <span className="chd-command">$ {entry.command}</span>
