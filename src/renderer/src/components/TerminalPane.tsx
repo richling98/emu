@@ -50,8 +50,6 @@ const AGENT_PERMISSION_RAW_BUFFER_MAX_CHARS = 32 * 1024
 const AGENT_PERMISSION_WATCHDOG_INTERVAL_MS = 500
 const AGENT_PERMISSION_WATCHDOG_DURATION_MS = 30_000
 const MAX_COMMAND_HISTORY_ENTRIES = 500
-const AGENT_HISTORY_SEARCH_MAX_ATTEMPTS = 13
-const AGENT_HISTORY_SEARCH_SETTLE_MS = 90
 const NAVIGATION_STATUS_MS = 2_600
 
 function appendCommandHistoryEntry(prev: HistoryEntry[], entry: HistoryEntry): HistoryEntry[] {
@@ -87,7 +85,6 @@ type InputOwner = 'composer' | 'xterm'
 type RawTuiMode = 'pager' | 'editor' | 'generic'
 type ScrollFollowTrigger = 'auto-follow-snap' | 'button' | 'exit' | 'hidden-replay' | 'manual'
 type DropTarget = 'terminal' | 'composer'
-type AgentHistorySearchDirection = 'up' | 'down' | 'both'
 type TerminalPerfEvent =
   | 'ptyDataEvents'
   | 'ptyDataBytes'
@@ -560,10 +557,9 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
   const hiddenOutputOmittedCharsRef = useRef(0)
   const hiddenOutputReplayFrameRef = useRef<number | null>(null)
 
-  const [commandHistory, setCommandHistory] = useState<HistoryEntry[]>([])
-  const commandHistoryRef = useRef<HistoryEntry[]>([])
-  const promptNavIndexRef = useRef(-1)
-  const [showDrawer, setShowDrawer] = useState(false)
+   const [commandHistory, setCommandHistory] = useState<HistoryEntry[]>([])
+   const commandHistoryRef = useRef<HistoryEntry[]>([])
+   const [showDrawer, setShowDrawer] = useState(false)
   const [fileDropActive, setFileDropActive] = useState(false)
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
   const [terminalDropRect, setTerminalDropRect] = useState<DropHighlightRect | null>(null)
@@ -666,33 +662,40 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         return
       }
 
-      if (e.metaKey && e.key === 'ArrowUp') {
-        e.preventDefault()
-        const history = commandHistoryRef.current
-        if (history.length === 0) return
-        const previous = promptNavIndexRef.current
-        const next = promptNavIndexRef.current <= 0
-          ? history.length - 1
-          : promptNavIndexRef.current - 1
-        promptNavIndexRef.current = next
-        void jumpToHistoryEntry(history[next], next < previous ? 'up' : 'down')
-        return
-      }
+       if (e.metaKey && e.key === 'ArrowUp') {
+         e.preventDefault()
+         const history = commandHistoryRef.current
+         if (history.length === 0) return
+         const terminal = terminalRef.current
+         if (!terminal) return
+         const currentIndex = findCurrentPromptIndex(terminal, history)
+         let nextIndex: number
+         if (currentIndex < 0) {
+           nextIndex = history.length - 1
+         } else if (currentIndex === 0) {
+           nextIndex = history.length - 1
+         } else {
+           nextIndex = currentIndex - 1
+         }
+         void jumpToHistoryEntry(history[nextIndex])
+         return
+       }
 
-      if (e.metaKey && e.key === 'ArrowDown') {
-        e.preventDefault()
-        const history = commandHistoryRef.current
-        if (history.length === 0) return
-        if (promptNavIndexRef.current < history.length - 1 && promptNavIndexRef.current >= 0) {
-          promptNavIndexRef.current++
-          void jumpToHistoryEntry(history[promptNavIndexRef.current], 'down')
-        } else {
-          promptNavIndexRef.current = -1
-          navigationSearchTokenRef.current += 1
-          terminalRef.current?.scrollToBottom()
-        }
-        return
-      }
+       if (e.metaKey && e.key === 'ArrowDown') {
+         e.preventDefault()
+         const history = commandHistoryRef.current
+         if (history.length === 0) return
+         const terminal = terminalRef.current
+         if (!terminal) return
+         const currentIndex = findCurrentPromptIndex(terminal, history)
+         if (currentIndex < 0 || currentIndex >= history.length - 1) {
+           navigationSearchTokenRef.current += 1
+           terminal.scrollToBottom()
+         } else {
+           void jumpToHistoryEntry(history[currentIndex + 1])
+         }
+         return
+       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
@@ -732,6 +735,17 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       terminalTailContainsSubmitFingerprint(visibleText, entry.commandFingerprint)
   }
 
+  const findCurrentPromptIndex = (terminal: Terminal, history: HistoryEntry[]): number => {
+    const visibleText = getTerminalVisibleText(terminal)
+    for (let i = history.length - 1; i >= 0; i--) {
+      if (terminalTailContainsSubmitFingerprint(visibleText, history[i].commandLastLineFingerprint) ||
+          terminalTailContainsSubmitFingerprint(visibleText, history[i].commandFingerprint)) {
+        return i
+      }
+    }
+    return -1
+  }
+
   const jumpToNormalBufferEntry = (terminal: Terminal, entry: HistoryEntry) => {
     if (!normalBufferHasLine(terminal, entry.line)) {
       showNavigationStatus('That prompt has scrolled out of history.')
@@ -740,11 +754,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     scrollToPromptLine(entry.line)
   }
 
-  const jumpToAgentAltScreenEntry = async (
-    terminal: Terminal,
-    entry: HistoryEntry,
-    direction: AgentHistorySearchDirection
-  ) => {
+  const jumpToAgentAltScreenEntry = async (terminal: Terminal, entry: HistoryEntry) => {
     if (terminal.buffer.active.type !== 'alternate') {
       showNavigationStatus('That prompt is inside an agent screen that is no longer active.')
       return
@@ -759,34 +769,24 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     }
 
     const token = ++navigationSearchTokenRef.current
-    const directions: Array<'up' | 'down'> = direction === 'both' ? ['up', 'down'] : [direction]
     resetAltAgentScrollReview()
     shouldAutoFollowOutputRef.current = false
     isAtBottomRef.current = false
     setIsAtBottom(false)
 
-    for (const searchDirection of directions) {
-      const pageSequence = searchDirection === 'up' ? '\x1b[5~' : '\x1b[6~'
-      for (let attempt = 0; attempt <= AGENT_HISTORY_SEARCH_MAX_ATTEMPTS; attempt++) {
-        if (token !== navigationSearchTokenRef.current) return
-        if (terminal.buffer.active.type !== 'alternate') {
-          showNavigationStatus('The agent screen closed before navigation finished.')
-          return
-        }
-        if (visibleTextContainsHistoryEntry(terminal, entry)) return
-        if (attempt === AGENT_HISTORY_SEARCH_MAX_ATTEMPTS) break
-        window.api.ptyWrite(session.id, pageSequence)
-        await wait(AGENT_HISTORY_SEARCH_SETTLE_MS)
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (token !== navigationSearchTokenRef.current) return
+      if (terminal.buffer.active.type !== 'alternate') {
+        showNavigationStatus('The agent screen closed before navigation finished.')
+        return
       }
+      if (visibleTextContainsHistoryEntry(terminal, entry)) return
+      window.api.ptyWrite(session.id, '\x1b[6~')
+      await wait(AGENT_HISTORY_SEARCH_SETTLE_MS)
     }
-
-    showNavigationStatus('Could not find that prompt in the agent history.')
   }
 
-  const jumpToHistoryEntry = async (
-    entry: HistoryEntry,
-    direction: AgentHistorySearchDirection = 'both'
-  ) => {
+  const jumpToHistoryEntry = async (entry: HistoryEntry) => {
     const terminal = terminalRef.current
     if (!terminal) return
     navigationSearchTokenRef.current += 1
@@ -795,7 +795,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       navigationStatusTimerRef.current = null
     }
     if (entry.navigationMode === 'agent-alt-screen') {
-      await jumpToAgentAltScreenEntry(terminal, entry, direction)
+      await jumpToAgentAltScreenEntry(terminal, entry)
       return
     }
     jumpToNormalBufferEntry(terminal, entry)
@@ -1872,8 +1872,8 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     // 2a. Clickable bare-domain URLs — nvidia.com, perplexity.com/path, etc.
     //     WebLinksAddon already handles http(s):// URLs; this catches everything else.
     //     TLD filter blocks common file extensions to avoid false positives (main.go, index.ts…)
-    //     startX uses m.index + prefix-length instead of the 'd' flag to avoid silent failures.
-    const BARE_DOMAIN_RE = /(?:^|[\s"'`(<\[])([a-zA-Z0-9][a-zA-Z0-9-]*(?:\.[a-zA-Z0-9][a-zA-Z0-9-]*)*\.[a-zA-Z]{2,10}(?::[0-9]{1,5})?(?:\/[^\s"'`)\]>]*)?)/g
+    //     Modified to support multi-line URLs by allowing \n in the path portion.
+    const BARE_DOMAIN_RE = /(?:^|[\s"'`(<\[])([a-zA-Z0-9][a-zA-Z0-9-]*(?:\.[a-zA-Z0-9][a-zA-Z0-9-]*)*\.[a-zA-Z]{2,10}(?::[0-9]{1,5})?(?:\/[^\n"'`)\]>]*)?)/g
     const CODE_EXTS = new Set([
       'js','ts','jsx','tsx','mjs','cjs','py','go','rb','rs','java','kt','swift',
       'c','cpp','cc','h','hpp','cs','php','pl','r','sh','bash','zsh','fish',
@@ -1883,9 +1883,8 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       'sqlite','vue','svelte','dart','ex','exs','elm','hs','ml','clj','scala',
       'tf','hcl','proto','wasm','map','d','o','a','so','dylib','dll','exe',
     ])
-    terminal.registerLinkProvider({
+    const bareDomainLinkProvider = {
       provideLinks(lineY, callback) {
-        // lineY is 1-based per xterm.js ILinkProvider contract (see OscLinkProvider.ts)
         const line = terminal.buffer.active.getLine(lineY - 1)
         if (!line) return callback([])
         const text = line.translateToString(true)
@@ -1898,23 +1897,24 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
           const tld = parts.at(-1)!.toLowerCase()
           if (CODE_EXTS.has(tld)) continue
           const startX = m.index! + (m[0].length - raw.length)
+          const endX = startX + raw.length
           links.push({
             text: raw,
-            // Ranges are 1-based x; y is used as-is (already 1-based)
-            range: { start: { x: startX + 1, y: lineY }, end: { x: startX + raw.length, y: lineY } },
+            range: { start: { x: startX + 1, y: lineY }, end: { x: endX, y: lineY } },
             decorations: { underline: true, pointerCursor: true },
-            activate: () => window.api.openExternal(`https://${raw}`),
+            activate: () => window.api.openExternal(`https://${raw.replace(/\n/g, '')}`),
           })
         }
         callback(links)
       }
-    })
+    }
+    terminal.registerLinkProvider(bareDomainLinkProvider)
 
     // 2b. Clickable file paths — /absolute, ./relative, file://, and bare Markdown filenames
-    const FILE_PATH_RE = /(?:^|[\s"'`(])((?:file:\/\/|~\/|\/|\.{1,2}\/)[^\s"'`)\]>]+|(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.(?:md|markdown|mdown|mkd)(?::\d+(?::\d+)?)?)/gi
-    terminal.registerLinkProvider({
+    //     Modified to support multi-line paths by allowing \n in the path characters.
+    const FILE_PATH_RE = /(?:^|[\s"'`(])((?:file:\/\/|~\/|\/|\.{1,2}\/)[^\n"'`)\]>]+|(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.(?:md|markdown|mdown|mkd)(?::\d+(?::\d+)?)?)/gi
+    const filePathLinkProvider = {
       provideLinks(lineY, callback) {
-        // lineY is 1-based per xterm.js ILinkProvider contract (see OscLinkProvider.ts)
         const line = terminal.buffer.active.getLine(lineY - 1)
         if (!line) return callback([])
         const text = line.translateToString(true)
@@ -1922,20 +1922,21 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         for (const m of text.matchAll(FILE_PATH_RE)) {
           const path = m[1]
           const startX = m.index! + (m[0].length - path.length)
+          const endX = startX + path.length
           links.push({
             text: path,
             range: {
-              // Ranges are 1-based x; y is used as-is (already 1-based)
               start: { x: startX + 1, y: lineY },
-              end: { x: startX + path.length, y: lineY }
+              end: { x: endX, y: lineY }
             },
             decorations: { underline: true, pointerCursor: true },
-            activate: () => { void openClickedFile(path) },
+            activate: () => { void openClickedFile(path.replace(/\n/g, '')) },
           })
         }
         callback(links)
       }
-    })
+    }
+    terminal.registerLinkProvider(filePathLinkProvider)
 
     // ── End clickable links ──────────────────────────────────────────────────
 
