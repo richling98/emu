@@ -83,6 +83,13 @@ function isEditorProcessName(processName: string | null): boolean {
 
 type InputOwner = 'composer' | 'xterm'
 type RawTuiMode = 'pager' | 'editor' | 'generic'
+type AgentIdleReason =
+  | 'idle-prompt'
+  | 'agent-process-exited'
+  | 'shell-prompt'
+  | 'quiet-timeout'
+  | 'session-cleared'
+type AgentRunningReason = 'user-submit' | 'pty-output-after-quiet'
 type ScrollFollowTrigger = 'auto-follow-snap' | 'button' | 'exit' | 'hidden-replay' | 'manual'
 type DropTarget = 'terminal' | 'composer'
 type TerminalPerfEvent =
@@ -205,6 +212,15 @@ function shouldDebugScrollFollow(): boolean {
   try {
     return window.localStorage.getItem('emu.debugScrollFollow') === '1' ||
       window.localStorage.getItem('thinking.debugScrollFollow') === '1'
+  } catch {
+    return false
+  }
+}
+
+function shouldDebugTaskComplete(): boolean {
+  try {
+    return window.localStorage.getItem('emu.debugTaskComplete') === '1' ||
+      window.localStorage.getItem('thinking.debugTaskComplete') === '1'
   } catch {
     return false
   }
@@ -522,6 +538,9 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
   const agentLastOutputAtRef = useRef(0)
   const agentBusyCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const agentShellPollStreakRef = useRef(0)
+  const agentLastIdleReasonRef = useRef<AgentIdleReason | null>(null)
+  const agentTaskIdRef = useRef<string | null>(null)
+  const notifiedAgentTaskIdRef = useRef<string | null>(null)
   const agentProcessPollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const agentPermissionDetectorRef = useRef(new AgentPermissionPromptDetector())
   const agentPermissionRawBufferRef = useRef('')
@@ -1123,6 +1142,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
           terminal.write(chunk, () => {
             if (disposed) return
             detectPermissionPrompt(getPermissionScanText(AGENT_PERMISSION_TAIL_LINES), 'hidden-replay')
+            maybeMarkAgentCompleteFromIdlePrompt('hidden-replay')
             debugScrollFollow('hidden-replay-write', { chunkLength: chunk.length })
           })
           written += chunk.length
@@ -1165,7 +1185,24 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       console.debug('[rich-submit]', event, { sessionId: session.id, ...details })
     }
 
+    const debugTaskComplete = (event: string, details: Record<string, unknown> = {}) => {
+      if (!shouldDebugTaskComplete()) return
+      console.debug('[task-complete]', event, {
+        sessionId: session.id,
+        agentState: agentStateRef.current,
+        foregroundProcess: agentProcessRef.current,
+        taskId: agentTaskIdRef.current,
+        notifiedTaskId: notifiedAgentTaskIdRef.current,
+        taskStartedAt: agentTaskStartedAtRef.current,
+        lastBusyEvidenceAt: agentLastBusyEvidenceAtRef.current,
+        lastOutputAt: agentLastOutputAtRef.current,
+        lastIdleReason: agentLastIdleReasonRef.current,
+        ...details
+      })
+    }
+
     let runAgentBusyCheck: () => void = () => {}
+    let maybeMarkAgentCompleteFromIdlePrompt: (source: string) => boolean = () => false
 
     const clearAgentBusyCheckTimer = () => {
       if (agentBusyCheckTimerRef.current) {
@@ -1271,20 +1308,48 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       })
     }
 
-    const setAgentState = (state: AgentState, foregroundProcess: string | null = agentProcessRef.current) => {
+    const setAgentState = (
+      state: AgentState,
+      foregroundProcess: string | null = agentProcessRef.current,
+      reason: AgentIdleReason | AgentRunningReason | 'none' =
+        state === 'idle' ? 'quiet-timeout' : state === 'none' ? 'none' : 'user-submit'
+    ) => {
       const previousState = agentStateRef.current
       agentStateRef.current = state
       agentProcessRef.current = foregroundProcess
+      if (state === 'idle') {
+        agentLastIdleReasonRef.current = reason as AgentIdleReason
+      } else if (state === 'running' || state === 'none') {
+        agentLastIdleReasonRef.current = null
+      }
       debugScrollFollow('agent-state', { state, foregroundProcess })
+      debugTaskComplete('agent-state', {
+        previousState,
+        nextState: state,
+        reason,
+        foregroundProcess,
+        terminalTail: shouldDebugTaskComplete() ? getTerminalTailText(terminal, 16) : undefined
+      })
       onAgentStateChangeRef.current?.(state, foregroundProcess)
-      // Fire task-complete notification when transitioning from running to idle
-      if (previousState === 'running' && state === 'idle') {
+      const taskId = agentTaskIdRef.current
+      const shouldNotifyTaskComplete =
+        previousState === 'running' &&
+        state === 'idle' &&
+        (reason === 'idle-prompt' || reason === 'agent-process-exited' || reason === 'shell-prompt') &&
+        Boolean(taskId) &&
+        notifiedAgentTaskIdRef.current !== taskId
+
+      if (shouldNotifyTaskComplete) {
+        notifiedAgentTaskIdRef.current = taskId
         const tabName = session.name || 'Tab'
+        debugTaskComplete('show-notification', { reason, tabName, workspaceName: workspaceNameRef.current })
         window.api.showTaskComplete({
           tabName,
           sessionId: session.id,
           workspaceId: workspaceNameRef.current ?? session.id
         }).catch(() => {})
+      } else if (previousState === 'running' && state === 'idle') {
+        debugTaskComplete('suppress-notification', { reason, taskId })
       }
     }
 
@@ -1336,23 +1401,36 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       setInputOwner('composer')
     }
 
-    const markAgentIdle = (foregroundProcess: string | null = agentProcessRef.current) => {
+    const markAgentIdle = (
+      foregroundProcess: string | null = agentProcessRef.current,
+      reason: AgentIdleReason = 'quiet-timeout'
+    ) => {
       clearAgentBusyCheckTimer()
       agentTaskStartedAtRef.current = 0
       agentLastBusyEvidenceAtRef.current = 0
       agentLastOutputAtRef.current = 0
       if (!agentSessionRef.current && !isAgentProcessName(foregroundProcess)) return
-      setAgentState('idle', foregroundProcess)
+      debugTaskComplete('mark-idle', { reason, foregroundProcess })
+      setAgentState('idle', foregroundProcess, reason)
     }
 
-    const markAgentRunning = (foregroundProcess: string | null = agentProcessRef.current) => {
+    const markAgentRunning = (
+      foregroundProcess: string | null = agentProcessRef.current,
+      reason: AgentRunningReason = 'user-submit',
+      createNewTask = true
+    ) => {
       const now = Date.now()
       agentSessionRef.current = true
       agentTaskStartedAtRef.current = now
       agentLastBusyEvidenceAtRef.current = now
       agentLastOutputAtRef.current = now
+      if (createNewTask || !agentTaskIdRef.current) {
+        agentTaskIdRef.current = crypto.randomUUID()
+        notifiedAgentTaskIdRef.current = null
+      }
       debugScrollFollow('agent-running', { foregroundProcess })
-      setAgentState('running', foregroundProcess)
+      debugTaskComplete('mark-running', { reason, foregroundProcess, createNewTask })
+      setAgentState('running', foregroundProcess, reason)
       ensureAgentBusyCheckTimer()
     }
 
@@ -1363,8 +1441,22 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       agentLastBusyEvidenceAtRef.current = 0
       agentLastOutputAtRef.current = 0
       agentShellPollStreakRef.current = 0
+      agentLastIdleReasonRef.current = null
+      agentTaskIdRef.current = null
+      notifiedAgentTaskIdRef.current = null
       debugScrollFollow('agent-cleared', { foregroundProcess })
-      setAgentState('none', foregroundProcess)
+      debugTaskComplete('clear-session', { foregroundProcess })
+      setAgentState('none', foregroundProcess, 'none')
+    }
+
+    maybeMarkAgentCompleteFromIdlePrompt = (source: string) => {
+      if (agentStateRef.current !== 'running') return false
+      const terminalTail = getTerminalTailText(terminal, 16)
+      const hasIdlePrompt = looksLikeAgentIdlePrompt(terminalTail)
+      debugTaskComplete('idle-prompt-check', { source, hasIdlePrompt, terminalTail })
+      if (!hasIdlePrompt) return false
+      markAgentIdle(agentProcessRef.current, 'idle-prompt')
+      return true
     }
 
     runAgentBusyCheck = () => {
@@ -1372,7 +1464,10 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       if (disposed || agentStateRef.current !== 'running') return
 
       const now = Date.now()
-      const hasBusyText = looksLikeAgentBusy(getTerminalTailText(terminal, 16))
+      if (maybeMarkAgentCompleteFromIdlePrompt('busy-check')) return
+
+      const terminalTail = getTerminalTailText(terminal, 16)
+      const hasBusyText = looksLikeAgentBusy(terminalTail)
       const lastOutputOrStartAt = Math.max(agentLastOutputAtRef.current, agentTaskStartedAtRef.current)
       // Busy text helps during quiet thinking, but stale text cannot hold yellow forever.
       const busyTextStillFresh = now - lastOutputOrStartAt < AGENT_BUSY_MAX_WITHOUT_EVIDENCE_MS
@@ -1381,9 +1476,15 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       }
 
       const noEvidenceForMs = now - agentLastBusyEvidenceAtRef.current
+      debugTaskComplete('busy-check', {
+        hasBusyText,
+        busyTextStillFresh,
+        noEvidenceForMs,
+        terminalTail
+      })
       if (noEvidenceForMs >= AGENT_BUSY_ACTIVITY_GRACE_MS) {
         recordPerfEvent('agentIdleChecks')
-        markAgentIdle(agentProcessRef.current)
+        markAgentIdle(agentProcessRef.current, 'quiet-timeout')
         return
       }
 
@@ -1535,12 +1636,30 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       if (previousProvider === 'opencode' && detectedProvider && detectedProvider !== 'opencode') {
         resetAltAgentScrollReview()
       }
+      const shellPromptVisible = isShellProcessName(proc) && looksLikeShellPrompt(getTerminalTailText(terminal, 16))
       debugScrollFollow('process-refresh', {
         proc,
         previousProcess,
         detectedProvider,
         isAgent
       })
+      debugTaskComplete('process-refresh', {
+        proc,
+        previousProcess,
+        detectedProvider,
+        isAgent,
+        shellPromptVisible
+      })
+
+      if (
+        agentStateRef.current === 'running' &&
+        agentSessionRef.current &&
+        !composerSubmitRef.current &&
+        ((isShellProcessName(proc) && isAgentProcessName(previousProcess) && shellPromptVisible) ||
+          (!proc && isAgentProcessName(previousProcess)))
+      ) {
+        markAgentIdle(proc, proc ? 'shell-prompt' : 'agent-process-exited')
+      }
 
       if (rawTuiModeRef.current && !isAltScreenRef.current && isShellProcessName(proc)) {
         const rawTuiAge = Date.now() - rawTuiStartedAtRef.current
@@ -1557,9 +1676,12 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         agentSessionRef.current = true
         agentShellPollStreakRef.current = 0
         if (agentStateRef.current === 'none') {
-          setAgentState('idle', proc)
+          setAgentState('idle', proc, 'session-cleared')
         } else if (previousProcess !== proc) {
-          setAgentState(agentStateRef.current, proc)
+          const reason = agentStateRef.current === 'idle'
+            ? (agentLastIdleReasonRef.current ?? 'quiet-timeout')
+            : 'user-submit'
+          setAgentState(agentStateRef.current, proc, reason)
         }
       } else if (isShellProcessName(proc)) {
         if (agentStateRef.current === 'running') {
@@ -1575,7 +1697,10 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         clearAgentSession(proc)
       } else if (previousProcess !== proc && agentStateRef.current !== 'none') {
         agentShellPollStreakRef.current = 0
-        setAgentState(agentStateRef.current, proc)
+        const reason = agentStateRef.current === 'idle'
+          ? (agentLastIdleReasonRef.current ?? 'quiet-timeout')
+          : 'user-submit'
+        setAgentState(agentStateRef.current, proc, reason)
       } else {
         agentShellPollStreakRef.current = 0
       }
@@ -1630,7 +1755,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         updateInputOwner(proc)
         if (isAgentProcessName(proc)) {
           agentSessionRef.current = true
-          if (agentStateRef.current === 'none') setAgentState('idle', proc)
+          if (agentStateRef.current === 'none') setAgentState('idle', proc, 'session-cleared')
         }
 
         if (shouldDebugScrollFollow()) {
@@ -2148,6 +2273,13 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         agentLastOutputAtRef.current = now
         agentLastBusyEvidenceAtRef.current = now
         ensureAgentBusyCheckTimer()
+        debugTaskComplete('busy-evidence-output', { bytes })
+      } else if (
+        agentSessionRef.current &&
+        agentStateRef.current === 'idle' &&
+        agentLastIdleReasonRef.current === 'quiet-timeout'
+      ) {
+        markAgentRunning(agentProcessRef.current, 'pty-output-after-quiet', false)
       }
       const cwd = extractEmuCwd(data)
       if (cwd) {
@@ -2175,6 +2307,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         terminal.write(data, () => {
           if (disposed) return
           detectPermissionPrompt(getPermissionScanText(tailLines), 'write-parsed')
+          maybeMarkAgentCompleteFromIdlePrompt('write-parsed')
           if (shouldAutoFollowOutput && shouldAutoFollowOutputRef.current && !isAltAgentReviewingHistoryRef.current) {
             debugScrollFollow('write-callback-snap')
             snapTerminalToBottom('auto-follow-snap')
