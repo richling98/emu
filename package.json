@@ -6,6 +6,10 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "typecheck:web": "tsc -p tsconfig.web.json --noEmit",
+    "typecheck:node": "tsc -p tsconfig.node.json --noEmit",
+    "typecheck": "tsc -b --noEmit",
+    "verify": "npm run typecheck:web && npm run typecheck:node && npm run build",
     "preview": "electron-vite preview",
     "postinstall": "node scripts/fix-node-pty-helper-perms.cjs && electron-builder install-app-deps",
     "dist": "npm_config_python=/usr/bin/python3 electron-vite build && npm_config_python=/usr/bin/python3 electron-builder"

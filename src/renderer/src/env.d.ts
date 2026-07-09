@@ -45,7 +45,7 @@ type PtyWriteSequenceResult = {
   reason: 'not-found' | 'invalid-input'
 }
 
-type AgentPermissionProvider = 'claude' | 'codex'
+type AgentPermissionProvider = 'claude' | 'codex' | 'opencode'
 
 interface AgentPermissionPrompt {
   id: string

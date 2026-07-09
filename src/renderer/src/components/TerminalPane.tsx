@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Terminal, type ITheme } from '@xterm/xterm'
+import { Terminal, type ILink, type ILinkProvider, type ITheme } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
@@ -50,6 +50,12 @@ const AGENT_PERMISSION_RAW_BUFFER_MAX_CHARS = 32 * 1024
 const AGENT_PERMISSION_WATCHDOG_INTERVAL_MS = 500
 const AGENT_PERMISSION_WATCHDOG_DURATION_MS = 30_000
 const MAX_COMMAND_HISTORY_ENTRIES = 500
+const AGENT_HISTORY_SEARCH_MAX_ATTEMPTS = 13
+const AGENT_HISTORY_SEARCH_SETTLE_MS = 90
+const AGENT_HISTORY_SEARCH_WHEEL_DELTA_PX = 720
+const AGENT_HISTORY_REFINE_MAX_ATTEMPTS = 18
+const AGENT_HISTORY_REFINE_WHEEL_DELTA_PX = 90
+const AGENT_HISTORY_TARGET_ROW = 1
 const NAVIGATION_STATUS_MS = 2_600
 
 function appendCommandHistoryEntry(prev: HistoryEntry[], entry: HistoryEntry): HistoryEntry[] {
@@ -92,6 +98,8 @@ type AgentIdleReason =
 type AgentRunningReason = 'user-submit' | 'pty-output-after-quiet'
 type ScrollFollowTrigger = 'auto-follow-snap' | 'button' | 'exit' | 'hidden-replay' | 'manual'
 type DropTarget = 'terminal' | 'composer'
+type AgentHistorySearchDirection = 'up' | 'down' | 'both'
+type HistoryFingerprintMatchType = 'command' | 'first-line' | 'last-line'
 type TerminalPerfEvent =
   | 'ptyDataEvents'
   | 'ptyDataBytes'
@@ -143,6 +151,13 @@ interface ComposerSubmitTransaction {
   sentEnterAt: number | null
   retriedEnterAt: number | null
   tailAtEnter: string
+}
+
+interface VisibleHistoryMatch {
+  rowIndex: number
+  matchType: HistoryFingerprintMatchType
+  text: string
+  score: number
 }
 
 function getRawTuiModeForCommand(command: string): RawTuiMode | null {
@@ -199,6 +214,152 @@ function getTerminalVisibleText(terminal: Terminal): string {
   return lines.join('\n')
 }
 
+function getTerminalVisibleLines(terminal: Terminal): string[] {
+  const buffer = terminal.buffer.active
+  const startLine = buffer.baseY
+  const endLine = buffer.baseY + terminal.rows - 1
+  const lines: string[] = []
+
+  for (let line = startLine; line <= endLine; line++) {
+    const bufferLine = buffer.getLine(line)
+    if (bufferLine) lines.push(bufferLine.translateToString(true).trimEnd())
+  }
+
+  return lines
+}
+
+function isAgentInputPromptLine(line: string): boolean {
+  const normalized = line.replace(/\s+/g, ' ').trim().toLowerCase()
+  return /^[│┃]?\s*[>›]\s*$/.test(normalized) ||
+    /\bmessage (?:codex|claude|opencode)\b/.test(normalized) ||
+    /\bask (?:codex|claude|opencode)\b/.test(normalized) ||
+    /\btype .*message\b/.test(normalized) ||
+    /\benter\b.*\bsend\b/.test(normalized)
+}
+
+function getTerminalVisibleTranscriptLines(terminal: Terminal): string[] {
+  const lines = getTerminalVisibleLines(terminal)
+  if (terminal.buffer.active.type !== 'alternate') return lines
+
+  const tailStart = Math.max(0, lines.length - 12)
+  for (let index = lines.length - 1; index >= tailStart; index--) {
+    if (isAgentInputPromptLine(lines[index])) {
+      return lines.slice(0, index)
+    }
+  }
+
+  return lines
+}
+
+function lineTextForScoring(line: string): string {
+  return line
+    .replace(/[│┃┆┊╎╏║]/g, ' ')
+    .replace(/[╭╮╰╯┌┐└┘├┤┬┴┼─━═]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function looksLikeUserPromptRow(line: string, provider?: string | null): boolean {
+  const normalized = lineTextForScoring(line).toLowerCase()
+  if (!normalized) return false
+
+  if (/^(?:[>›❯]\s*)?(?:user|you)\b[:：]?/.test(normalized)) return true
+  if (/^(?:[>›❯]\s*)?(?:message|ask)\s+(?:codex|claude|opencode)\b/.test(normalized)) return true
+  if (provider === 'codex' && /^[>›❯]\s+\S/.test(normalized)) return true
+  if ((provider === 'claude' || provider === 'opencode') && /^[>›❯]\s+\S/.test(normalized)) return true
+  return false
+}
+
+function looksLikeToolOrOutputRow(line: string): boolean {
+  const normalized = lineTextForScoring(line).toLowerCase()
+  if (!normalized) return false
+
+  return [
+    /^(?:[•●○◦\-]\s*)?(?:read|edit|write|grep|glob|list|bash|webfetch|websearch|todowrite|apply_patch|ran|running|search|opened?|fetch|tool)\b/,
+    /^(?:\$|>)\s*(?:git|npm|node|python|python3|rg|sed|cat|ls|cd|mkdir|rm|swift|cargo|pytest|pnpm|bun|yarn)\b/,
+    /^(?:diff --git|@@\s|[+-]{3}\s|[+-]\s)/,
+    /\b(?:exec_command|apply_patch|web\.run|search_query|tool call|tool result|multi_tool_use|functions\.)\b/,
+    /\b(?:reading|writing|editing|searching|running|executing)\b.*\b(?:file|command|tool|query|search)\b/
+  ].some((pattern) => pattern.test(normalized))
+}
+
+function toolContextScorePenalty(lines: string[], rowIndex: number): number {
+  const start = Math.max(0, rowIndex - 2)
+  const end = Math.min(lines.length, rowIndex + 4)
+  return lines.slice(start, end).some(looksLikeToolOrOutputRow) ? 85 : 0
+}
+
+function scoreVisibleHistoryMatch(
+  lines: string[],
+  rowIndex: number,
+  text: string,
+  target: string,
+  matchType: HistoryFingerprintMatchType,
+  provider?: string | null
+): number {
+  let score = matchType === 'command' ? 100 : matchType === 'first-line' ? 72 : 60
+  const promptLike = looksLikeUserPromptRow(lines[rowIndex] ?? '', provider)
+  const toolPenalty = toolContextScorePenalty(lines, rowIndex)
+
+  if (text.includes('\n')) score -= 15
+  if (target.length >= 40) score += 10
+  if (target.length < 12) score -= 35
+  if (promptLike) score += provider === 'codex' ? 80 : 45
+
+  if (provider === 'codex') {
+    score -= promptLike ? Math.min(toolPenalty, 35) : toolPenalty
+    if (!promptLike && matchType !== 'command') score -= 25
+  } else if (!promptLike) {
+    score -= Math.min(toolPenalty, 45)
+  }
+
+  return score
+}
+
+function findFingerprintInVisibleLines(
+  lines: string[],
+  fingerprint: string | null | undefined,
+  matchType: HistoryFingerprintMatchType,
+  provider?: string | null
+): VisibleHistoryMatch | null {
+  const target = normalizeSubmitText(fingerprint ?? '')
+  if (target.length < 2) return null
+  const candidates: VisibleHistoryMatch[] = []
+
+  for (let rowIndex = 0; rowIndex < lines.length; rowIndex++) {
+    const normalizedLine = normalizeSubmitText(lines[rowIndex])
+    if (normalizedLine.includes(target)) {
+      candidates.push({
+        rowIndex,
+        matchType,
+        text: lines[rowIndex],
+        score: scoreVisibleHistoryMatch(lines, rowIndex, lines[rowIndex], target, matchType, provider)
+      })
+    }
+  }
+
+  for (let rowIndex = 0; rowIndex < lines.length; rowIndex++) {
+    const windowLines = lines.slice(rowIndex, Math.min(lines.length, rowIndex + 8))
+    for (let count = 2; count <= windowLines.length; count++) {
+      const text = windowLines.slice(0, count).join('\n')
+      if (normalizeSubmitText(text).includes(target)) {
+        candidates.push({
+          rowIndex,
+          matchType,
+          text,
+          score: scoreVisibleHistoryMatch(lines, rowIndex, text, target, matchType, provider)
+        })
+      }
+    }
+  }
+
+  candidates.sort((a, b) => b.score - a.score || a.rowIndex - b.rowIndex)
+  const best = candidates[0] ?? null
+  if (!best) return null
+  const minimumScore = provider === 'codex' ? 50 : 25
+  return best.score >= minimumScore ? best : null
+}
+
 function shouldDebugAgentPermission(): boolean {
   try {
     return window.localStorage.getItem('emu.debugAgentPermission') === '1' ||
@@ -221,6 +382,15 @@ function shouldDebugTaskComplete(): boolean {
   try {
     return window.localStorage.getItem('emu.debugTaskComplete') === '1' ||
       window.localStorage.getItem('thinking.debugTaskComplete') === '1'
+  } catch {
+    return false
+  }
+}
+
+function shouldDebugCommandNavigation(): boolean {
+  try {
+    return window.localStorage.getItem('emu.debugCommandNavigation') === '1' ||
+      window.localStorage.getItem('thinking.debugCommandNavigation') === '1'
   } catch {
     return false
   }
@@ -413,6 +583,16 @@ function normalizeSubmitFingerprint(text: string): string {
   return normalizeSubmitText(text).slice(-180)
 }
 
+function normalizeSubmitFirstLineFingerprint(text: string): string {
+  const firstLine = text
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map(normalizeSubmitText)
+    .filter(Boolean)
+    .at(0) ?? ''
+  return firstLine.slice(-180)
+}
+
 function normalizeSubmitLastLineFingerprint(text: string): string {
   const lastLine = text
     .replace(/\r\n?/g, '\n')
@@ -536,15 +716,15 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
   const agentTaskStartedAtRef = useRef(0)
   const agentLastBusyEvidenceAtRef = useRef(0)
   const agentLastOutputAtRef = useRef(0)
-  const agentBusyCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const agentBusyCheckTimerRef = useRef<number | null>(null)
   const agentShellPollStreakRef = useRef(0)
   const agentLastIdleReasonRef = useRef<AgentIdleReason | null>(null)
   const agentTaskIdRef = useRef<string | null>(null)
   const notifiedAgentTaskIdRef = useRef<string | null>(null)
-  const agentProcessPollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const agentProcessPollRef = useRef<number | null>(null)
   const agentPermissionDetectorRef = useRef(new AgentPermissionPromptDetector())
   const agentPermissionRawBufferRef = useRef('')
-  const agentPermissionWatchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const agentPermissionWatchdogTimerRef = useRef<number | null>(null)
   const agentPermissionWatchdogUntilRef = useRef(0)
 
   const currentInputRef = useRef('')
@@ -570,7 +750,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
   // animations, cursor movements, and shell prompts are already resolved correctly.
   const currentEntryIdRef = useRef<string | null>(null)
   const currentEntryStartLineRef = useRef<number>(-1)
-  const outputFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const outputFlushTimerRef = useRef<number | null>(null)
   const hiddenOutputBufferRef = useRef<string[]>([])
   const hiddenOutputBufferCharsRef = useRef(0)
   const hiddenOutputOmittedCharsRef = useRef(0)
@@ -578,6 +758,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
 
    const [commandHistory, setCommandHistory] = useState<HistoryEntry[]>([])
    const commandHistoryRef = useRef<HistoryEntry[]>([])
+  const promptNavIndexRef = useRef(-1)
    const [showDrawer, setShowDrawer] = useState(false)
   const [fileDropActive, setFileDropActive] = useState(false)
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
@@ -588,7 +769,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
   const [navigationStatus, setNavigationStatus] = useState<string | null>(null)
   const isAtBottomRef = useRef(true)
   const isAltAgentReviewingHistoryRef = useRef(false)
-  const navigationStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const navigationStatusTimerRef = useRef<number | null>(null)
   const navigationSearchTokenRef = useRef(0)
   const shouldAutoFollowOutputRef = useRef(true)
   const autoFollowFrameRef = useRef<number | null>(null)
@@ -608,7 +789,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
   const commitComposerRef = useRef<(text: string) => void>(() => {})
   const composerSubmitRef = useRef<ComposerSubmitTransaction | null>(null)
   const wheelAccumulatorRef = useRef(0)
-  const composerSubmitRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const composerSubmitRetryTimerRef = useRef<number | null>(null)
 
   const recordPerfEvent = useCallback((event: TerminalPerfEvent, value = 1) => {
     onPerfEventRef.current?.(session.id, event, value)
@@ -665,6 +846,18 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     setRichInputActive(true)
   }, [composerText])
 
+  const debugCommandNavigation = (event: string, details: Record<string, unknown> = {}) => {
+    if (!shouldDebugCommandNavigation()) return
+    console.debug('[command-navigation]', event, {
+      sessionId: session.id,
+      isActive: isActiveRef.current,
+      historyLength: commandHistoryRef.current.length,
+      bufferType: terminalRef.current?.buffer.active.type ?? null,
+      altScreenSessionId: altScreenSessionIdRef.current,
+      ...details
+    })
+  }
+
   // Keep commandHistoryRef in sync so key handlers can read latest history
   useEffect(() => { commandHistoryRef.current = commandHistory }, [commandHistory])
 
@@ -677,47 +870,60 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'l' || e.key === 'L')) {
         e.preventDefault()
         e.stopPropagation()
+        debugCommandNavigation('shortcut-command-log', { key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey })
         setShowDrawer(v => !v)
         return
       }
 
-       if (e.metaKey && e.key === 'ArrowUp') {
-         e.preventDefault()
-         const history = commandHistoryRef.current
-         if (history.length === 0) return
-         const terminal = terminalRef.current
-         if (!terminal) return
-         const currentIndex = findCurrentPromptIndex(terminal, history)
-         let nextIndex: number
-         if (currentIndex < 0) {
-           nextIndex = history.length - 1
-         } else if (currentIndex === 0) {
-           nextIndex = history.length - 1
-         } else {
-           nextIndex = currentIndex - 1
-         }
-         void jumpToHistoryEntry(history[nextIndex])
-         return
-       }
+      if (e.metaKey && (e.key === 'ArrowUp' || e.code === 'ArrowUp')) {
+        e.preventDefault()
+        e.stopPropagation()
+        const history = commandHistoryRef.current
+        if (history.length === 0) return
+        const terminal = terminalRef.current
+        if (!terminal) return
+        const currentIndex = getPromptNavigationIndex(terminal, history)
+        let nextIndex: number
+        if (currentIndex < 0) {
+          nextIndex = history.length - 1
+        } else if (currentIndex === 0) {
+          nextIndex = history.length - 1
+        } else {
+          nextIndex = currentIndex - 1
+        }
+        const direction = currentIndex >= 0 && nextIndex > currentIndex ? 'down' : 'up'
+        promptNavIndexRef.current = nextIndex
+        debugCommandNavigation('shortcut-previous-prompt', { currentIndex, nextIndex, direction })
+        void jumpToHistoryEntry(history[nextIndex], direction)
+        return
+      }
 
-       if (e.metaKey && e.key === 'ArrowDown') {
-         e.preventDefault()
-         const history = commandHistoryRef.current
-         if (history.length === 0) return
-         const terminal = terminalRef.current
-         if (!terminal) return
-         const currentIndex = findCurrentPromptIndex(terminal, history)
-         if (currentIndex < 0 || currentIndex >= history.length - 1) {
-           navigationSearchTokenRef.current += 1
-           terminal.scrollToBottom()
-         } else {
-           void jumpToHistoryEntry(history[currentIndex + 1])
-         }
-         return
-       }
+      if (e.metaKey && (e.key === 'ArrowDown' || e.code === 'ArrowDown')) {
+        e.preventDefault()
+        e.stopPropagation()
+        const history = commandHistoryRef.current
+        if (history.length === 0) return
+        const terminal = terminalRef.current
+        if (!terminal) return
+        const currentIndex = getPromptNavigationIndex(terminal, history)
+        debugCommandNavigation('shortcut-next-prompt', { currentIndex })
+        if (currentIndex < 0 || currentIndex >= history.length - 1) {
+          promptNavIndexRef.current = -1
+          if (terminal.buffer.active.type === 'alternate' && isAgentAltScreen(agentProcessRef.current)) {
+            void scrollAgentAltScreenTowardBottom(terminal)
+          } else {
+            navigationSearchTokenRef.current += 1
+            terminal.scrollToBottom()
+          }
+        } else {
+          promptNavIndexRef.current = currentIndex + 1
+          void jumpToHistoryEntry(history[currentIndex + 1], 'down')
+        }
+        return
+      }
     }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
+    window.addEventListener('keydown', handler, true)
+    return () => window.removeEventListener('keydown', handler, true)
   }, [])
 
   // Sync external openDrawer prop → local state
@@ -725,20 +931,14 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     if (openDrawer) setShowDrawer(true)
   }, [openDrawer])
 
-  // Scroll so the prompt line appears at the top of the viewport.
-  // We subtract a small offset because interactive apps like Claude Code re-render
-  // the conversation after each exchange, placing the user's message 1-3 lines above
-  // where the cursor was sitting when they started typing.  The offset ensures the
-  // beginning of the command is always the first thing you see.  For plain zsh commands
-  // this just shows a couple lines of prior context above the prompt, which is natural.
   const scrollToPromptLine = (line: number) => {
-    terminalRef.current?.scrollToLine(Math.max(0, line - 3))
+    terminalRef.current?.scrollToLine(Math.max(0, line))
   }
 
   const showNavigationStatus = (message: string) => {
     if (navigationStatusTimerRef.current) clearTimeout(navigationStatusTimerRef.current)
     setNavigationStatus(message)
-    navigationStatusTimerRef.current = setTimeout(() => {
+    navigationStatusTimerRef.current = window.setTimeout(() => {
       navigationStatusTimerRef.current = null
       setNavigationStatus(null)
     }, NAVIGATION_STATUS_MS)
@@ -748,21 +948,31 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     return line >= 0 && Boolean(terminal.buffer.normal.getLine(line))
   }
 
-  const visibleTextContainsHistoryEntry = (terminal: Terminal, entry: HistoryEntry) => {
-    const visibleText = getTerminalVisibleText(terminal)
-    return terminalTailContainsSubmitFingerprint(visibleText, entry.commandLastLineFingerprint) ||
-      terminalTailContainsSubmitFingerprint(visibleText, entry.commandFingerprint)
+  const findVisibleHistoryEntryMatch = (terminal: Terminal, entry: HistoryEntry): VisibleHistoryMatch | null => {
+    const lines = getTerminalVisibleTranscriptLines(terminal)
+    const provider = entry.agentProvider ?? getAgentProviderFromProcess(agentProcessRef.current)
+    return findFingerprintInVisibleLines(lines, entry.commandFingerprint, 'command', provider) ??
+      findFingerprintInVisibleLines(lines, entry.commandFirstLineFingerprint, 'first-line', provider) ??
+      findFingerprintInVisibleLines(lines, entry.commandLastLineFingerprint, 'last-line', provider)
   }
 
   const findCurrentPromptIndex = (terminal: Terminal, history: HistoryEntry[]): number => {
-    const visibleText = getTerminalVisibleText(terminal)
     for (let i = history.length - 1; i >= 0; i--) {
-      if (terminalTailContainsSubmitFingerprint(visibleText, history[i].commandLastLineFingerprint) ||
-          terminalTailContainsSubmitFingerprint(visibleText, history[i].commandFingerprint)) {
+      if (findVisibleHistoryEntryMatch(terminal, history[i])) {
         return i
       }
     }
     return -1
+  }
+
+  const getPromptNavigationIndex = (terminal: Terminal, history: HistoryEntry[]): number => {
+    const current = promptNavIndexRef.current
+    if (current >= 0 && current < history.length) return current
+    return findCurrentPromptIndex(terminal, history)
+  }
+
+  const setPromptNavigationIndexForEntry = (entry: HistoryEntry) => {
+    promptNavIndexRef.current = commandHistoryRef.current.findIndex((candidate) => candidate.id === entry.id)
   }
 
   const jumpToNormalBufferEntry = (terminal: Terminal, entry: HistoryEntry) => {
@@ -773,39 +983,162 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     scrollToPromptLine(entry.line)
   }
 
-  const jumpToAgentAltScreenEntry = async (terminal: Terminal, entry: HistoryEntry) => {
+  const dispatchAgentScrollWheel = (
+    terminal: Terminal,
+    direction: 'up' | 'down',
+    deltaPx = AGENT_HISTORY_SEARCH_WHEEL_DELTA_PX
+  ) => {
+    if (terminal.modes.mouseTrackingMode === 'none') return false
+    const target = containerRef.current?.querySelector('.xterm-screen') ?? terminal.element
+    if (!target) return false
+
+    const rect = target.getBoundingClientRect()
+    const event = new WheelEvent('wheel', {
+      bubbles: true,
+      cancelable: true,
+      deltaMode: 0,
+      deltaY: direction === 'up' ? -deltaPx : deltaPx,
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2
+    })
+    target.dispatchEvent(event)
+    return true
+  }
+
+  const refineAgentHistoryMatchPosition = async (
+    terminal: Terminal,
+    entry: HistoryEntry,
+    token: number
+  ): Promise<VisibleHistoryMatch | null> => {
+    let match = findVisibleHistoryEntryMatch(terminal, entry)
+
+    for (let attempt = 0; attempt < AGENT_HISTORY_REFINE_MAX_ATTEMPTS; attempt++) {
+      if (token !== navigationSearchTokenRef.current) return null
+      if (terminal.buffer.active.type !== 'alternate') return null
+      if (!match) return null
+      if (match.rowIndex === AGENT_HISTORY_TARGET_ROW) return match
+
+      const refineDirection = match.rowIndex > AGENT_HISTORY_TARGET_ROW ? 'down' : 'up'
+      debugCommandNavigation('agent-search-refine', {
+        entryId: entry.id,
+        attempt,
+        rowIndex: match.rowIndex,
+        targetRow: AGENT_HISTORY_TARGET_ROW,
+        refineDirection,
+        matchType: match.matchType,
+        score: match.score
+      })
+
+      if (!dispatchAgentScrollWheel(terminal, refineDirection, AGENT_HISTORY_REFINE_WHEEL_DELTA_PX)) {
+        return match
+      }
+      await wait(AGENT_HISTORY_SEARCH_SETTLE_MS)
+      match = findVisibleHistoryEntryMatch(terminal, entry)
+    }
+
+    return match
+  }
+
+  const scrollAgentAltScreenTowardBottom = async (terminal: Terminal) => {
+    const token = ++navigationSearchTokenRef.current
+    for (let attempt = 0; attempt < AGENT_HISTORY_SEARCH_MAX_ATTEMPTS; attempt++) {
+      if (token !== navigationSearchTokenRef.current) return
+      if (terminal.buffer.active.type !== 'alternate') return
+      if (!dispatchAgentScrollWheel(terminal, 'down')) return
+      await wait(AGENT_HISTORY_SEARCH_SETTLE_MS)
+    }
+    resetAltAgentScrollReview()
+    shouldAutoFollowOutputRef.current = true
+    isAtBottomRef.current = true
+    setIsAtBottom(true)
+  }
+
+  const jumpToAgentAltScreenEntry = async (
+    terminal: Terminal,
+    entry: HistoryEntry,
+    direction: AgentHistorySearchDirection
+  ) => {
     if (terminal.buffer.active.type !== 'alternate') {
       showNavigationStatus('That prompt is inside an agent screen that is no longer active.')
+      debugCommandNavigation('agent-search-rejected', { reason: 'not-alternate', entryId: entry.id })
       return
     }
     if (entry.altScreenSessionId && entry.altScreenSessionId !== altScreenSessionIdRef.current) {
       showNavigationStatus('That prompt belongs to a previous agent screen.')
+      debugCommandNavigation('agent-search-rejected', {
+        reason: 'alt-screen-session-mismatch',
+        entryId: entry.id,
+        entryAltScreenSessionId: entry.altScreenSessionId
+      })
       return
     }
     if (!entry.commandFingerprint && !entry.commandLastLineFingerprint) {
       showNavigationStatus('That prompt is missing navigation metadata.')
+      debugCommandNavigation('agent-search-rejected', { reason: 'missing-metadata', entryId: entry.id })
       return
     }
 
     const token = ++navigationSearchTokenRef.current
+    const directions: Array<'up' | 'down'> = direction === 'both' ? ['up', 'down'] : [direction]
     resetAltAgentScrollReview()
     shouldAutoFollowOutputRef.current = false
     isAtBottomRef.current = false
     setIsAtBottom(false)
 
-    for (let attempt = 0; attempt < 100; attempt++) {
-      if (token !== navigationSearchTokenRef.current) return
-      if (terminal.buffer.active.type !== 'alternate') {
-        showNavigationStatus('The agent screen closed before navigation finished.')
-        return
+    debugCommandNavigation('agent-search-start', {
+      entryId: entry.id,
+      direction,
+      commandFingerprintLength: entry.commandFingerprint.length,
+      commandLastLineFingerprintLength: entry.commandLastLineFingerprint.length
+    })
+
+    for (const searchDirection of directions) {
+      for (let attempt = 0; attempt <= AGENT_HISTORY_SEARCH_MAX_ATTEMPTS; attempt++) {
+        if (token !== navigationSearchTokenRef.current) return
+        if (terminal.buffer.active.type !== 'alternate') {
+          showNavigationStatus('The agent screen closed before navigation finished.')
+          debugCommandNavigation('agent-search-failed', { reason: 'screen-closed', entryId: entry.id, attempt })
+          return
+        }
+        const match = findVisibleHistoryEntryMatch(terminal, entry)
+        if (match) {
+          const refinedMatch = await refineAgentHistoryMatchPosition(terminal, entry, token)
+          debugCommandNavigation('agent-search-match', {
+            entryId: entry.id,
+            searchDirection,
+            attempt,
+            rowIndex: refinedMatch?.rowIndex ?? match.rowIndex,
+            targetRow: AGENT_HISTORY_TARGET_ROW,
+            matchType: refinedMatch?.matchType ?? match.matchType,
+            score: refinedMatch?.score ?? match.score,
+            matchedText: (refinedMatch?.text ?? match.text).slice(0, 180)
+          })
+          return
+        }
+        if (attempt === AGENT_HISTORY_SEARCH_MAX_ATTEMPTS) break
+        debugCommandNavigation('agent-search-scroll', { entryId: entry.id, searchDirection, attempt })
+        if (!dispatchAgentScrollWheel(terminal, searchDirection)) {
+          debugCommandNavigation('agent-search-failed', {
+            reason: 'mouse-scroll-unavailable',
+            entryId: entry.id,
+            searchDirection,
+            attempt,
+            mouseTrackingMode: terminal.modes.mouseTrackingMode
+          })
+          break
+        }
+        await wait(AGENT_HISTORY_SEARCH_SETTLE_MS)
       }
-      if (visibleTextContainsHistoryEntry(terminal, entry)) return
-      window.api.ptyWrite(session.id, '\x1b[6~')
-      await wait(AGENT_HISTORY_SEARCH_SETTLE_MS)
     }
+
+    showNavigationStatus('Could not find that prompt in the agent history.')
+    debugCommandNavigation('agent-search-failed', { reason: 'not-found', entryId: entry.id, direction })
   }
 
-  const jumpToHistoryEntry = async (entry: HistoryEntry) => {
+  const jumpToHistoryEntry = async (
+    entry: HistoryEntry,
+    direction: AgentHistorySearchDirection = 'both'
+  ) => {
     const terminal = terminalRef.current
     if (!terminal) return
     navigationSearchTokenRef.current += 1
@@ -814,10 +1147,20 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       navigationStatusTimerRef.current = null
     }
     if (entry.navigationMode === 'agent-alt-screen') {
-      await jumpToAgentAltScreenEntry(terminal, entry)
+      await jumpToAgentAltScreenEntry(terminal, entry, direction)
       return
     }
     jumpToNormalBufferEntry(terminal, entry)
+  }
+
+  const getHistoryEntryDirection = (entry: HistoryEntry): AgentHistorySearchDirection => {
+    const terminal = terminalRef.current
+    if (!terminal) return 'both'
+    const history = commandHistoryRef.current
+    const currentIndex = findCurrentPromptIndex(terminal, history)
+    const targetIndex = history.findIndex((candidate) => candidate.id === entry.id)
+    if (currentIndex < 0 || targetIndex < 0 || currentIndex === targetIndex) return 'both'
+    return targetIndex < currentIndex ? 'up' : 'down'
   }
 
   const getViewportElement = () => {
@@ -855,6 +1198,12 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
   const isOpencodeAltScreen = () => {
     return terminalRef.current?.buffer.active.type === 'alternate' &&
       (agentProviderRef.current === 'opencode' || getAgentProviderFromProcess(agentProcessRef.current) === 'opencode')
+  }
+
+  const isAgentAltScreen = (proc: string | null = agentProcessRef.current) => {
+    const provider = agentProviderRef.current ?? getAgentProviderFromProcess(proc)
+    return terminalRef.current?.buffer.active.type === 'alternate' &&
+      (Boolean(provider) || agentSessionRef.current || isAgentProcessName(proc))
   }
 
   const resetAltAgentScrollReview = () => {
@@ -1166,7 +1515,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         } else if (currentEntryIdRef.current) {
           if (shouldAutoFollowOutputRef.current) scheduleAutoFollowSnap()
           if (outputFlushTimerRef.current) clearTimeout(outputFlushTimerRef.current)
-          outputFlushTimerRef.current = setTimeout(flushOutputBuffer, 600)
+          outputFlushTimerRef.current = window.setTimeout(flushOutputBuffer, 600)
         }
       }
 
@@ -1276,7 +1625,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         return
       }
 
-      composerSubmitRetryTimerRef.current = setTimeout(() => {
+      composerSubmitRetryTimerRef.current = window.setTimeout(() => {
         composerSubmitRetryTimerRef.current = null
         waitForComposerSubmitEchoThenEnter(id)
       }, AGENT_SUBMIT_ECHO_WAIT_INTERVAL_MS)
@@ -1296,7 +1645,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         }
 
         if (transaction.agentTarget) {
-          composerSubmitRetryTimerRef.current = setTimeout(() => {
+          composerSubmitRetryTimerRef.current = window.setTimeout(() => {
             composerSubmitRetryTimerRef.current = null
             maybeRetryComposerSubmit(id)
           }, AGENT_SUBMIT_RETRY_WAIT_MS)
@@ -1536,6 +1885,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         timestamp: new Date(),
         navigationMode,
         commandFingerprint: normalizeSubmitFingerprint(cmd),
+        commandFirstLineFingerprint: normalizeSubmitFirstLineFingerprint(cmd),
         commandLastLineFingerprint: normalizeSubmitLastLineFingerprint(cmd),
         agentProvider: provider,
         altScreenSessionId: navigationMode === 'agent-alt-screen' ? altScreenSessionIdRef.current : null
@@ -1715,7 +2065,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
 
     const scheduleAgentProcessPoll = () => {
       if (disposed || agentProcessPollRef.current) return
-      agentProcessPollRef.current = setTimeout(() => {
+      agentProcessPollRef.current = window.setTimeout(() => {
         agentProcessPollRef.current = null
         refreshAgentProcess().finally(scheduleAgentProcessPoll)
       }, getAgentProcessPollDelay())
@@ -1861,7 +2211,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       const proc = agentProcessRef.current
       const rawTuiMode = rawTuiModeRef.current
       const scrollingUp = e.deltaY < 0
-      const isOpencode = isAltScreen && (agentProviderRef.current === 'opencode' || getAgentProviderFromProcess(proc) === 'opencode')
+      const agentAltScreen = isAltScreen && isAgentAltScreen(proc)
       if (Date.now() < rawTuiExitingUntilRef.current) return
 
       if (shouldDebugScrollWheel()) {
@@ -1870,6 +2220,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
           deltaY: e.deltaY,
           deltaMode: e.deltaMode,
           isAltScreen,
+          agentAltScreen,
           rawTuiMode,
           proc,
           accumulator: wheelAccumulatorRef.current
@@ -1877,7 +2228,8 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         console.debug('[scroll-wheel]', wheelPayload)
       }
 
-      if (isOpencode) {
+      if (agentAltScreen && !rawTuiMode && !isPagerProcessName(proc) && !isEditorProcessName(proc)) {
+        wheelAccumulatorRef.current = 0
         if (scrollingUp) {
           autoFollowOutputRenderUntilRef.current = 0
           shouldAutoFollowOutputRef.current = false
@@ -1885,7 +2237,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
           isAltAgentReviewingHistoryRef.current = true
           setIsAtBottom(false)
           setIsAltAgentReviewingHistory(true)
-          debugScrollFollow('opencode-native-wheel-up', { rawTuiMode, proc, isAltScreen })
+          debugScrollFollow('agent-native-wheel-up', { rawTuiMode, proc, isAltScreen })
         }
         return
       }
@@ -2008,12 +2360,12 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       'sqlite','vue','svelte','dart','ex','exs','elm','hs','ml','clj','scala',
       'tf','hcl','proto','wasm','map','d','o','a','so','dylib','dll','exe',
     ])
-    const bareDomainLinkProvider = {
+    const bareDomainLinkProvider: ILinkProvider = {
       provideLinks(lineY, callback) {
         const line = terminal.buffer.active.getLine(lineY - 1)
         if (!line) return callback([])
         const text = line.translateToString(true)
-        const links: Parameters<typeof callback>[0] = []
+        const links: ILink[] = []
         for (const m of text.matchAll(BARE_DOMAIN_RE)) {
           const raw = m[1]
           const domain = raw.split('/')[0].split(':')[0]
@@ -2038,12 +2390,12 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     // 2b. Clickable file paths — /absolute, ./relative, file://, and bare Markdown filenames
     //     Modified to support multi-line paths by allowing \n in the path characters.
     const FILE_PATH_RE = /(?:^|[\s"'`(])((?:file:\/\/|~\/|\/|\.{1,2}\/)[^\n"'`)\]>]+|(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.(?:md|markdown|mdown|mkd)(?::\d+(?::\d+)?)?)/gi
-    const filePathLinkProvider = {
+    const filePathLinkProvider: ILinkProvider = {
       provideLinks(lineY, callback) {
         const line = terminal.buffer.active.getLine(lineY - 1)
         if (!line) return callback([])
         const text = line.translateToString(true)
-        const links: Parameters<typeof callback>[0] = []
+        const links: ILink[] = []
         for (const m of text.matchAll(FILE_PATH_RE)) {
           const path = m[1]
           const startX = m.index! + (m[0].length - path.length)
@@ -2346,7 +2698,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       // Hidden normal-screen output is buffered, so there is no rendered buffer to capture yet.
       if (currentEntryIdRef.current && shouldWriteImmediately) {
         if (outputFlushTimerRef.current) clearTimeout(outputFlushTimerRef.current)
-        outputFlushTimerRef.current = setTimeout(flushOutputBuffer, 600)
+        outputFlushTimerRef.current = window.setTimeout(flushOutputBuffer, 600)
       }
     })
 
@@ -2374,7 +2726,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     })
 
     let zoomFitFrame: number | null = null
-    let zoomFitTimer: ReturnType<typeof setTimeout> | null = null
+    let zoomFitTimer: number | null = null
 
     const scheduleZoomFit = () => {
       fitAndResizeTerminal(true)
@@ -2386,7 +2738,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       })
 
       if (zoomFitTimer) clearTimeout(zoomFitTimer)
-      zoomFitTimer = setTimeout(() => {
+      zoomFitTimer = window.setTimeout(() => {
         zoomFitTimer = null
         fitAndResizeTerminal(true)
       }, 80)
@@ -2473,11 +2825,12 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         if (!isAltScreenRef.current) {
           flushOutputBuffer()  // flush previous command's output immediately
         }
-        const cmd = currentInputRef.current.trim()
-        currentInputRef.current = ''
-        if (cmd) {
-          const rawTuiMode = getRawTuiModeForCommand(cmd)
-          if (rawTuiMode) startRawTuiMode(rawTuiMode)
+          const cmd = currentInputRef.current.trim()
+          currentInputRef.current = ''
+          if (cmd) {
+            promptNavIndexRef.current = -1
+            const rawTuiMode = getRawTuiModeForCommand(cmd)
+            if (rawTuiMode) startRawTuiMode(rawTuiMode)
 
           if (isAgentLaunchCommand(cmd) || agentSessionRef.current || isAgentProcessName(agentProcessRef.current)) {
             const launchedProvider = getAgentProviderFromCommand(cmd)
@@ -2516,6 +2869,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
             timestamp: new Date(),
             navigationMode,
             commandFingerprint: normalizeSubmitFingerprint(cmd),
+            commandFirstLineFingerprint: normalizeSubmitFirstLineFingerprint(cmd),
             commandLastLineFingerprint: normalizeSubmitLastLineFingerprint(cmd),
             agentProvider: provider,
             altScreenSessionId: navigationMode === 'agent-alt-screen' ? altScreenSessionIdRef.current : null
@@ -2558,11 +2912,11 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     // Without debouncing, two back-to-back SIGWINCH signals are sent to zsh, and
     // zsh outputs extra newlines while redrawing the prompt, which appear as
     // spurious blank lines in the terminal content.
-    let resizeDebounce: ReturnType<typeof setTimeout> | null = null
+    let resizeDebounce: number | null = null
     let resizeFrame: number | null = null
     const resizeObserver = new ResizeObserver(() => {
       if (resizeDebounce) clearTimeout(resizeDebounce)
-      resizeDebounce = setTimeout(() => {
+      resizeDebounce = window.setTimeout(() => {
         resizeDebounce = null
         if (resizeFrame !== null) cancelAnimationFrame(resizeFrame)
         resizeFrame = requestAnimationFrame(() => {
@@ -2891,7 +3245,10 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       {showDrawer && (
         <CommandHistoryDrawer
           entries={commandHistory}
-          onJump={(entry) => { void jumpToHistoryEntry(entry) }}
+          onJump={(entry) => {
+            setPromptNavigationIndexForEntry(entry)
+            void jumpToHistoryEntry(entry, getHistoryEntryDirection(entry))
+          }}
           onClose={handleCloseDrawer}
           onCopy={handleCopyOutput}
           copiedId={copiedId}

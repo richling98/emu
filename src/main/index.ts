@@ -772,7 +772,7 @@ function sendTaskCompleteState(): void {
 }
 
 function closeTaskCompleteOverlay(): void {
-  clearTimeout(taskCompleteAutoDismissTimer)
+  if (taskCompleteAutoDismissTimer) clearTimeout(taskCompleteAutoDismissTimer)
   taskCompleteAutoDismissTimer = null
   if (taskCompleteOverlayWindow && !taskCompleteOverlayWindow.isDestroyed()) {
     taskCompleteOverlayWindow.close()
@@ -787,7 +787,7 @@ function closeTaskCompleteOverlayIfEmpty(): void {
 }
 
 function resetTaskCompleteAutoDismissTimer(): void {
-  clearTimeout(taskCompleteAutoDismissTimer)
+  if (taskCompleteAutoDismissTimer) clearTimeout(taskCompleteAutoDismissTimer)
   taskCompleteAutoDismissTimer = setTimeout(() => {
     const active = getActiveTaskCompleteNotification()
     if (!active) {
@@ -1496,12 +1496,13 @@ async function getPerfStatsSnapshot(): Promise<PerfStatsSnapshot> {
 
   const electronProcess = process as NodeJS.Process & {
     getCPUUsage?: () => { percentCPUUsage?: number; idleWakeupsPerSecond?: number }
-    getProcessMemoryInfo?: () => Promise<Record<string, number>>
+    getProcessMemoryInfo?: () => Promise<Record<string, number> | Electron.ProcessMemoryInfo>
   }
   const cpu = electronProcess.getCPUUsage?.()
   let memory: Record<string, number> | undefined
   try {
-    memory = await electronProcess.getProcessMemoryInfo?.()
+    const memoryInfo = await electronProcess.getProcessMemoryInfo?.()
+    memory = memoryInfo ? Object.fromEntries(Object.entries(memoryInfo)) as Record<string, number> : undefined
   } catch {
     memory = undefined
   }
@@ -1985,14 +1986,16 @@ app.whenReady().then(() => {
       navigateAgentPermissionPrompt(input.type)
       return
     }
-    await resolveAgentPermissionPrompt(input.promptId, input.type)
+    if (input.type === 'approve' || input.type === 'deny') {
+      await resolveAgentPermissionPrompt(input.promptId, input.type)
+    }
   })
 
   // Task-complete notification
   const taskCompleteDebounceTimestamps = new Map<string, number>()
   const TASK_COMPLETE_DEBOUNCE_MS = 30_000
 
-  ipcMain.handle('task-complete:show', (event, info: {
+  ipcMain.handle('task-complete:show', (_, info: {
     tabName: string
     sessionId: string
     workspaceId: string

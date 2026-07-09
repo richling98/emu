@@ -11,6 +11,7 @@ export interface HistoryEntry {
   timestamp: Date
   navigationMode: 'normal-buffer' | 'agent-alt-screen'
   commandFingerprint: string
+  commandFirstLineFingerprint?: string
   commandLastLineFingerprint: string
   agentProvider?: string | null
   altScreenSessionId?: string | null
