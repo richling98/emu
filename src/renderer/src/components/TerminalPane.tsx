@@ -763,7 +763,6 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
   const [fileDropActive, setFileDropActive] = useState(false)
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
   const [terminalDropRect, setTerminalDropRect] = useState<DropHighlightRect | null>(null)
-  const [copiedId, setCopiedId] = useState<string | null>(null)
   const [isAtBottom, setIsAtBottom] = useState(true)
   const [isAltAgentReviewingHistory, setIsAltAgentReviewingHistory] = useState(false)
   const [navigationStatus, setNavigationStatus] = useState<string | null>(null)
@@ -1252,14 +1251,6 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
   const handleCloseDrawer = () => {
     setShowDrawer(false)
     onDrawerClose?.()
-  }
-
-  const handleCopyOutput = (entryId: string) => {
-    const entry = commandHistoryRef.current.find(e => e.id === entryId)
-    if (!entry?.outputFull) return
-    navigator.clipboard.writeText(entry.outputFull)
-    setCopiedId(entryId)
-    setTimeout(() => setCopiedId(null), 1800)
   }
 
     const handleScrollToBottom = () => {
@@ -3283,8 +3274,6 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
             void jumpToHistoryEntry(entry, getHistoryEntryDirection(entry))
           }}
           onClose={handleCloseDrawer}
-          onCopy={handleCopyOutput}
-          copiedId={copiedId}
         />
       )}
     </div>

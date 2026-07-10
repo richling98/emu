@@ -9,7 +9,6 @@ export const FEATURE_FEATURES = [
   { title: 'Highlight-to-Delete', desc: 'Select any text in the terminal, then press backspace to delete exactly that many characters. Surgical edits without hunting for the right position.' },
   { title: 'Unlimited Tabs', desc: 'Spin up as many named tabs as you need. Each gets its own PTY, timestamps, and history. Rename any tab inline with a simple double-click.' },
   { title: 'Command Log', desc: '⌘⇧L opens a searchable, time-stamped log of every command you\'ve run — with output previews and one-click jump-to. Your full terminal history, always at hand.' },
-  { title: 'Output Copy Button', desc: 'Every entry in the Command Log has a clipboard icon that copies the full output of that command to your clipboard in one click — clean text, no ANSI codes, no shell artifacts.' },
   { title: 'Jump to Prompt', desc: '⌘↑ / ⌘↓ lets you fly through your scrollback history one command at a time, jumping straight to each prompt so you can review output without losing your place.' },
   { title: 'Clickable Links & Paths', desc: 'Every URL and bare domain is Cmd+clickable and opens in your browser. Any /absolute or ./relative file path opens directly in Finder. No copying, no switching apps.' },
   { title: 'Multi-Line Paste', desc: 'Paste a block of commands and Emu hands them to your shell as a unit — all lines land intact, waiting for a single Enter. Exactly how a real terminal should handle it.' },
