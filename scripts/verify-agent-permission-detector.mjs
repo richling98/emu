@@ -680,6 +680,53 @@ assert.equal(
 )
 assert(!parsedOpencodeExternalDirectoryPermissionWithReadTrace.detail.includes('Read /var/folders'), 'read trace should not become permission detail')
 
+// The user-reported ~/Library/Application\ Support escaped-space case (July 2026)
+const opencodeExternalDirectoryTildeWithEscapedSpace = [
+  '△ Permission required',
+  '  ← Access external directory ~/Library/Application\\ Support',
+  '',
+  'Patterns',
+  '- /Users/richardling/Library/Application\\ Support/*',
+  '- /Users/richardling/Library/Caches/com.adamant.ai/*',
+  '- /Users/richardling/Library/Caches/*',
+  '- /Users/richardling/Library/Preferences/*',
+  '- /Applications/Adamant.app/*',
+  '',
+  'Allow once      Allow always     Reject      ctrl+f fullscreen   ⇆ select   enter confirm'
+].join('\n')
+const parsedTildeEscaped = new AgentPermissionPromptDetector().append(opencodeExternalDirectoryTildeWithEscapedSpace, {
+  sessionId: 'session-opencode-tilde-escaped',
+  provider: 'opencode',
+  agentSession: true
+})
+assert(parsedTildeEscaped, 'opencode external-dir with tilde and escaped space should parse')
+assert(parsedTildeEscaped.summary.toLowerCase().includes('application'), 'escaped-space summary should include Application')
+assert(parsedTildeEscaped.fingerprint.startsWith('opencode:approval:access external directory ~/library/application'))
+
+// Xterm wrapping — "Access external directory" label on its own row, path next row,
+// and long bullet globs wrapped — must still parse
+const opencodeExternalDirectoryXtermWrapped = [
+  '△ Permission required',
+  '  ← Access external directory',
+  '~/Library/Application\\ Support',
+  '',
+  'Patterns',
+  '- /Users/richardling/Library/Application\\',
+  'Support/*',
+  '- /Users/richardling/Library/Caches/*',
+  '',
+  'Allow once   Allow always',
+  'Reject',
+  'ctrl+f fullscreen  ↵ select  enter confirm'
+].join('\n')
+const parsedWrapped = new AgentPermissionPromptDetector().append(opencodeExternalDirectoryXtermWrapped, {
+  sessionId: 'session-opencode-xterm-wrapped',
+  provider: 'opencode',
+  agentSession: true
+})
+assert(parsedWrapped, 'xterm-wrapped external directory permission should parse')
+assert(parsedWrapped.summary.includes('Application'), 'wrapped summary should contain Application')
+
 const opencodeDescriptionOnlyRepaint = [
   '△ Permission required',
   '# Check if browse binary exists',

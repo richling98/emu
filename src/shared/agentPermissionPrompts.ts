@@ -98,6 +98,11 @@ function isIndentedContinuationLine(line: string): boolean {
   return /^\s+\S/.test(line) && !isMenuChoiceLine(line) && !isWaitHintLine(line)
 }
 
+function isOpencodeExternalDirectoryLine(line: string): boolean {
+  const normalized = normalizeLine(line).replace(/^[^\w$#]+/, '')
+  return /^access\s+external\s+directory\b/i.test(normalized)
+}
+
 function logicalPromptLines(lines: string[]): string[] {
   const logicalLines: string[] = []
 
@@ -112,6 +117,13 @@ function logicalPromptLines(lines: string[]): string[] {
       (/^(reason|description):\s+/i.test(normalizeLine(previous)) && !/^\$\s+/.test(normalized) && !isMenuChoiceLine(line) && !isWaitHintLine(line) && !isClaudePromptStart(normalized))
     )) {
       logicalLines[logicalLines.length - 1] = `${previous} ${normalized}`
+      continue
+    }
+
+    // Xterm hard-wrap: "Access external directory" on its own row followed by
+    // the path "~/..." or "/..." on next physical row should be one logical line.
+    if (previous && isOpencodeExternalDirectoryLine(previous) && !isOpencodeControlLine(line) && !opencodeIsPatternOrBulletLine(normalized)) {
+      logicalLines[logicalLines.length - 1] = `${previous} ${line}`.trimEnd()
       continue
     }
 
@@ -212,7 +224,12 @@ function isOpencodePermissionChromeLine(line: string): boolean {
     isOpencodeApproveButton(line) ||
     isOpencodeDenyButton(line) ||
     isWaitHintLine(line) ||
-    isSelectedChoiceLine(line)
+    isSelectedChoiceLine(line) ||
+    // External-directory permission panels include a "Patterns" section with
+    // glob bullets (e.g. "- /Users/.../*"). These are expected content and
+    // must not be treated as "substantial non-chrome output" that would
+    // cause the generic heading-only fallback to be suppressed.
+    opencodeIsPatternOrBulletLine(normalized)
 }
 
 function commandLinesFromCodexBlock(block: string[]): string[] {
@@ -599,18 +616,36 @@ function isOpencodeStrongPermissionSubject(line: string): boolean {
     /^access\s+external\s+directory\b/i.test(normalized)
 }
 
+function opencodeIsPatternOrBulletLine(line: string): boolean {
+  return /^patterns$/i.test(line) || /^-\s+/.test(line)
+}
+
+function opencodePathContinuationCharAllowed(char: string): boolean {
+  return /^[\w./~:@\-\\* ]+$/.test(char)
+}
+
 function opencodeAccessExternalDirectorySubject(block: string[]): string | null {
   const normalized = block.map(normalizeLine).filter(Boolean)
   for (let index = 0; index < normalized.length; index++) {
-    const line = normalized[index].replace(/^[^\w$#]+/, '')
-    if (!/^access\s+external\s+directory\b/i.test(line)) continue
+    const raw = normalized[index].replace(/^[^\w$#]+/, '').trim()
+    if (!/^access\s+external\s+directory\b/i.test(raw)) continue
 
-    const parts = [line]
-    for (const next of normalized.slice(index + 1)) {
-      if (/^patterns$/i.test(next) || /^-\s+/.test(next) || isOpencodeControlLine(next)) break
-      if (/^[\w./~:@-]+$/.test(next)) parts.push(next)
-      else break
+    const parts: string[] = [raw]
+    // Collect xterm-wrapped continuation of the directory path (may be split
+    // when terminal is narrow or path contains escaped spaces).
+    for (const nextRaw of normalized.slice(index + 1)) {
+      const next = nextRaw.trim()
+      if (!next) continue
+      if (opencodeIsPatternOrBulletLine(next) || isOpencodeControlLine(nextRaw)) break
+      // Path continuation: starts with ~/ or /, or looks like a plain path token
+      // (including backslash escapes and common glob suffixes)
+      if (/^(?:~|\/)/.test(next) || opencodePathContinuationCharAllowed(next)) {
+        parts.push(next)
+      } else {
+        break
+      }
     }
+
     return parts.join(' ').replace(/\s+/g, ' ').replace(/\/\s+/g, '/').trim()
   }
   return null
