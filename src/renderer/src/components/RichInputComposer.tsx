@@ -191,6 +191,13 @@ export default function RichInputComposer({
             return
           }
 
+          if (event.metaKey && !event.ctrlKey && event.key.toLowerCase() === 'k') {
+            event.preventDefault()
+            // Cmd+K — forward clear-screen to shell
+            onTerminalHotkey?.('\x0c')
+            return
+          }
+
           if (event.ctrlKey && !event.metaKey && event.key.toLowerCase() === 'u') {
             event.preventDefault()
             event.currentTarget.innerText = ''

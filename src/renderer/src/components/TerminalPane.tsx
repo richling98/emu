@@ -2777,7 +2777,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     terminal.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
       if (ev.type !== 'keydown') return true
 
-      // Font zoom: Cmd+= / Cmd+- / Cmd+0
+      // Font zoom: Cmd+= / Cmd+- / Cmd+0, and Cmd+K clear
       if (ev.metaKey) {
         if (ev.key === '=' || ev.key === '+' || ev.code === 'Equal') {
           ev.preventDefault(); applyFontZoom(+1); return false
@@ -2790,7 +2790,13 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
           applyFontZoom(0)
           return false
         }
-
+        // Cmd+K — clear screen (macOS terminal convention)
+        if (ev.key.toLowerCase() === 'k' && !ev.shiftKey && !ev.ctrlKey) {
+          ev.preventDefault()
+          // Use shell's clear: \x0c (Ctrl+L equivalent) which clears and redraws
+          window.api.ptyWrite(session.id, '\x0c')
+          return false
+        }
       }
 
       if (inputOwnerRef.current === 'composer') return false
