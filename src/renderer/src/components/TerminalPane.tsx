@@ -1145,6 +1145,9 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       clearTimeout(navigationStatusTimerRef.current)
       navigationStatusTimerRef.current = null
     }
+    // Dismiss previous navigation pill immediately — prevents stuck badge
+    // when an in-flight search bails via stale token without re-arming the timer.
+    setNavigationStatus(null)
     if (entry.navigationMode === 'agent-alt-screen') {
       await jumpToAgentAltScreenEntry(terminal, entry, direction)
       return
