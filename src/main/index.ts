@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, nativeImage, screen } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, nativeImage, screen, dialog } from 'electron'
 
 // GPU acceleration: default ON (out-of-process GPU process). Compositor paint
 // and WebGL rasterization move off the renderer main thread into a dedicated
@@ -292,6 +292,32 @@ async function writePtySequence(sessionId: string, writes: PtyWriteChunk[]): Pro
   }
 
   return { ok: true }
+}
+
+function shellQuotePath(path: string): string {
+  if (/^[a-zA-Z0-9._\-/]+$/.test(path)) return path
+  return `'${path.replace(/'/g, "'\\''")}'`
+}
+
+function buildChangeDirectoryCommand(path: string): string {
+  if (os.platform() === 'win32') {
+    return `Set-Location -LiteralPath '${path.replace(/'/g, "''")}'\r`
+  }
+  return `cd ${shellQuotePath(path)}\r`
+}
+
+async function selectWorkspaceFolder(ownerWindow: BrowserWindow | null, defaultPath?: string | null): Promise<string | null> {
+  const options: Electron.OpenDialogOptions = {
+    title: 'Open workspace folder',
+    properties: ['openDirectory'],
+    defaultPath: normalizeSafeCwd(defaultPath) ?? os.homedir()
+  }
+  const result = ownerWindow && !ownerWindow.isDestroyed()
+    ? await dialog.showOpenDialog(ownerWindow, options)
+    : await dialog.showOpenDialog(options)
+
+  if (result.canceled) return null
+  return normalizeSafeCwd(result.filePaths[0])
 }
 
 function sanitizeWorkspaceName(input: unknown): string | null {
@@ -1551,7 +1577,7 @@ function isSafeExternalUrl(url: string): boolean {
 
 // Only allow real absolute filesystem paths (no URLs, no null bytes).
 function isSafeOpenPath(p: string): boolean {
-  return typeof p === 'string' && p.startsWith('/') && !p.includes('\0')
+  return typeof p === 'string' && isAbsolute(p) && !p.includes('\0')
 }
 
 function normalizeSafeCwd(cwd?: string | null): string | null {
@@ -1950,6 +1976,10 @@ app.whenReady().then(() => {
     return null
   })
 
+  ipcMain.handle('dialog:selectWorkspaceFolder', async (event, defaultPath?: string | null) => {
+    return selectWorkspaceFolder(BrowserWindow.fromWebContents(event.sender), defaultPath)
+  })
+
   ipcMain.handle('markdown:open', (_, input: MarkdownOpenInput) => {
     return readMarkdownFile(input)
   })
@@ -2046,6 +2076,12 @@ app.whenReady().then(() => {
     const normalizedWrites = normalizePtyWriteChunks(writes)
     if (!normalizedWrites) return { ok: false, reason: 'invalid-input' }
     return writePtySequence(sessionId, normalizedWrites)
+  })
+
+  ipcMain.handle('pty:changeDirectory', async (_, sessionId: string, cwd: string): Promise<PtyWriteSequenceResult> => {
+    const safeCwd = normalizeSafeCwd(cwd)
+    if (!safeCwd) return { ok: false, reason: 'invalid-input' }
+    return writePtySequence(sessionId, [{ data: `\x15${buildChangeDirectoryCommand(safeCwd)}` }])
   })
 
   // Resize PTY

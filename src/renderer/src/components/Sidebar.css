@@ -293,6 +293,7 @@
 
 .history-btn,
 .rename-btn,
+.folder-btn,
 .delete-btn {
   background: none;
   border: none;
@@ -309,14 +310,33 @@
   justify-content: center;
 }
 
+.sidebar-action-tooltip {
+  position: fixed;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 160px;
+  padding: 5px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 5px;
+  background: rgba(12, 12, 18, 0.94);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 2000;
+}
+
 .session-item:hover .history-btn,
 .session-item:hover .rename-btn,
+.session-item:hover .folder-btn,
 .session-item:hover .delete-btn {
   opacity: 0.55;
 }
 
 .session-item:hover .history-btn:hover,
-.session-item:hover .rename-btn:hover {
+.session-item:hover .rename-btn:hover,
+.session-item:hover .folder-btn:hover {
   opacity: 1;
   background: rgba(255, 255, 255, 0.1);
 }

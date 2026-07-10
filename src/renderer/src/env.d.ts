@@ -138,6 +138,7 @@ interface Window {
     ptyCreate: (sessionId: string, options?: { cwd?: string | null; workspaceName?: string | null }) => Promise<{ pid: number }>
     ptyWrite: (sessionId: string, data: string) => void
     ptyWriteSequence: (sessionId: string, writes: PtyWriteChunk[]) => Promise<PtyWriteSequenceResult>
+    ptyChangeDirectory: (sessionId: string, cwd: string) => Promise<PtyWriteSequenceResult>
     ptyResize: (sessionId: string, cols: number, rows: number) => void
     ptyClose: (sessionId: string) => void
     onPtyData: (sessionId: string, callback: (data: string) => void) => () => void
@@ -146,6 +147,7 @@ interface Window {
     getFilePath: (file: File) => string
     openExternal: (url: string) => Promise<void>
     openPath: (path: string) => Promise<string>
+    selectWorkspaceFolder: (defaultPath?: string | null) => Promise<string | null>
     markdownOpen: (input: MarkdownOpenInput) => Promise<MarkdownOpenResult>
     markdownImage: (input: MarkdownOpenInput) => Promise<MarkdownImageResult>
     ptyGetProcess: (sessionId: string) => Promise<string | null>

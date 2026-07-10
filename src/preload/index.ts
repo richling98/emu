@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('api', {
   ptyWrite: (sessionId: string, data: string) => ipcRenderer.send('pty:write', sessionId, data),
   ptyWriteSequence: (sessionId: string, writes: Array<{ data: string; delayAfterMs?: number }>) =>
     ipcRenderer.invoke('pty:writeSequence', sessionId, writes),
+  ptyChangeDirectory: (sessionId: string, cwd: string) => ipcRenderer.invoke('pty:changeDirectory', sessionId, cwd),
   // Resize PTY
   ptyResize: (sessionId: string, cols: number, rows: number) =>
     ipcRenderer.send('pty:resize', sessionId, cols, rows),
@@ -50,6 +51,7 @@ contextBridge.exposeInMainWorld('api', {
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   // Open a file path in Finder / default app
   openPath: (path: string) => ipcRenderer.invoke('shell:openPath', path),
+  selectWorkspaceFolder: (defaultPath?: string | null) => ipcRenderer.invoke('dialog:selectWorkspaceFolder', defaultPath),
   // Read a local Markdown file through the main process
   markdownOpen: (input: unknown) => ipcRenderer.invoke('markdown:open', input),
   // Read a local Markdown image asset through the main process

@@ -15,6 +15,7 @@ interface Props {
   collapsed: boolean
   onToggleCollapse: () => void
   onOpenHistory: (id: string) => void
+  onOpenFolder: (id: string) => void
 }
 
 function relativeTime(date: Date, now: Date): string {
@@ -48,10 +49,11 @@ const COLLAPSE_THRESHOLD = 190
 const MIN_WIDTH = 190
 const MAX_WIDTH = 420
 
-export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSelect, onNew, onRename, onDelete, collapsed, onToggleCollapse, onOpenHistory }: Props) {
+export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSelect, onNew, onRename, onDelete, collapsed, onToggleCollapse, onOpenHistory, onOpenFolder }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
+  const [tooltip, setTooltip] = useState<{ text: string; left: number; top: number } | null>(null)
   const [now, setNow] = useState(() => new Date())
   const [sidebarWidth, setSidebarWidth] = useState(220)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -121,6 +123,15 @@ export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSe
     setEditingId(null)
   }
 
+  const showActionTooltip = (event: React.MouseEvent<HTMLButtonElement>, text: string) => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    setTooltip({
+      text,
+      left: rect.left + rect.width / 2,
+      top: rect.bottom + 8
+    })
+  }
+
   const deleteModal = deleteConfirmId && createPortal(
     <div className="delete-modal-overlay" onClick={() => setDeleteConfirmId(null)}>
       <div className="delete-modal" onClick={(e) => e.stopPropagation()}>
@@ -134,10 +145,18 @@ export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSe
     document.body
   )
 
+  const actionTooltip = tooltip && createPortal(
+    <div className="sidebar-action-tooltip" style={{ left: tooltip.left, top: tooltip.top }}>
+      {tooltip.text}
+    </div>,
+    document.body
+  )
+
   if (collapsed) {
     return (
       <>
         {deleteModal}
+        {actionTooltip}
         <div className="sidebar sidebar--collapsed">
           <div className="sidebar-resize-handle" onMouseDown={handleResizeStart} />
           <div className="sidebar-collapsed-logo">
@@ -159,6 +178,7 @@ export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSe
   return (
     <>
       {deleteModal}
+      {actionTooltip}
       <div className="sidebar" style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
       <div className="sidebar-resize-handle" onMouseDown={handleResizeStart} />
       <div className="sidebar-header">
@@ -211,17 +231,23 @@ export default function Sidebar({ sessions, selectedId, rightPaneSessionId, onSe
                 <>
                   <span className="session-name">{session.name}</span>
                   <div className="session-actions">
-                    <button className="history-btn" onClick={(e) => { e.stopPropagation(); onOpenHistory(session.id) }} title="Command history">
+                    <button className="history-btn" onClick={(e) => { e.stopPropagation(); onOpenHistory(session.id) }} onMouseEnter={(e) => showActionTooltip(e, 'Show command log')} onMouseLeave={() => setTooltip(null)} aria-label="Show command log">
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                         <line x1="3" y1="6"  x2="21" y2="6"  />
                         <line x1="3" y1="12" x2="21" y2="12" />
                         <line x1="3" y1="18" x2="21" y2="18" />
                       </svg>
                     </button>
-                    <button className="rename-btn" onClick={(e) => startEdit(e, session)} title="Rename">
+                    <button className="rename-btn" onClick={(e) => startEdit(e, session)} onMouseEnter={(e) => showActionTooltip(e, 'Rename tab')} onMouseLeave={() => setTooltip(null)} aria-label="Rename tab">
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                      </svg>
+                    </button>
+                    <button className="folder-btn" onClick={(e) => { e.stopPropagation(); onOpenFolder(session.id) }} onMouseEnter={(e) => showActionTooltip(e, 'Open folder workspace')} onMouseLeave={() => setTooltip(null)} aria-label="Open folder workspace">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v1" />
+                        <path d="M3 19.5 5.4 10h16L19 20H5a2 2 0 0 1-2-2.5Z" />
                       </svg>
                     </button>
                     {sessions.length > 1 && (

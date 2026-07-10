@@ -41,7 +41,7 @@
   min-width: 92px;
   max-width: 210px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 4px;
   padding: 0 6px 0 9px;

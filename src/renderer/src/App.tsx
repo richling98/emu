@@ -639,6 +639,26 @@ export default function App() {
     }))
   }, [])
 
+  const handleOpenTopTabFolder = useCallback(async (id: string) => {
+    const workspace = sessionsRef.current.find((session) => session.tabs.some((tab) => tab.id === id))
+    const tab = workspace?.tabs.find((candidate) => candidate.id === id)
+    if (!workspace || !tab) return
+
+    selectTopTab(id)
+    setActivePaneId(id)
+
+    const folder = await window.api.selectWorkspaceFolder(tab.currentCwd ?? tab.initialCwd)
+    if (!folder) return
+
+    const result = await window.api.ptyChangeDirectory(id, folder)
+    if (result.ok) handleCurrentCwdChange(id, folder)
+  }, [handleCurrentCwdChange, selectTopTab])
+
+  const handleOpenWorkspaceFolder = useCallback((workspaceId: string) => {
+    const tabId = getSelectedTabIdForWorkspace(workspaceId)
+    if (tabId) void handleOpenTopTabFolder(tabId)
+  }, [getSelectedTabIdForWorkspace, handleOpenTopTabFolder])
+
   const handleOpenHistory = useCallback((workspaceId: string) => {
     const tabId = getSelectedTabIdForWorkspace(workspaceId)
     if (!tabId) return
@@ -839,6 +859,7 @@ export default function App() {
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
           onOpenHistory={handleOpenHistory}
+          onOpenFolder={handleOpenWorkspaceFolder}
         />
         <div
           ref={terminalAreaRef}
@@ -854,6 +875,7 @@ export default function App() {
             onSelect={selectTopTab}
             onNew={handleNewTopTab}
             onRename={handleRenameTopTab}
+            onOpenFolder={handleOpenTopTabFolder}
             onDelete={handleDeleteTopTab}
           />
 
