@@ -132,13 +132,41 @@
   box-shadow: 0 0 0 2px rgba(180, 190, 254, 0.24), 0 14px 34px rgba(0, 0, 0, 0.28);
 }
 
-.rich-input-composer__prompt {
-  color: var(--accent);
-  font-family: Menlo, Monaco, "SF Mono", "JetBrains Mono", monospace;
-  font-size: 13px;
-  line-height: 20px;
-  user-select: none;
-  opacity: 0.9;
+.rich-input-composer__attach-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: rgba(203, 166, 247, 0.52);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 120ms ease, color 120ms ease;
+  margin-top: 1px;
+}
+
+.rich-input-composer__attach-btn:hover {
+  background: rgba(203, 166, 247, 0.12);
+  color: rgba(203, 166, 247, 0.9);
+}
+
+.rich-input-composer__attach-btn:active {
+  background: rgba(203, 166, 247, 0.18);
+}
+
+.rich-input-composer__file-icon {
+  width: 44px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.28);
+  color: rgba(203, 166, 247, 0.55);
 }
 
 .rich-input-composer__editor {

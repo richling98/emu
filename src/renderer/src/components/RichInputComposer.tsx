@@ -21,6 +21,7 @@ interface Props {
   onInterrupt?: () => void
   onTerminalHotkey?: (data: string) => void
   onPasteImages?: (files: File[]) => void
+  onAttachFiles?: (files: File[]) => void
   onRemoveImage?: (id: string) => void
 }
 
@@ -54,9 +55,11 @@ export default function RichInputComposer({
   onInterrupt,
   onTerminalHotkey,
   onPasteImages,
+  onAttachFiles,
   onRemoveImage
 }: Props) {
   const editorRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const composingRef = useRef(false)
   const commitLockRef = useRef(false)
 
@@ -108,7 +111,31 @@ export default function RichInputComposer({
 
   return (
     <div ref={rootRef} className={`rich-input-composer${active ? ' rich-input-composer--active' : ''}${dropActive ? ' rich-input-composer--drop-active' : ''}`}>
-      <div className="rich-input-composer__prompt">$</div>
+      <button
+        type="button"
+        className="rich-input-composer__attach-btn"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => fileInputRef.current?.click()}
+        title="Attach a file"
+        aria-label="Attach a file"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
+        </svg>
+      </button>
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="rich-input-composer__file-input"
+        style={{ display: 'none' }}
+        multiple
+        onChange={(e) => {
+          const files = e.target.files ? Array.from(e.target.files) : []
+          if (files.length > 0) onAttachFiles?.(files)
+          // Reset so selecting same file again still fires
+          e.target.value = ''
+        }}
+      />
       <div
         ref={editorRef}
         className="rich-input-composer__editor"
@@ -193,7 +220,16 @@ export default function RichInputComposer({
         <div className="rich-input-composer__images" aria-label="Attached images">
           {images.map((image) => (
             <div key={image.id} className="rich-input-composer__image-chip">
-              <img src={image.previewUrl} alt="" className="rich-input-composer__image-thumb" />
+              {image.previewUrl ? (
+                <img src={image.previewUrl} alt="" className="rich-input-composer__image-thumb" />
+              ) : (
+                <div className="rich-input-composer__file-icon" aria-hidden="true">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
+                </div>
+              )}
               <div className="rich-input-composer__image-meta">
                 <div className="rich-input-composer__image-name">{image.name}</div>
                 <div className="rich-input-composer__image-path">{image.path}</div>

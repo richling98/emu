@@ -1341,6 +1341,38 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     setComposerImages((current) => [...current, ...attachments])
   }, [])
 
+  const addComposerFiles = useCallback(async (files: File[]) => {
+    if (files.length === 0) return
+
+    const attachments: Array<{ id: string; name: string; path: string; previewUrl: string }> = []
+    for (const file of files) {
+      const droppedPath = window.api.getFilePath(file)
+      const isImage = file.type.startsWith('image/')
+      let resolvedPath = droppedPath
+
+      if (!resolvedPath && isImage) {
+        try {
+          resolvedPath = await window.api.imageSaveTemp(await fileToDataUrl(file), file.name || 'attached-file')
+        } catch {
+          resolvedPath = ''
+        }
+      }
+
+      // If still no path (generic file without getFilePath), skip — log but don't crash
+      if (!resolvedPath) continue
+
+      attachments.push({
+        id: crypto.randomUUID(),
+        name: file.name || resolvedPath.split('/').pop() || 'file',
+        path: resolvedPath,
+        previewUrl: isImage ? URL.createObjectURL(file) : ''
+      })
+    }
+
+    if (attachments.length === 0) return
+    setComposerImages((current) => [...current, ...attachments])
+  }, [])
+
   const removeComposerImage = useCallback((id: string) => {
     setComposerImages((current) => {
       const removed = current.find((image) => image.id === id)
@@ -3212,6 +3244,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         onInterrupt={handleComposerInterrupt}
         onTerminalHotkey={handleComposerTerminalHotkey}
         onPasteImages={addComposerImageFiles}
+        onAttachFiles={addComposerFiles}
         onRemoveImage={removeComposerImage}
       />
       {(!isAtBottom || isAltAgentReviewingHistory) && (
