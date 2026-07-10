@@ -213,7 +213,7 @@
 }
 
 .session-item:hover {
-  background: rgba(69, 71, 90, 0.5);
+  background: color-mix(in srgb, var(--accent) 10%, rgba(255, 255, 255, 0.06));
 }
 
 .session-item.selected {
@@ -222,6 +222,7 @@
   padding-left: 10px;
   margin-left: 0;
   margin-right: 6px;
+  background: color-mix(in srgb, var(--accent) 12%, rgba(255, 255, 255, 0.04));
 }
 
 .session-item-inner {

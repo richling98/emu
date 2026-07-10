@@ -4,8 +4,8 @@
    ─────────────────────────────────────────────────────────────────────────── */
 :root {
   --bg-base:     #1e1e2e;
-  --bg-panel:    rgba(22, 22, 40, 0.42);
-  --bg-titlebar: rgba(28, 28, 45, 0.45);
+  --bg-panel:    rgba(30, 30, 46, 0.78);
+  --bg-titlebar: rgba(30, 30, 46, 0.84);
   --accent:      #b4befe;
   --accent-alt:  #cba6f7;
 }

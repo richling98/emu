@@ -5,9 +5,9 @@
   gap: 8px;
   padding: 5px 10px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(17, 17, 27, 0.55);
-  backdrop-filter: blur(32px) saturate(180%);
-  -webkit-backdrop-filter: blur(32px) saturate(180%);
+  background: var(--bg-titlebar);
+  backdrop-filter: blur(80px) saturate(220%) brightness(1.15);
+  -webkit-backdrop-filter: blur(80px) saturate(220%) brightness(1.15);
   position: relative;
   z-index: 30;
   -webkit-app-region: no-drag;
@@ -55,7 +55,8 @@
 }
 
 .top-tab:hover {
-  background: rgba(69, 71, 90, 0.58);
+  background: color-mix(in srgb, var(--accent) 10%, rgba(255, 255, 255, 0.08));
+  border-color: color-mix(in srgb, var(--accent) 18%, rgba(255, 255, 255, 0.12));
   color: rgba(255, 255, 255, 0.9);
 }
 
