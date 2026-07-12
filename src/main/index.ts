@@ -181,6 +181,21 @@ function debugAgentPermission(event: string, details: Record<string, unknown> = 
   console.info('[agent-permission:main]', { event, ...details })
 }
 
+function isNotificationDisabledGlobally(): boolean {
+  // env vars used as fast opt-out in perf diagnosis; gated alongside settings UI
+  if (process.env.EMU_DISABLE_NOTIFICATIONS === '1' || process.env.THINKING_DISABLE_NOTIFICATIONS === '1') return true
+  if (process.env.EMU_DISABLE_TASK_COMPLETE_OVERLAY === '1' || process.env.THINKING_DISABLE_TASK_COMPLETE_OVERLAY === '1') return true
+  if (process.env.EMU_TASK_COMPLETE_POPUP_ENABLED === '0' || process.env.THINKING_TASK_COMPLETE_POPUP_ENABLED === '0') return true
+  return false
+}
+
+function isPermissionOverlayDisabledGlobally(): boolean {
+  if (process.env.EMU_DISABLE_PERMISSION_OVERLAY === '1' || process.env.THINKING_DISABLE_PERMISSION_OVERLAY === '1') return true
+  if (process.env.EMU_PERMISSION_POPUP_ENABLED === '0' || process.env.THINKING_PERMISSION_POPUP_ENABLED === '0') return true
+  if (process.env.EMU_DISABLE_NOTIFICATIONS === '1' || process.env.THINKING_DISABLE_NOTIFICATIONS === '1') return true
+  return false
+}
+
 function createPtyPerfStats(sessionId: string, pid: number): PtyPerfStats {
   return {
     sessionId,
@@ -895,6 +910,7 @@ function resolveTaskCompleteNotification(notificationId: string): void {
 }
 
 function ensureTaskCompleteOverlayVisible(playChime: boolean): void {
+  if (isNotificationDisabledGlobally()) return
   const overlay = ensureTaskCompleteOverlayWindow()
   positionTaskCompleteOverlay()
 
@@ -1304,6 +1320,10 @@ function showAgentPermissionOverlay(playChime: boolean): void {
 }
 
 function ensureAgentPermissionOverlayVisible(reason: string, playChime: boolean): void {
+  if (isPermissionOverlayDisabledGlobally()) {
+    debugAgentPermission('overlay-suppressed-env', { reason })
+    return
+  }
   const pendingCount = pendingAgentPermissionPrompts.filter((entry) => entry.status === 'pending').length
   if (pendingCount === 0) {
     closeAgentPermissionOverlayIfEmpty()
@@ -2030,6 +2050,7 @@ app.whenReady().then(() => {
     sessionId: string
     workspaceId: string
   }) => {
+    if (isNotificationDisabledGlobally()) return
     if (!info || typeof info.tabName !== 'string' || typeof info.sessionId !== 'string') return
 
     const debounceKey = `${info.sessionId}:${info.workspaceId ?? ''}`

@@ -215,6 +215,16 @@ export default function App() {
   const [markdownViewMode, setMarkdownViewMode] = useState<MarkdownViewMode>('preview')
   const [markdownWidth, setMarkdownWidth] = useState(DEFAULT_MARKDOWN_WIDTH)
   const [terminalFocusSignal, setTerminalFocusSignal] = useState(0)
+  const [notificationSettings, setNotificationSettings] = useState(() => {
+    try {
+      return {
+        permissionPopupEnabled: localStorage.getItem('emu.permissionPopupEnabled') !== '0',
+        taskCompletePopupEnabled: localStorage.getItem('emu.taskCompletePopupEnabled') !== '0'
+      }
+    } catch {
+      return { permissionPopupEnabled: true, taskCompletePopupEnabled: true }
+    }
+  })
   const [showPerfOverlay, setShowPerfOverlay] = useState(() =>
     import.meta.env.DEV || localStorage.getItem('emu-perf-overlay') === '1'
   )
@@ -266,6 +276,16 @@ export default function App() {
 
     window.addEventListener('keydown', handlePerfToggle, true)
     return () => window.removeEventListener('keydown', handlePerfToggle, true)
+  }, [])
+
+  useEffect(() => {
+    const handleNotificationChange = (event: Event) => {
+      const customEvent = event as CustomEvent<{ key: 'permissionPopupEnabled' | 'taskCompletePopupEnabled'; value: boolean }>
+      if (!customEvent.detail) return
+      setNotificationSettings((prev) => ({ ...prev, [customEvent.detail.key]: customEvent.detail.value }))
+    }
+    window.addEventListener('emu:notifications-changed', handleNotificationChange as EventListener)
+    return () => window.removeEventListener('emu:notifications-changed', handleNotificationChange as EventListener)
   }, [])
 
   const restoreActiveTerminalFocus = useCallback(() => {
@@ -906,6 +926,8 @@ export default function App() {
                 onClosePane={isLeftSlot ? handleCloseLeftPane : isRightSlot ? handleCloseRightPane : undefined}
                 onOpenMarkdown={handleOpenMarkdown}
                 onPerfEvent={recordTerminalPerfEvent}
+                permissionPopupEnabled={notificationSettings.permissionPopupEnabled}
+                taskCompletePopupEnabled={notificationSettings.taskCompletePopupEnabled}
                 focusSignal={terminalFocusSignal}
                 layoutSignal={terminalLayoutSignal}
                 xtermTheme={getTheme(themeId).terminal}

@@ -30,10 +30,10 @@ import './TerminalPane.css'
 
 const DEFAULT_FONT_SIZE = 13
 const AGENT_BUSY_ACTIVITY_GRACE_MS = 15_000
-const AGENT_BUSY_SCREEN_CHECK_MS = 1_000
+const AGENT_BUSY_SCREEN_CHECK_MS = 3_000
 const AGENT_BUSY_MAX_WITHOUT_EVIDENCE_MS = 2 * 60 * 1000
-const AGENT_PROCESS_POLL_MS = 6_000
-const HIDDEN_AGENT_PROCESS_POLL_MS = 24_000
+const AGENT_PROCESS_POLL_MS = 10_000
+const HIDDEN_AGENT_PROCESS_POLL_MS = 30_000
 const AGENT_SUBMIT_SINGLE_LINE_SETTLE_MS = 180
 const AGENT_SUBMIT_BRACKETED_PASTE_SETTLE_MS = 650
 const AGENT_SUBMIT_RETRY_WAIT_MS = 650
@@ -49,6 +49,7 @@ const AGENT_PERMISSION_TAIL_LINES = 80
 const AGENT_PERMISSION_RAW_BUFFER_MAX_CHARS = 32 * 1024
 const AGENT_PERMISSION_WATCHDOG_INTERVAL_MS = 500
 const AGENT_PERMISSION_WATCHDOG_DURATION_MS = 30_000
+const AGENT_PERMISSION_GLOBAL_THROTTLE_MS = 100
 const MAX_COMMAND_HISTORY_ENTRIES = 500
 const AGENT_HISTORY_SEARCH_MAX_ATTEMPTS = 13
 const AGENT_HISTORY_SEARCH_SETTLE_MS = 90
@@ -687,12 +688,30 @@ interface Props {
   onCurrentCwdChange?: (cwd: string) => void
   onOpenMarkdown?: (result: MarkdownOpenResult) => void
   onPerfEvent?: (sessionId: string, event: TerminalPerfEvent, value?: number) => void
+  permissionPopupEnabled?: boolean
+  taskCompletePopupEnabled?: boolean
   focusSignal?: number
   layoutSignal?: string
   xtermTheme?: ITheme
 }
 
-export default function TerminalPane({ session, workspaceName, isVisible, slot = 'full', isActive = true, onActivate, onSessionEnd, openDrawer, onDrawerClose, onClosePane, onSessionTouched, onAgentStateChange, onCurrentCwdChange, onOpenMarkdown, onPerfEvent, focusSignal = 0, layoutSignal = '', xtermTheme }: Props) {
+function readPermissionPopupEnabled(): boolean {
+  try {
+    return localStorage.getItem('emu.permissionPopupEnabled') !== '0'
+  } catch {
+    return true
+  }
+}
+
+function readTaskCompletePopupEnabled(): boolean {
+  try {
+    return localStorage.getItem('emu.taskCompletePopupEnabled') !== '0'
+  } catch {
+    return true
+  }
+}
+
+export default function TerminalPane({ session, workspaceName, isVisible, slot = 'full', isActive = true, onActivate, onSessionEnd, openDrawer, onDrawerClose, onClosePane, onSessionTouched, onAgentStateChange, onCurrentCwdChange, onOpenMarkdown, onPerfEvent, permissionPopupEnabled: permissionPopupEnabledProp, taskCompletePopupEnabled: taskCompletePopupEnabledProp, focusSignal = 0, layoutSignal = '', xtermTheme }: Props) {
   const paneRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const composerDropRef = useRef<HTMLDivElement>(null)
@@ -726,6 +745,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
   const agentPermissionRawBufferRef = useRef('')
   const agentPermissionWatchdogTimerRef = useRef<number | null>(null)
   const agentPermissionWatchdogUntilRef = useRef(0)
+  const agentPermissionGlobalThrottleUntilRef = useRef(0)
 
   const currentInputRef = useRef('')
   const waitingForPreviewRef = useRef<string | null>(null)
@@ -813,6 +833,17 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       hiddenOutputReplayFrameRef.current = null
     }
   }, [])
+
+  const permissionPopupEnabledRef = useRef(readPermissionPopupEnabled())
+  const taskCompletePopupEnabledRef = useRef(readTaskCompletePopupEnabled())
+
+  useEffect(() => {
+    permissionPopupEnabledRef.current = permissionPopupEnabledProp ?? readPermissionPopupEnabled()
+  }, [permissionPopupEnabledProp])
+
+  useEffect(() => {
+    taskCompletePopupEnabledRef.current = taskCompletePopupEnabledProp ?? readTaskCompletePopupEnabled()
+  }, [taskCompletePopupEnabledProp])
 
   // Keep isVisibleRef in sync so the key handler can check it
   useEffect(() => { isVisibleRef.current = isVisible }, [isVisible])
@@ -1716,13 +1747,17 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
 
       if (shouldNotifyTaskComplete) {
         notifiedAgentTaskIdRef.current = taskId
-        const tabName = session.name || 'Tab'
-        debugTaskComplete('show-notification', { reason, tabName, workspaceName: workspaceNameRef.current })
-        window.api.showTaskComplete({
-          tabName,
-          sessionId: session.id,
-          workspaceId: workspaceNameRef.current ?? session.id
-        }).catch(() => {})
+        if (!taskCompletePopupEnabledRef.current) {
+          debugTaskComplete('suppress-notification-disabled', { reason })
+        } else {
+          const tabName = session.name || 'Tab'
+          debugTaskComplete('show-notification', { reason, tabName, workspaceName: workspaceNameRef.current })
+          window.api.showTaskComplete({
+            tabName,
+            sessionId: session.id,
+            workspaceId: workspaceNameRef.current ?? session.id
+          }).catch(() => {})
+        }
       } else if (previousState === 'running' && state === 'idle') {
         debugTaskComplete('suppress-notification', { reason, taskId })
       }
@@ -2186,6 +2221,11 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     // because terminal.onScroll only fires on xterm-internal scroll events (new output).
     // Manual user scrolls (trackpad, mouse wheel) after output stops are DOM-only events
     // and would be silently missed by terminal.onScroll.
+    // Track whether the viewport is scrolled to the bottom.
+    // Use a native DOM scroll listener on .xterm-viewport rather than terminal.onScroll,
+    // because terminal.onScroll only fires on xterm-internal scroll events (new output).
+    // Manual user scrolls (trackpad, mouse wheel) after output stops are DOM-only events
+    // and would be silently missed by terminal.onScroll.
     const viewportEl = containerRef.current.querySelector('.xterm-viewport') as HTMLElement | null
     const updateScrollState = () => {
       if (!viewportEl) return
@@ -2268,8 +2308,15 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         return
       }
 
-      e.preventDefault()
-      e.stopPropagation()
+      // Only block browser scroll when we actually handle the event ourselves.
+      // In normal mode we still let the viewport scroll via our custom accumulation,
+      // but the prevention needs to happen only for alt-screen/pager paths.
+      const isAltMode = isAltScreen
+      const isPagerMode = rawTuiMode === 'pager' || isPagerProcessName(proc) || rawTuiMode === 'editor' || isEditorProcessName(proc)
+      if (isAltMode || isPagerMode) {
+        e.preventDefault()
+        e.stopPropagation()
+      }
 
       if (scrollingUp) {
         autoFollowOutputRenderUntilRef.current = 0
@@ -2280,6 +2327,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
           scrollToBottomAnimRef.current = null
         }
       }
+
       if (isAltScreen) {
         // Alt-screen apps: accumulate wheel deltas and send proportional
         // scroll commands.  Sending one full-page command per event (the
@@ -2334,20 +2382,49 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
           }
         }
       } else {
-        // Normal mode: pixel-precise scroll — preserves trackpad momentum fully.
+        // Normal mode: avoid calling preventDefault at all so this can run passively
+        // on the compositor. We still advance the viewport via our accumulation math.
         if (!viewportEl) return
+        const shouldPrevent = false
+        if (shouldPrevent) {
+          e.preventDefault()
+          e.stopPropagation()
+        }
         if (e.deltaMode === 0) {
-          // Pixels (trackpad) — apply raw delta, momentum events accumulate naturally
           viewportEl.scrollTop += e.deltaY
         } else if (e.deltaMode === 1) {
-          // Lines (mouse wheel) — scale by line height for correct step size
           viewportEl.scrollTop += e.deltaY * pxPerLine
         } else {
-          // Pages
           viewportEl.scrollTop += e.deltaY > 0 ? viewportEl.clientHeight : -viewportEl.clientHeight
         }
       }
     }
+
+    // Passive wheel for normal mode (no preventDefault needed), non-passive only for alt/pager.
+    // Two listeners: a passive one that handles normal scrolling, and a non-passive capture
+    // override that intercepts only when we actually need to block.
+    const handleWheelPassive = (e: WheelEvent) => {
+      if (isAgentAltScreen(agentProcessRef.current) && !rawTuiModeRef.current && !isPagerProcessName(agentProcessRef.current) && !isEditorProcessName(agentProcessRef.current)) {
+        // Agent-native alt-screen: let it remain native, but still break auto-follow
+        const scrollingUp = e.deltaY < 0
+        if (scrollingUp) {
+          autoFollowOutputRenderUntilRef.current = 0
+          shouldAutoFollowOutputRef.current = false
+          isAtBottomRef.current = false
+          setIsAtBottom(false)
+        }
+        return
+      }
+      const isAltScreen = terminalRef.current?.buffer.active.type === 'alternate'
+      const inPagerOrEditor =
+        Boolean(rawTuiModeRef.current) || isPagerProcessName(agentProcessRef.current) || isEditorProcessName(agentProcessRef.current)
+      // If in alt/pager mode, delegate to the non-passive handler which will preventDefault.
+      if (isAltScreen || inPagerOrEditor) return
+      // Normal mode: handled directly without preventDefault — compositor-friendly.
+      handleWheel(e)
+    }
+
+    containerRef.current.addEventListener('wheel', handleWheelPassive, { capture: true, passive: true })
     containerRef.current.addEventListener('wheel', handleWheel, { capture: true, passive: false })
     // ── End scroll wheel override ─────────────────────────────────────────────
 
@@ -2540,6 +2617,13 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       text: string,
       source: 'raw-buffer' | 'write-parsed' | 'watchdog' | 'hidden-replay'
     ): boolean => {
+      // Global throttle — during heavy output, cap permission scans to ~10 Hz.
+      // This limits scanning to once per 100ms across all sources.
+      if (Date.now() < agentPermissionGlobalThrottleUntilRef.current && source !== 'hidden-replay') {
+        return false
+      }
+      agentPermissionGlobalThrottleUntilRef.current = Date.now() + AGENT_PERMISSION_GLOBAL_THROTTLE_MS
+
       const context = permissionContext()
       const permissionPrompt = agentPermissionDetectorRef.current.append(text, {
         sessionId: context.sessionId,
@@ -2570,6 +2654,17 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         })
       }
       if (!permissionPrompt) return false
+
+      if (!permissionPopupEnabledRef.current) {
+        if (shouldDebugAgentPermission()) {
+          console.debug('[agent-permission:detect]', {
+            sessionId: session.id,
+            suppressed: true,
+            reason: 'permission-popup-disabled'
+          })
+        }
+        return false
+      }
 
       agentProviderRef.current = permissionPrompt.provider
       window.api.agentPermissionPromptShow({
@@ -2665,14 +2760,20 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         onCurrentCwdChangeRef.current?.(cwd)
       }
       const permissionRawBuffer = appendPermissionRawBuffer(data)
-      if (!isVisibleRef.current) {
-        detectPermissionPrompt(permissionRawBuffer, 'raw-buffer')
-      }
+      // Collapse: hidden path = raw-buffer safety net (covers multi-line accumulated prompts)
+      // Visible/agent path = write-parsed only (operates on clean rendered text) + watchdog
       const shouldWriteImmediately = isVisibleRef.current ||
         isAltScreenRef.current ||
         Boolean(rawTuiModeRef.current) ||
         shouldUseAgentPermissionScan()
-      if (shouldWriteImmediately) {
+
+      if (!shouldWriteImmediately) {
+        // Hidden non-agent tabs: only raw-buffer scan, no xterm write
+        if (shouldUseAgentPermissionScan() || !isAgentProcessName(agentProcessRef.current)) {
+          detectPermissionPrompt(permissionRawBuffer, 'raw-buffer')
+        }
+        appendHiddenOutput(data)
+      } else {
         const useAgentScan = shouldUseAgentPermissionScan()
         const tailLines = useAgentScan ? AGENT_PERMISSION_TAIL_LINES : DEFAULT_PERMISSION_TAIL_LINES
         const shouldAutoFollowOutput = shouldAutoFollowOutputRef.current
@@ -2695,8 +2796,6 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
         recordPerfEvent('terminalWriteCalls')
         recordPerfEvent('terminalWriteBytes', bytes)
         armAgentPermissionWatchdog()
-      } else {
-        appendHiddenOutput(data)
       }
       if (rawTuiModeRef.current && !isAltScreenRef.current) {
         window.setTimeout(() => {

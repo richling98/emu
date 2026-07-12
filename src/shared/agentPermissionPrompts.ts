@@ -873,7 +873,7 @@ export function agentPermissionMissDiagnostic(text: string, providerHint: AgentP
   }
 }
 
-// Fast keyword gate: ran before `inferProviderFromText`/`detectSnapshot` so that
+// Fast keyword gate: run before `inferProviderFromText`/`detectSnapshot` so that
 // the 95%+ of PTY chunks with no permission-related vocabulary skip the expensive
 // ANSI-stripping + line-splitting + multi-regex pipeline entirely. A single
 // case-insensitive alternation is cheaper than lowercasing + repeated includes.
@@ -891,11 +891,12 @@ export class AgentPermissionPromptDetector {
   private lastFingerprint: string | null = null
 
   append(data: string, context: DetectionContext): AgentPermissionPrompt | null {
+    if (!hasPermissionKeywordFast(data)) {
+      this.lastFingerprint = null
+      return null
+    }
+
     if (!context.agentSession) {
-      if (!hasPermissionKeywordFast(data)) {
-        this.lastFingerprint = null
-        return null
-      }
       if (!inferProviderFromText(data)) {
         this.lastFingerprint = null
         return null

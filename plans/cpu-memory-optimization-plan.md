@@ -1,5 +1,32 @@
 # EMU CPU & Memory Optimization Plan
 
+## Progress Snapshot (2026-07-12)
+
+Markers: `✅` implemented, `🟡 NN%` partial, `⬜` not started. Checked against the current source in `src/main/index.ts`, `src/renderer/src/components/TerminalPane.tsx`, `src/renderer/src/App.tsx`, `src/renderer/src/components/SettingsModal.tsx`, and `src/shared/agentPermissionPrompts.ts`.
+
+| ID | Step | Status | Notes |
+|----|------|--------|-------|
+| 5.1 | Destroy task-complete overlay when queue empties | ✅ Complete | Verified in `closeTaskCompleteOverlayIfEmpty` |
+| 5.2 | Gate busy-evidence on agentSession | ✅ Complete | Renderer per-byte bookkeeping gated on running agent session |
+| T-1 | Permission popup toggle | ✅ Complete | Settings → Notifications, localStorage + env-var kill-switch |
+| T-2 | Task-complete popup toggle | ✅ Complete | Settings → Notifications, localStorage + env-var kill-switch |
+| 1.1 | Remove main process permission scan | ✅ Complete | Scan removed, detector stays in shared/renderer only |
+| 1.2 | Keyword pre-filter in permission scans | ✅ Complete | Fast-path in shared detector |
+| 1.3 | Collapse renderer scans 5 → 2 passes | 🟡 75% | raw removed; hidden path collapsed to raw-buffer + hidden-replay → now simplified to raw-buffer for hidden and write-parsed for visible + watchdog + 100ms global throttle |
+| 2.1 | Reduce process poll interval | ✅ Complete | 6s/24s → 10s visible / 30s hidden, recursive timeout |
+| 2.2 | Reduce hidden output buffer to 512KB | ✅ Complete | Cap + truncation marker + incremental replay |
+| 2.3 | Cap command history per session | ✅ Complete | 500 entries cap |
+| 2.4 | Skip output capture for hidden non-agent tabs | ✅ Complete | `flushOutputBuffer` gated + no write for hidden Normal-screen output |
+| 3.3 | Global throttle on permission scanning | ✅ Complete | 100ms inter-scan window across all sources (except hidden-replay) |
+| 3.1 | In-window DOM overlays instead of BrowserWindows | ⬜ Not started | Deep rewrite, higher regression risk |
+| 3.2 | Event-driven process polling | ⬜ Not started | Timer bump done; event-driven trigger not yet implemented |
+| 4.1 | Enable Electron hardware acceleration | ⬜ Not started | Still `disableHardwareAcceleration()` + `in-process-gpu` |
+| 4.2 | Canvas/WebGL fallback | 🟡 25% | Opt-in env flag exists but blanks at launch; not yet stable |
+| 4.3 | Passive wheel handler in normal mode | ✅ Complete | Passive listener for Normal mode + non-passive only for alt-screen/pager path |
+| 4.4 | Reduce agent busy check 1s → 3s | ✅ Complete | `AGENT_BUSY_SCREEN_CHECK_MS` 1000 → 3000 |
+
+Remaining open work is mostly P3+ (DOM overlays, event-driven polling, WebGL isolation, hardware acceleration). Main safety verification is running `npm run typecheck` (passes) and manual tab-switch latency under hidden-busy load.
+
 ## Diagnostic Summary
 
 EMU runs hot because it was architected for correctness and feature depth — not efficiency at scale. With multiple parallel terminal sessions, the compounding effect of per-event, per-session scan/timer/poll overhead pushes the MacBook past thermal limits.
@@ -97,9 +124,11 @@ Two persistent `BrowserWindow` instances (permission overlay + task complete not
 
 ## Optimization Strategies
 
+Progress markers in the implementation steps: `✅` = complete, `🟡 NN%` = partially complete, `⬜ Not started` = no implementation yet.
+
 ### Tier 1: High Impact, Low Risk
 
-#### 1.1 Eliminate Main Process Permission Scan
+#### 1.1 Eliminate Main Process Permission Scan — ✅ Complete
 
 **What:** Remove `scanAgentPermissionPtyOutput()` from the main process `onData` callback. The renderer already runs an equivalent scan on rendered text.
 
@@ -136,7 +165,7 @@ The main process scan (`src/main/index.ts:255`) does four things the renderer al
 
 ---
 
-#### 1.2 Pre-Filter Permission Scans with Keyword Gate
+#### 1.2 Pre-Filter Permission Scans with Keyword Gate — ✅ Complete
 
 **What:** Before the expensive ANSI-stripping + line-splitting + multi-regex pipeline, check the data for a small set of fast keywords. If none of `allow`, `deny`, `approve`, `permission`, `proceed`, `confirm`, `tool use`, `would you like` are present, skip the scan entirely.
 
@@ -148,9 +177,9 @@ The main process scan (`src/main/index.ts:255`) does four things the renderer al
 
 ---
 
-#### 1.3 Collapse Renderer Scans from 5 Passes → 2 Passes
+#### 1.3 Collapse Renderer Scans from 5 Passes → 2 Passes — 🟡 75%
 
-**What:** The renderer currently scans permission prompts at 5 different points per data event (raw, raw-buffer, write-parsed, hidden-replay, watchdog). Collapse these into 2 passes:
+**What:** The renderer now scans permission prompts at 3 safety-net-compatible paths (raw-buffer for hidden tabs, write-parsed for visible/agent tabs, watchdog) + hidden-replay during visibility restore, down from the original 5. Collapse these into 2 steady-state passes:
 
 1. **Keep `raw-buffer` for hidden tabs** — The `raw-buffer` scan accumulates data into a 32KB rolling buffer and passes the full buffer to the detector. This is the safety net for multi-line prompts on hidden tabs where individual chunks may lack recognizable keywords. It's also the renderer's equivalent of the removed main process `rawTail`.
 
@@ -183,7 +212,7 @@ The main process scan (`src/main/index.ts:255`) does four things the renderer al
 
 ### Tier 2: Medium Impact, Low Risk
 
-#### 2.1 Reduce Process Poll Interval (4s → 10s visible, 16s → 30s hidden)
+#### 2.1 Reduce Process Poll Interval (4s → 10s visible, 16s → 30s hidden) — ✅ Complete
 
 **What:** Increase the `AGENT_PROCESS_POLL_MS` from 4000ms to 10000ms, and `HIDDEN_AGENT_PROCESS_POLL_MS` from 16000ms to 30000ms.
 
@@ -195,7 +224,7 @@ The main process scan (`src/main/index.ts:255`) does four things the renderer al
 
 ---
 
-#### 2.2 Reduce Hidden Output Buffer from 2MB to 512KB
+#### 2.2 Reduce Hidden Output Buffer from 2MB to 512KB — ✅ Complete
 
 **What:** Lower `HIDDEN_OUTPUT_BUFFER_MAX_CHARS` from 2MB to 512KB.
 
@@ -207,7 +236,7 @@ The main process scan (`src/main/index.ts:255`) does four things the renderer al
 
 ---
 
-#### 2.3 Cap Command History per Session
+#### 2.3 Cap Command History per Session — ✅ Complete
 
 **What:** Add a max entry limit to `commandHistory` (e.g., 500 entries per session). When exceeded, evict the oldest entries.
 
@@ -219,7 +248,7 @@ The main process scan (`src/main/index.ts:255`) does four things the renderer al
 
 ---
 
-#### 2.4 Skip Command Output Capture for Non-Agent Hidden Tabs
+#### 2.4 Skip Command Output Capture for Non-Agent Hidden Tabs — ✅ Complete
 
 **What:** Only capture command output via `flushOutputBuffer` when the tab is visible or running an agent session. For hidden non-agent tabs, skip the buffer read.
 
@@ -233,7 +262,7 @@ The main process scan (`src/main/index.ts:255`) does four things the renderer al
 
 ### Tier 3: Medium Impact, Medium Risk
 
-#### 3.1 Replace Separate BrowserWindow Overlays with In-Window DOM Overlays
+#### 3.1 Replace Separate BrowserWindow Overlays with In-Window DOM Overlays — ⬜ Not started
 
 **What:** Instead of creating separate `BrowserWindow` instances for the permission prompt and task-complete notification, render them as absolutely-positioned DOM elements within the main Electron window.
 
@@ -245,7 +274,7 @@ The main process scan (`src/main/index.ts:255`) does four things the renderer al
 
 ---
 
-#### 3.2 Event-Driven Process Polling (Replace Timer with PTY-Output Trigger)
+#### 3.2 Event-Driven Process Polling (Replace Timer with PTY-Output Trigger) — ⬜ Not started
 
 **What:** Instead of polling `ptyGetProcess` on a timer, poll it whenever new PTY output arrives. If the renderer's `agentProcessRef.current` is null or the tab is hidden, trigger an immediate poll on the first data event after a period of no data (e.g., 500ms of quiet).
 
@@ -259,7 +288,9 @@ The main process scan (`src/main/index.ts:255`) does four things the renderer al
 
 ---
 
-#### 3.3 Add a Global Throttle on Permission Scanning
+#### 3.3 Add a Global Throttle on Permission Scanning — ✅ Complete
+
+**Implemented:** 100ms cross-source throttle (`AGENT_PERMISSION_GLOBAL_THROTTLE_MS`) applies in `TerminalPane.tsx`'s `detectPermissionPrompt` (skips rapid successive scans except for `hidden-replay`).
 
 **What:** Cap permission scans to once every 100ms regardless of how many data events arrive. Accumulate data between scans and present the full accumulated text to the detector.
 
@@ -273,7 +304,7 @@ The main process scan (`src/main/index.ts:255`) does four things the renderer al
 
 ### Tier 4: Lower Impact / Higher Risk
 
-#### 4.1 Enable Electron Hardware Acceleration
+#### 4.1 Enable Electron Hardware Acceleration — ⬜ Not started
 
 **What:** Re-enable `app.hardwareAcceleration` and remove the `in-process-gpu` flag. The code comment says it was disabled to prevent GPU process crashes — but this forces all GPU work (including WebGL rendering) into the renderer process.
 
@@ -285,7 +316,7 @@ The main process scan (`src/main/index.ts:255`) does four things the renderer al
 
 ---
 
-#### 4.2 Switch from WebGL to Canvas Renderer (Per-Session Config)
+#### 4.2 Switch from WebGL to Canvas Renderer (Per-Session Config) — 🟡 25% complete
 
 **What:** Add a per-session option to use xterm.js's canvas renderer (`@xterm/addon-canvas`) instead of WebGL. Canvas rendering uses less GPU memory and may be more CPU-efficient for lower-throughput sessions.
 
@@ -295,7 +326,7 @@ The main process scan (`src/main/index.ts:255`) does four things the renderer al
 
 ---
 
-#### 4.3 Optimize Wheel Handler (Use Passive Listener When Possible)
+#### 4.3 Optimize Wheel Handler (Use Passive Listener When Possible) — ✅ Complete
 
 **What:** Use `{ passive: true }` for the wheel handler in normal mode (non-alt-screen). Only use `passive: false` when alt-screen mode is active and arrow-key interception is needed.
 
@@ -305,7 +336,7 @@ The main process scan (`src/main/index.ts:255`) does four things the renderer al
 
 ---
 
-#### 4.4 Reduce Agent Busy Check Interval (1s → 3s)
+#### 4.4 Reduce Agent Busy Check Interval (1s → 3s) — ✅ Complete
 
 **What:** Increase `AGENT_BUSY_SCREEN_CHECK_MS` from 1000ms to 3000ms.
 
@@ -319,7 +350,7 @@ The main process scan (`src/main/index.ts:255`) does four things the renderer al
 
 These items address overhead introduced since v0.3.8 — primarily the persistent task-complete `BrowserWindow` overlay (commit `47c244de`) and per-event busy-evidence work from hybrid busy detection (commit `63363048`). They are the most likely cause of the new "always-on" lag users are reporting against the latest .dmg (v0.4.0).
 
-#### 5.1 Destroy (don't just hide) the task-complete overlay window when its queue empties
+#### 5.1 Destroy (don't just hide) the task-complete overlay window when its queue empties — ✅ Complete
 
 **What:** `closeTaskCompleteOverlayIfEmpty()` already calls `taskCompleteOverlayWindow.close()` (`src/main/index.ts:777-781`), but `ensureTaskCompleteOverlayWindow` recreates the window with `alwaysOnTop: 'screen-saver'`, `setVisibleOnAllWorkspaces({ visibleOnFullScreen: true })`, vibrancy, and a separate HTML/compositing surface on every notification. Verify the window is **fully destroyed** (not just hidden) when `pendingTaskCompleteNotifications` is empty, null out `taskCompleteOverlayWindow`, and explicitly tear down the cached `AudioContext` used by the chime. Re-create lazily only on the next show.
 
@@ -329,7 +360,7 @@ These items address overhead introduced since v0.3.8 — primarily the persisten
 
 **Estimated Impact:** Eliminates the second persistent overlay's idle GPU/compositing cost. Highest-leverage single change for the v0.4.0 lag.
 
-#### 5.2 Coalesce hybrid busy-evidence bookkeeping on the data path
+#### 5.2 Coalesce hybrid busy-evidence bookkeeping on the data path — ✅ Complete
 
 **What:** Hybrid busy detection added per-event work in the `onPtyData` handler — `agentLastOutputAtRef` / `agentLastBusyEvidenceAtRef` writes, `ensureAgentBusyCheckTimer()` invocation — plus a 1s timer (`runAgentBusyCheck`) that reads the xterm rendered buffer and runs busy-wording regex for up to 2 minutes. Gate the per-event busy-evidence timestamp writes and the `ensureAgentBusyCheckTimer()` call behind `agentSessionRef.current === true` so they only run for terminals that actually have a running agent; non-agent terminals should pay zero busy-detection cost per byte.
 
@@ -345,7 +376,9 @@ These items address overhead introduced since v0.3.8 — primarily the persisten
 
 Two user-facing toggles allow the user (and us during regression diagnosis) to independently disable each overlay and confirm whether they are the source of the lag. Both follow the existing `localStorage` settings pattern (`emu-perf-overlay` at `src/renderer/src/App.tsx:210-262`).
 
-#### T-1. Permission popup toggle
+#### T-1. Permission popup toggle — ✅ Complete
+
+**Implemented:** Setting stored as `localStorage: emu.permissionPopupEnabled` (default true). Main process gated by env var kill-switch + short-circuit in `ensureAgentPermissionOverlayVisible`/`addAgentPermissionPrompt` path, renderer gates by skipping `agentPermissionPromptShow` when setting is off. Settings UI in Notifications section.
 
 **What:** Add a per-app setting `emu.permissionPopupEnabled` (default `true`). When `false`, the renderer still *detects* permission prompts (so the agent indicator state remains correct), but `window.api.agentPermissionPromptShow(...)` is no longer called and no permission `BrowserWindow` overlay is ever created.
 
@@ -357,7 +390,9 @@ Two user-facing toggles allow the user (and us during regression diagnosis) to i
 - Optionally early-return in main at the `agent-permission:show` IPC handler in `src/main/index.ts` so a stray IPC still won't create the window.
 - Settings UI: add a new "Notifications" section to `src/renderer/src/components/SettingsModal.tsx` (alongside 'appearance' / 'hotkeys' / 'about' / 'updates', declared in the `SettingsSection` type at line 12) with a switch control.
 
-#### T-2. Task-complete popup toggle
+#### T-2. Task-complete popup toggle — ✅ Complete
+
+**Implemented:** Setting stored as `localStorage: emu.taskCompletePopupEnabled` (default true). Main process gated via `isNotificationDisabledGlobally()` in `task-complete:show` handler + `ensureTaskCompleteOverlayVisible`, renderer gated by skipping `showTaskComplete`. Settings UI in Notifications section, env var override supported.
 
 **What:** Add a per-app setting `emu.taskCompletePopupEnabled` (default `true`). When `false`, the renderer suppresses `window.api.showTaskComplete(...)` and the main process never creates the task-complete `BrowserWindow`.
 
@@ -375,32 +410,32 @@ Two user-facing toggles allow the user (and us during regression diagnosis) to i
 
 ```
 Phase 0 (Immediate, v0.4.0 regression triage):
-  └── 5.1 Destroy task-complete overlay window when queue empties
-  └── 5.2 Gate busy-evidence bookkeeping on agentSession
-  └── T-1 Permission popup toggle
-  └── T-2 Task-complete popup toggle
+  ├── ✅ 5.1 Destroy task-complete overlay window when queue empties
+  ├── ✅ 5.2 Gate busy-evidence bookkeeping on agentSession
+  ├── ✅ T-1 Permission popup toggle
+  └── ✅ T-2 Task-complete popup toggle
 
 Phase 1 (Immediate, Safe):
-  └── 1.1 Remove main process permission scan
-  └── 1.2 Add keyword pre-filter to permission scans
-  └── 1.3 Collapse renderer scans from 5 → 1 pass
-  └── 2.1 Reduce process poll interval
+  ├── ✅ 1.1 Remove main process permission scan
+  ├── ✅ 1.2 Add keyword pre-filter to permission scans
+  ├── 🟡 75% 1.3 Collapse renderer scans from 5 → 1 pass (raw-buffer + write-parsed + watchdog remain; watchdog now + global 100ms throttle)
+  └── ✅ 2.1 Reduce process poll interval (4s→10s visible, 16s→30s hidden)
 
 Phase 2 (Soon, Safe):
-  └── 2.2 Reduce hidden output buffer to 512KB
-  └── 2.3 Cap command history per session
-  └── 2.4 Skip output capture for hidden non-agent tabs
-  └── 3.3 Global throttle on permission scanning
+  ├── ✅ 2.2 Reduce hidden output buffer to 512KB
+  ├── ✅ 2.3 Cap command history per session
+  ├── ✅ 2.4 Skip output capture for hidden non-agent tabs
+  └── ✅ 3.3 Global throttle on permission scanning
 
 Phase 3 (Medium-term, Needs Testing):
-  └── 3.1 In-window DOM overlays instead of BrowserWindows
-  └── 3.2 Event-driven process polling
-  └── 4.3 Passive wheel handler in normal mode
-  └── 4.4 Reduce agent busy check to 3s
+  ├── ⬜ 3.1 In-window DOM overlays instead of BrowserWindows
+  ├── ⬜ 3.2 Event-driven process polling (timer increase done, PTY-triggered poll deferred)
+  ├── ✅ 4.3 Passive wheel handler in normal mode (normal=passive, alt/pager=non-passive)
+  └── ✅ 4.4 Reduce agent busy check to 3s (1000→3000)
 
 Phase 4 (Long-term, Higher Risk):
-  └── 4.1 Re-enable hardware acceleration
-  └── 4.2 Canvas renderer fallback
+  ├── ⬜ 4.1 Re-enable hardware acceleration (still disabled + in-process-gpu)
+  └── 🟡 25% 4.2 Canvas renderer fallback / WebGL isolation (opt-in flag, but blanks on launch)
 ```
 
 ## Estimated Cumulative Impact

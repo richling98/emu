@@ -9,7 +9,28 @@ interface Props {
   onClose: () => void
 }
 
-type SettingsSection = 'appearance' | 'hotkeys' | 'about' | 'updates'
+type SettingsSection = 'appearance' | 'hotkeys' | 'notifications' | 'about' | 'updates'
+
+type NotificationSettings = {
+  permissionPopupEnabled: boolean
+  taskCompletePopupEnabled: boolean
+}
+
+const NOTIFICATION_DEFAULTS: NotificationSettings = {
+  permissionPopupEnabled: true,
+  taskCompletePopupEnabled: true
+}
+
+function readNotificationSettings(): NotificationSettings {
+  try {
+    return {
+      permissionPopupEnabled: localStorage.getItem('emu.permissionPopupEnabled') !== '0',
+      taskCompletePopupEnabled: localStorage.getItem('emu.taskCompletePopupEnabled') !== '0'
+    }
+  } catch {
+    return { ...NOTIFICATION_DEFAULTS }
+  }
+}
 
 const HOTKEY_SECTIONS = [
   {
@@ -63,6 +84,9 @@ export default function SettingsModal({ activeThemeId, onSelectTheme, onClose }:
   const [section, setSection] = useState<SettingsSection>('appearance')
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
+  const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>(() =>
+    readNotificationSettings()
+  )
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -89,6 +113,24 @@ export default function SettingsModal({ activeThemeId, onSelectTheme, onClose }:
     window.api.downloadUpdate()
   }
 
+  const toggleNotification = (key: keyof NotificationSettings) => {
+    setNotificationSettings((prev) => {
+      const next = { ...prev, [key]: !prev[key] }
+      try {
+        if (key === 'permissionPopupEnabled') {
+          localStorage.setItem('emu.permissionPopupEnabled', next.permissionPopupEnabled ? '1' : '0')
+        }
+        if (key === 'taskCompletePopupEnabled') {
+          localStorage.setItem('emu.taskCompletePopupEnabled', next.taskCompletePopupEnabled ? '1' : '0')
+        }
+      } catch {}
+      window.dispatchEvent(
+        new CustomEvent('emu:notifications-changed', { detail: { key, value: next[key] } })
+      )
+      return next
+    })
+  }
+
   return (
     <div className="settings-overlay" onClick={onClose}>
       <div className="settings-modal" onClick={(e) => e.stopPropagation()}>
@@ -110,6 +152,12 @@ export default function SettingsModal({ activeThemeId, onSelectTheme, onClose }:
               onClick={() => setSection('hotkeys')}
             >
               Hotkeys
+            </button>
+            <button
+              className={`settings-nav-item${section === 'notifications' ? ' settings-nav-item--active' : ''}`}
+              onClick={() => setSection('notifications')}
+            >
+              Notifications
             </button>
             <button
               className={`settings-nav-item${section === 'about' ? ' settings-nav-item--active' : ''}`}
@@ -188,6 +236,62 @@ export default function SettingsModal({ activeThemeId, onSelectTheme, onClose }:
                     </div>
                   ))}
                 </div>
+              </section>
+            )}
+
+            {section === 'notifications' && (
+              <section className="settings-section settings-about-section" aria-labelledby="notifications-settings-title">
+                <h2 id="notifications-settings-title" className="settings-section-title">Notifications</h2>
+                <p className="settings-about-intro">
+                  Control the extra overlay windows. Disabling these removes their GPU and idle cost while keeping sidebar indicators intact.
+                </p>
+
+                <div className="settings-about-label">Overlay windows</div>
+                <div className="settings-about-list">
+                  <div className="settings-about-item settings-about-item--row">
+                    <div className="settings-about-item-copy">
+                      <span className="settings-about-item-title">Permission popup</span>
+                      <span className="settings-about-item-desc">
+                        {notificationSettings.permissionPopupEnabled
+                          ? 'Shows the floating approval overlay when an agent requests permission.'
+                          : 'Hidden. Approve or deny directly in the terminal instead.'}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={notificationSettings.permissionPopupEnabled}
+                      className={`settings-switch${notificationSettings.permissionPopupEnabled ? ' settings-switch--on' : ''}`}
+                      onClick={() => toggleNotification('permissionPopupEnabled')}
+                    >
+                      <span className="settings-switch-thumb" />
+                    </button>
+                  </div>
+
+                  <div className="settings-about-item settings-about-item--row">
+                    <div className="settings-about-item-copy">
+                      <span className="settings-about-item-title">Task complete popup</span>
+                      <span className="settings-about-item-desc">
+                        {notificationSettings.taskCompletePopupEnabled
+                          ? 'Shows the yellow completion notification when an agent finishes.'
+                          : 'Hidden. The sidebar will still turn from yellow (running) to green (idle).'}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={notificationSettings.taskCompletePopupEnabled}
+                      className={`settings-switch${notificationSettings.taskCompletePopupEnabled ? ' settings-switch--on' : ''}`}
+                      onClick={() => toggleNotification('taskCompletePopupEnabled')}
+                    >
+                      <span className="settings-switch-thumb" />
+                    </button>
+                  </div>
+                </div>
+
+                <p className="settings-about-intro" style={{ marginTop: 10 }}>
+                  Tip: If Emu feels laggy on a busy machine, try turning one or both overlays off and measuring with Cmd+Shift+P before changing anything deeper.
+                </p>
               </section>
             )}
 
