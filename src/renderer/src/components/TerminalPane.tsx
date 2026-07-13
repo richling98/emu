@@ -2618,8 +2618,10 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       source: 'raw-buffer' | 'write-parsed' | 'watchdog' | 'hidden-replay'
     ): boolean => {
       // Global throttle — during heavy output, cap permission scans to ~10 Hz.
-      // This limits scanning to once per 100ms across all sources.
-      if (Date.now() < agentPermissionGlobalThrottleUntilRef.current && source !== 'hidden-replay') {
+      // Exempt write-parsed (cleanest signal) and hidden-replay (rare) to avoid
+      // missing real prompts that appear right after a busy-output scan.
+      const exemptFromThrottle = source === 'write-parsed' || source === 'hidden-replay'
+      if (!exemptFromThrottle && Date.now() < agentPermissionGlobalThrottleUntilRef.current) {
         return false
       }
       agentPermissionGlobalThrottleUntilRef.current = Date.now() + AGENT_PERMISSION_GLOBAL_THROTTLE_MS
@@ -2655,18 +2657,21 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       }
       if (!permissionPrompt) return false
 
+      agentProviderRef.current = permissionPrompt.provider
       if (!permissionPopupEnabledRef.current) {
         if (shouldDebugAgentPermission()) {
           console.debug('[agent-permission:detect]', {
             sessionId: session.id,
+            detected: true,
             suppressed: true,
-            reason: 'permission-popup-disabled'
+            reason: 'permission-popup-disabled',
+            provider: permissionPrompt.provider,
+            fingerprint: permissionPrompt.fingerprint
           })
         }
-        return false
+        return true
       }
 
-      agentProviderRef.current = permissionPrompt.provider
       window.api.agentPermissionPromptShow({
         ...permissionPrompt,
         workspaceName: workspaceNameRef.current
