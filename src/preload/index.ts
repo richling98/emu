@@ -70,6 +70,11 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('agent-permission:state', listener)
     return () => ipcRenderer.removeListener('agent-permission:state', listener)
   },
+  onAgentPermissionPromptResolved: (callback: (sessionId: string) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, sessionId: string) => callback(sessionId)
+    ipcRenderer.on('agent-permission:resolved', listener)
+    return () => ipcRenderer.removeListener('agent-permission:resolved', listener)
+  },
   // App updates (electron-updater)
   getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
   checkForUpdates: () => ipcRenderer.invoke('updates:check'),

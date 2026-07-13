@@ -890,6 +890,10 @@ function hasPermissionKeywordFast(text: string): boolean {
 export class AgentPermissionPromptDetector {
   private lastFingerprint: string | null = null
 
+  reset(): void {
+    this.lastFingerprint = null
+  }
+
   append(data: string, context: DetectionContext): AgentPermissionPrompt | null {
     if (!hasPermissionKeywordFast(data)) {
       this.lastFingerprint = null

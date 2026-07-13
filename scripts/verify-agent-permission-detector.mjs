@@ -298,6 +298,12 @@ const repeatedAfterDismiss = detector.append(codexPrompt, context)
 assert(repeatedAfterDismiss, 'same prompt should emit again after it disappears and reappears')
 assert.equal(repeatedAfterDismiss.fingerprint, 'codex:command:npm run dev')
 
+const repeatedAfterResolution = new AgentPermissionPromptDetector()
+assert(repeatedAfterResolution.append(codexPrompt, context), 'initial prompt should emit before resolution')
+assert.equal(repeatedAfterResolution.append(codexPrompt, context), null, 'redraws before a response should remain deduplicated')
+repeatedAfterResolution.reset()
+assert(repeatedAfterResolution.append(codexPrompt, context), 'same prompt should emit after a resolved prompt advances to new agent output')
+
 const staleClaudeHintDetector = new AgentPermissionPromptDetector()
 const codexWithStaleClaudeHint = staleClaudeHintDetector.append(codexPrompt, {
   sessionId: 'session-stale-claude',

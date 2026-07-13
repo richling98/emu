@@ -1581,6 +1581,10 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     replayHiddenOutputRef.current = replayHiddenOutput
 
     let disposed = false
+    let resetAgentPermissionDetectorOnOutput = false
+    const removeAgentPermissionResolvedListener = window.api.onAgentPermissionPromptResolved((sessionId) => {
+      if (sessionId === session.id) resetAgentPermissionDetectorOnOutput = true
+    })
 
     const touchSessionActivity = () => {
       onSessionTouchedRef.current?.()
@@ -2734,6 +2738,11 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
     }
 
     const removeDataListener = window.api.onPtyData(session.id, (data) => {
+      if (resetAgentPermissionDetectorOnOutput) {
+        // Keep watchdog redraws of the resolved prompt deduplicated until agent output advances it.
+        agentPermissionDetectorRef.current.reset()
+        resetAgentPermissionDetectorOnOutput = false
+      }
       // Lightweight renderer-side throughput proxy. Main-process stats keep exact UTF-8 bytes.
       const bytes = data.length
       recordPerfEvent('ptyDataEvents')
@@ -3244,6 +3253,7 @@ export default function TerminalPane({ session, workspaceName, isVisible, slot =
       fitAndResizeRef.current = null
       viewportEl?.removeEventListener('scroll', updateScrollState)
       removeDataListener()
+      removeAgentPermissionResolvedListener()
       removeExitListener()
       resizeObserver.disconnect()
       containerRef.current?.removeEventListener('mousedown', handleTerminalMouseDown, { capture: true })

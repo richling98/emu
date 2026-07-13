@@ -158,6 +158,7 @@ interface Window {
     agentPermissionPromptDismissSession: (sessionId: string) => Promise<void>
     agentPermissionOverlayAction: (input: AgentPermissionOverlayAction) => Promise<void>
     onAgentPermissionOverlayState: (callback: (state: AgentPermissionOverlayState) => void) => () => void
+    onAgentPermissionPromptResolved: (callback: (sessionId: string) => void) => () => void
     getAppVersion: () => Promise<string>
     checkForUpdates: () => Promise<UpdateStatus>
     downloadUpdate: () => Promise<void>

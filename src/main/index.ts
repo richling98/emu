@@ -151,13 +151,11 @@ const MARKDOWN_IMAGE_MIME_BY_EXT = new Map([
 const AGENT_PERMISSION_OVERLAY_WIDTH = 390
 const AGENT_PERMISSION_OVERLAY_HEIGHT = 168
 const AGENT_PERMISSION_OVERLAY_MARGIN = 16
-const AGENT_PERMISSION_RESOLVED_SUPPRESSION_MS = 2_000
 const DEBUG_AGENT_PERMISSION = process.env.EMU_DEBUG_AGENT_PERMISSION === '1' ||
   process.env.THINKING_DEBUG_AGENT_PERMISSION === '1'
 
 let agentPermissionOverlayWindow: BrowserWindow | null = null
 const pendingAgentPermissionPrompts: PendingAgentPermissionPrompt[] = []
-const recentlyResolvedAgentPermissionPrompts = new Map<string, number>()
 const agentPermissionSessionWorkspaceNames = new Map<string, string>()
 let activeAgentPermissionPromptId: string | null = null
 let agentPermissionOverlayUserMoved = false
@@ -1356,33 +1354,6 @@ function setActiveAgentPermissionPrompt(promptId: string | null): void {
   sendAgentPermissionState()
 }
 
-function agentPermissionFingerprintKey(sessionId: string, fingerprint: string): string {
-  return `${sessionId}\0${fingerprint}`
-}
-
-function pruneRecentlyResolvedAgentPermissionPrompts(now = Date.now()): void {
-  for (const [key, expiresAt] of recentlyResolvedAgentPermissionPrompts) {
-    if (expiresAt <= now) recentlyResolvedAgentPermissionPrompts.delete(key)
-  }
-}
-
-function markAgentPermissionPromptRecentlyResolved(prompt: AgentPermissionPrompt): void {
-  pruneRecentlyResolvedAgentPermissionPrompts()
-  recentlyResolvedAgentPermissionPrompts.set(
-    agentPermissionFingerprintKey(prompt.sessionId, prompt.fingerprint),
-    Date.now() + AGENT_PERMISSION_RESOLVED_SUPPRESSION_MS
-  )
-}
-
-function isAgentPermissionPromptRecentlyResolved(prompt: AgentPermissionPrompt): boolean {
-  const now = Date.now()
-  pruneRecentlyResolvedAgentPermissionPrompts(now)
-  const expiresAt = recentlyResolvedAgentPermissionPrompts.get(
-    agentPermissionFingerprintKey(prompt.sessionId, prompt.fingerprint)
-  )
-  return typeof expiresAt === 'number' && expiresAt > now
-}
-
 function withAgentPermissionWorkspaceName(prompt: AgentPermissionPrompt): AgentPermissionPrompt {
   const workspaceName = prompt.workspaceName ?? agentPermissionSessionWorkspaceNames.get(prompt.sessionId)
   return workspaceName ? { ...prompt, workspaceName } : prompt
@@ -1392,14 +1363,6 @@ function addAgentPermissionPrompt(prompt: AgentPermissionPrompt, ownerWindowId: 
   const promptWithWorkspaceName = withAgentPermissionWorkspaceName(prompt)
   if (!ptyProcesses.has(promptWithWorkspaceName.sessionId)) {
     debugAgentPermission('prompt-rejected-missing-pty', {
-      sessionId: promptWithWorkspaceName.sessionId,
-      provider: promptWithWorkspaceName.provider,
-      fingerprint: promptWithWorkspaceName.fingerprint
-    })
-    return
-  }
-  if (isAgentPermissionPromptRecentlyResolved(promptWithWorkspaceName)) {
-    debugAgentPermission('prompt-suppressed-recently-resolved', {
       sessionId: promptWithWorkspaceName.sessionId,
       provider: promptWithWorkspaceName.provider,
       fingerprint: promptWithWorkspaceName.fingerprint
@@ -1497,7 +1460,6 @@ async function resolveAgentPermissionPrompt(promptId: string, decision: 'approve
     fingerprint: entry.prompt.fingerprint
   })
   entry.status = 'resolved'
-  markAgentPermissionPromptRecentlyResolved(entry.prompt)
   const writes = decision === 'approve' ? entry.prompt.approveAction : entry.prompt.denyAction
   const nextEntry = pending[index + 1] ?? pending[index - 1] ?? null
   activeAgentPermissionPromptId = nextEntry?.prompt.id ?? null
@@ -1506,6 +1468,13 @@ async function resolveAgentPermissionPrompt(promptId: string, decision: 'approve
   positionAgentPermissionOverlay()
   sendAgentPermissionState()
   ensureAgentPermissionOverlayVisible('resolved-with-pending', false)
+  const ownerWindowId = entry.ownerWindowId ?? ptyOwnerWindowIds.get(entry.prompt.sessionId)
+  const ownerWindow = ownerWindowId === undefined || ownerWindowId === null
+    ? null
+    : BrowserWindow.fromId(ownerWindowId)
+  if (ownerWindow && !ownerWindow.isDestroyed()) {
+    ownerWindow.webContents.send('agent-permission:resolved', entry.prompt.sessionId)
+  }
   await writePtySequence(entry.prompt.sessionId, writes)
 }
 
